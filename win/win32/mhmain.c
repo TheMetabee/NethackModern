@@ -622,9 +622,10 @@ mswin_layout_main_window(HWND changed_child)
         }
 
         wnd_msg = mswin_hwnd_from_winid(WIN_MESSAGE);
-        if (IsWindow(wnd_msg)) {
+        if (IsWindow(wnd_msg) && !(iflags.fx_theme && iflags.fx_msg_overlay)) {
             mswin_message_window_size(wnd_msg, &msg_size);
         } else {
+            /* (NetHack Modern: messages float on the map instead) */
             msg_size.cx = msg_size.cy = 0;
         }
 
@@ -757,6 +758,9 @@ mswin_layout_main_window(HWND changed_child)
         if (iflags.perm_invent)
             GetNHApp()->rtMapWindow.right = GetNHApp()->rtMenuWindow.left;
     }
+
+    if (iflags.fx_theme && iflags.fx_msg_overlay) /* NetHack Modern */
+        SetRect(&GetNHApp()->rtMsgWindow, 0, 0, 0, 0);
 
     /* go through the windows list and adjust sizes */
     for (i = 0; i < MAXWINDOWS; i++) {

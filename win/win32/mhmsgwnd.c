@@ -6,10 +6,15 @@
 #include "mhmsgwnd.h"
 #include "mhmsg.h"
 #include "mhfont.h"
+#include "mhtheme.h"
+extern COLORREF nhcolor_to_RGB(int c); /* from mhmap */
 
 #define MSG_WRAP_TEXT
 
 #define MSG_VISIBLE_LINES max(iflags.wc_vary_msgcount, 1)
+/* NetHack Modern: messages drawn on the map instead of in this window */
+#define MSG_OVERLAY (iflags.fx_theme && iflags.fx_msg_overlay)
+#define MSG_OVERLAY_LINES 6
 #define MSG_LINES (int) min(iflags.msg_history, MAX_MSG_HISTORY)
 #define MAXWINDOWTEXT TBUFSZ
 
@@ -21,7 +26,49 @@
 struct window_line {
     int attr;
     char text[MAXWINDOWTEXT + 1];
+    long turn;       /* NetHack Modern: the turn it arrived on */
+    COLORREF hl;     /* its highlight colour (valid if 'has_hl') */
+    boolean has_hl;
 };
+
+/* NetHack Modern: a message worth picking out gets a colour: a MSGTYPE
+   "stop" message gold, traps orange, anything matching a menucolor its
+   colour, and "You see here" teal */
+static boolean
+th_msg_highlight(const char *text, COLORREF *c)
+{
+    struct menucoloring *mc;
+    char low[MAXWINDOWTEXT + 1];
+    size_t k;
+
+    if (!text || !*text)
+        return FALSE;
+    if (msgtype_type(text, FALSE) == MSGTYP_STOP) {
+        *c = TH_ACCENT;
+        return TRUE;
+    }
+    for (k = 0; text[k] && k < sizeof low - 1; k++)
+        low[k] = (char) tolower((unsigned char) text[k]);
+    low[k] = '\0';
+    if (strstr(low, " trap") || !strncmp(low, "trap", 4)
+        || strstr(low, "trap door") || strstr(low, "squeaks loudly")) {
+        *c = RGB(242, 152, 62);
+        return TRUE;
+    }
+    if (iflags.use_menu_color)
+        for (mc = gm.menu_colorings; mc; mc = mc->next)
+            if (regex_match(text, mc->match)) {
+                *c = nhcolor_to_RGB(mc->color);
+                return TRUE;
+            }
+    if (!strncmp(text, "You see here", 12) || !strncmp(text, "You feel here", 13)
+        || !strncmp(text, "There is ", 9) || !strncmp(text, "There are ", 10)
+        || !strncmp(text, "Things that are here", 20)) {
+        *c = RGB(110, 200, 218);
+        return TRUE;
+    }
+    return FALSE;
+}
 
 typedef struct mswin_nethack_message_window {
     size_t max_text;
@@ -48,6 +95,8 @@ LRESULT CALLBACK NHMessageWndProc(HWND, UINT, WPARAM, LPARAM);
 static void register_message_window_class(void);
 static void onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam);
 static void onMSNH_VScroll(HWND hWnd, WPARAM wParam, LPARAM lParam);
+boolean mswin_msg_overlay_line(int, char *, size_t, COLORREF *, long *,
+                               boolean *, boolean *);
 #ifndef MSG_WRAP_TEXT
 static void onMSNH_HScroll(HWND hWnd, WPARAM wParam, LPARAM lParam);
 #endif
@@ -282,6 +331,9 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
             data->window_text[MSG_LINES - 1].text[newend] = '\0';
         } else {
             if (can_append_text(hWnd, msg_data->attr, msg_data->text)) {
+                if (!data->window_text[MSG_LINES - 1].has_hl)
+                    data->window_text[MSG_LINES - 1].has_hl = th_msg_highlight(
+                        msg_data->text, &data->window_text[MSG_LINES - 1].hl);
                 strncat(data->window_text[MSG_LINES - 1].text, "  ",
                         MAXWINDOWTEXT
                             - strlen(data->window_text[MSG_LINES - 1].text));
@@ -348,6 +400,9 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
 
                 /* append new text to the end of the array */
                 data->window_text[MSG_LINES - 1].attr = msg_data->attr;
+                data->window_text[MSG_LINES - 1].turn = svm.moves;
+                data->window_text[MSG_LINES - 1].has_hl = th_msg_highlight(
+                    msg_data->text, &data->window_text[MSG_LINES - 1].hl);
                 strncpy(data->window_text[MSG_LINES - 1].text, msg_data->text,
                         MAXWINDOWTEXT);
 
@@ -367,6 +422,8 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
 
         /* update window content */
         InvalidateRect(hWnd, NULL, TRUE);
+        if (MSG_OVERLAY) /* NetHack Modern: they're drawn on the map */
+            InvalidateRect(mswin_hwnd_from_winid(WIN_MAP), NULL, FALSE);
 
 #ifdef USER_SOUNDS
         if (!GetNHApp()->bNoSounds)
@@ -497,6 +554,8 @@ onMSNH_VScroll(HWND hWnd, WPARAM wParam, LPARAM lParam)
         SetScrollInfo(hWnd, SB_VERT, &si, TRUE);
 
         UpdateWindow(hWnd);
+        if (MSG_OVERLAY) /* NetHack Modern: show the history on the map */
+            InvalidateRect(mswin_hwnd_from_winid(WIN_MAP), NULL, FALSE);
     }
 }
 
@@ -650,6 +709,24 @@ onPaint(HWND hWnd)
             wbuf[SIZE(wbuf) - 1] = '\0';
             wlen = _tcslen(wbuf);
             setMsgTextColor(hdc, i < (MSG_LINES - data->lines_last_turn));
+            if (iflags.fx_theme) {
+                /* NetHack Modern: this turn's lines bright, older turns
+                   fading step by step; highlights keep their colour */
+                long age = svm.moves - data->window_text[i].turn;
+                double k = (i >= MSG_LINES - data->lines_last_turn) ? 1.0
+                           : (age <= 1) ? 0.78 : (age <= 3) ? 0.64 : 0.52;
+                COLORREF c = data->window_text[i].has_hl
+                                 ? data->window_text[i].hl
+                                 : message_fg_color;
+
+                SetTextColor(hdc, RGB(
+                    (int) (GetRValue(message_bg_color)
+                           + (GetRValue(c) - GetRValue(message_bg_color)) * k),
+                    (int) (GetGValue(message_bg_color)
+                           + (GetGValue(c) - GetGValue(message_bg_color)) * k),
+                    (int) (GetBValue(message_bg_color)
+                           + (GetBValue(c) - GetBValue(message_bg_color)) * k)));
+            }
 #ifdef MSG_WRAP_TEXT
             /* Find out how large the bounding rectangle of the text is */
             DrawText(hdc, wbuf, wlen, &draw_rt,
@@ -707,6 +784,20 @@ onPaint(HWND hWnd)
 #endif
             SelectObject(hdc, oldFont);
             y -= draw_rt.bottom - draw_rt.top;
+            if (iflags.fx_theme && i > 0 && *data->window_text[i].text
+                && *data->window_text[i - 1].text
+                && data->window_text[i - 1].turn
+                       != data->window_text[i].turn) {
+                /* NetHack Modern: a new turn starts below this rule */
+                static HBRUSH rule;
+                RECT r;
+
+                if (!rule)
+                    rule = CreateSolidBrush(TH_SEPARATOR);
+                SetRect(&r, draw_rt.left, y, client_rt.right - data->xChar,
+                        y + 1);
+                FillRect(hdc, &r, rule);
+            }
         }
     }
     SetTextColor(hdc, OldFg);
@@ -796,6 +887,19 @@ can_append_text(HWND hWnd, int attr, const char *text)
     if (data->lines_not_seen == 0)
         return FALSE;
 
+    /* NetHack Modern: on the map overlay every message gets its own line;
+       otherwise a message isn't merged into a line coloured differently */
+    if (MSG_OVERLAY)
+        return FALSE;
+    if (iflags.fx_theme) {
+        COLORREF c = 0;
+        boolean hl = th_msg_highlight(text, &c);
+
+        if (hl != data->window_text[MSG_LINES - 1].has_hl
+            || (hl && c != data->window_text[MSG_LINES - 1].hl))
+            return FALSE;
+    }
+
     /* cannot append text with different attributes */
     if (data->window_text[MSG_LINES - 1].attr != attr)
         return FALSE;
@@ -860,6 +964,8 @@ more_prompt_check(HWND hWnd)
         return FALSE; /* don't bother checking - nothig to "more" */
     if (data->lines_not_seen >= MSG_LINES)
         return TRUE; /* history size exceeded - always more */
+    if (MSG_OVERLAY) /* NetHack Modern: as many as the overlay shows */
+        return data->lines_not_seen >= MSG_OVERLAY_LINES;
 
     GetClientRect(hWnd, &client_rt);
     remaining_height = client_rt.bottom - client_rt.top;
@@ -894,4 +1000,32 @@ more_prompt_check(HWND hWnd)
     ReleaseDC(hWnd, hdc);
     return (remaining_height
             <= 0); /* TRUE if lines_not_seen take more that window height */
+}
+
+/* NetHack Modern: the message lines for the map overlay.  back = 0 is
+   the bottom line shown (the newest, unless Ctrl+P scrolled back).
+   Returns FALSE past the oldest. */
+boolean
+mswin_msg_overlay_line(int back, char *buf, size_t n, COLORREF *c,
+                       long *turn, boolean *recent, boolean *scrolled)
+{
+    HWND hWnd = mswin_hwnd_from_winid(WIN_MESSAGE);
+    PNHMessageWindow data;
+    int i;
+
+    if (!hWnd
+        || !(data = (PNHMessageWindow) GetWindowLongPtr(hWnd, GWLP_USERDATA)))
+        return FALSE;
+    i = min(data->yPos, MSG_LINES - 1) - back;
+    if (i < 0 || !*data->window_text[i].text)
+        return FALSE;
+    (void) strncpy(buf, data->window_text[i].text, n - 1);
+    buf[n - 1] = '\0';
+    strip_newline(buf);
+    *c = data->window_text[i].has_hl ? data->window_text[i].hl
+                                     : message_fg_color;
+    *turn = data->window_text[i].turn;
+    *recent = (i >= MSG_LINES - data->lines_last_turn);
+    *scrolled = (data->yPos < MSG_LINES - 1);
+    return TRUE;
 }

@@ -366,6 +366,12 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_motion, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_motion, Term_False,
            "sprites lunge and shake in combat")
+    NHOPTB(fx_msg_backdrop, Advanced, 0, opt_in, set_in_game,
+           Off, Yes, No, No, NoAlias, &iflags.fx_msg_backdrop, Term_False,
+           "NetHackW: a translucent panel behind messages on the map")
+    NHOPTB(fx_msg_overlay, Advanced, 0, opt_out, set_in_config,
+           On, Yes, No, No, NoAlias, &iflags.fx_msg_overlay, Term_False,
+           "NetHackW: messages float on the map (lower left) instead of a strip")
     NHOPTB(fx_particles, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_particles, Term_False,
            "sparks, embers and frost for rays and explosions")

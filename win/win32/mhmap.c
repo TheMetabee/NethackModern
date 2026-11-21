@@ -17,6 +17,7 @@
 #include "patchlevel.h"
 #endif
 #include "mhtheme.h"
+#include "mhmsgwnd.h"
 
 #define NHMAP_FONT_NAME TEXT("Terminal")
 #define NHMAP_TTFONT_NAME TEXT("Consolas")
@@ -212,6 +213,7 @@ static void fx_detect_particles(PNHMapWindow, const struct fx_event *);
 static void fx_scroll_particles(PNHMapWindow, const struct fx_event *);
 COLORREF nhcolor_to_RGB(int);
 static void fx_paint_particles(PNHMapWindow, HDC);
+static void fx_paint_messages(PNHMapWindow, HDC);
 static int fx_paint_auras(PNHMapWindow, HDC);
 static void fx_part_layer(PNHMapWindow, HDC);
 static void fx_make_fonts(PNHMapWindow);
@@ -448,17 +450,18 @@ mswin_map_layout(HWND hWnd, LPSIZE map_size)
             data->frontScale = data->monitorScale;
         }
         if (!bText && iflags.fx_theme && wnd_size.cy > 0) {
-            /* NetHack Modern: zoom. Automatic picks the largest step that
-               still shows the level's full height (it scrolls sideways,
-               following the hero); the player can step it with Ctrl+=/-
-               and Ctrl+wheel, Ctrl+0 goes back to automatic */
+            /* NetHack Modern: zoom. Automatic shows the whole level; the
+               player can zoom in (the map then follows the hero) with
+               Ctrl+=/- and Ctrl+wheel, Ctrl+0 goes back to automatic */
             int z;
 
-            data->zoomAuto = 1; /* 1.0x */
-            for (z = FX_NZOOM - 1; z >= 1; z--)
+            /* automatic: the largest step that shows the whole level */
+            data->zoomAuto = 0;
+            for (z = FX_NZOOM - 1; z >= 0; z--)
                 if (data->yBackTile * data->monitorScale * fx_zooms[z]
-                        * ROWNO
-                    <= wnd_size.cy) {
+                        * ROWNO <= wnd_size.cy
+                    && data->xBackTile * data->monitorScale * fx_zooms[z]
+                           * COLNO <= wnd_size.cx) {
                     data->zoomAuto = z;
                     break;
                 }
@@ -1403,6 +1406,7 @@ onPaint(HWND hWnd)
         fx_paint_particles(data, hdc);
         fx_paint_overlay(data, hdc);
         data->map_orig.x -= shx, data->map_orig.y -= shy;
+        fx_paint_messages(data, hdc); /* steady, even while shaking */
         BitBlt(hFrontBufferDC, ps.rcPaint.left, ps.rcPaint.top,
                ps.rcPaint.right - ps.rcPaint.left,
                ps.rcPaint.bottom - ps.rcPaint.top, hdc, ps.rcPaint.left,
@@ -3337,6 +3341,195 @@ mswin_map_zoom(int dir)
     sz.cx = data->tileWidth * COLNO;
     sz.cy = data->tileHeight * ROWNO;
     mswin_map_layout(hWnd, &sz);
+}
+
+/* NetHack Modern: messages float in the map's lower left, newest at the
+   bottom, each outlined so it reads over any tiles (and over a soft
+   panel with fx_msg_backdrop); older turns fade and then drop away */
+static void
+fx_paint_messages(PNHMapWindow data, HDC hdc)
+{
+#define FX_MSG_SHOW 6     /* lines at most */
+#define FX_MSG_KEEP 6     /* turns an old line stays up */
+    struct {
+        WCHAR w[TBUFSZ];
+        int len;
+        COLORREF c;
+        RECT r;
+    } ln[FX_MSG_SHOW];
+    char buf[TBUFSZ];
+    RECT client, box;
+    cached_font *fnt;
+    HGDIOBJ oldFont;
+    int n = 0, i, y, wmax, pad, ol, margin;
+    boolean scrolled = FALSE;
+
+    if (!(iflags.fx_theme && iflags.fx_msg_overlay))
+        return;
+    GetClientRect(data->hWnd, &client);
+    fnt = mswin_get_font(NHW_MESSAGE, ATR_BOLD, hdc, FALSE); /* semibold */
+    oldFont = SelectObject(hdc, fnt->hFont);
+    margin = max(10, fnt->height / 2);
+    wmax = min((client.right - client.left) * 3 / 5,
+               (client.right - client.left) - 2 * margin);
+    ol = max(2, fnt->height / 10); /* outline thickness */
+
+    /* newest first, up to FX_MSG_SHOW, recent turns only */
+    for (i = 0; n < FX_MSG_SHOW; i++) {
+        COLORREF c;
+        long turn;
+        boolean recent, sc;
+        double k2;
+        long age;
+
+        if (!mswin_msg_overlay_line(i, buf, sizeof buf, &c, &turn, &recent,
+                                    &sc))
+            break;
+        scrolled = sc;
+        age = svm.moves - turn;
+        if (!scrolled && !recent && age > FX_MSG_KEEP)
+            break;
+        if (!*buf)
+            continue;
+        k2 = recent || scrolled ? 1.0 : (age <= 1) ? 0.82
+             : (age <= 3) ? 0.66 : 0.5;
+        ln[n].c = RGB((int) (GetRValue(c) * k2), (int) (GetGValue(c) * k2),
+                      (int) (GetBValue(c) * k2));
+        winos_ascii_to_wide_str((const unsigned char *) buf, ln[n].w,
+                                TBUFSZ);
+        ln[n].w[TBUFSZ - 1] = 0;
+        ln[n].len = (int) wcslen(ln[n].w);
+        SetRect(&ln[n].r, 0, 0, wmax, 0);
+        DrawTextW(hdc, ln[n].w, ln[n].len, &ln[n].r,
+                  DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
+        n++;
+    }
+    if (!n) {
+        SelectObject(hdc, oldFont);
+        return;
+    }
+
+    /* stack them up from the bottom */
+    y = client.bottom - margin;
+    for (i = 0; i < n; i++) {
+        int h = ln[i].r.bottom - ln[i].r.top;
+
+        y -= h;
+        OffsetRect(&ln[i].r, client.left + margin, y - ln[i].r.top);
+        y -= max(2, fnt->height / 8);
+    }
+
+    if (iflags.fx_msg_backdrop) {
+        /* a soft dark panel behind them */
+        static HDC dotDC;
+        static HBITMAP dotBmp;
+        BLENDFUNCTION bf;
+
+        pad = max(6, fnt->height / 3);
+        SetRect(&box, client.left + margin - pad, ln[n - 1].r.top - pad,
+                client.left + margin, client.bottom - margin + pad);
+        for (i = 0; i < n; i++)
+            box.right = max(box.right, ln[i].r.right + pad);
+        if (!dotDC) {
+            dotDC = CreateCompatibleDC(hdc);
+            dotBmp = CreateCompatibleBitmap(hdc, 1, 1);
+            SelectObject(dotDC, dotBmp);
+            SetPixel(dotDC, 0, 0, TH_BG_PANEL);
+        }
+        bf.BlendOp = AC_SRC_OVER;
+        bf.BlendFlags = 0;
+        bf.SourceConstantAlpha = 185;
+        bf.AlphaFormat = 0;
+        (void) GdiAlphaBlend(hdc, box.left, box.top, box.right - box.left,
+                             box.bottom - box.top, dotDC, 0, 0, 1, 1, bf);
+    }
+
+    if (!iflags.fx_msg_backdrop) {
+        /* where the lines lie over the map itself (zoomed in), a soft
+           shade behind them, darkest in the corner and fading out up
+           and to the right, so busy floors don't swallow the text */
+        int mapbottom = data->map_orig.y - data->yPos * data->yFrontTile
+                        + ROWNO * data->yFrontTile;
+
+        if (mapbottom > ln[n - 1].r.top) {
+            static HDC shDC;
+            static HBITMAP shBmp;
+            BLENDFUNCTION bf;
+            int right = client.left + margin, top, step, sx, sy;
+
+            for (i = 0; i < n; i++)
+                right = max(right, ln[i].r.right);
+            right = min(client.right, right + 4 * margin);
+            top = max(client.top, ln[n - 1].r.top - 3 * margin);
+            if (!shDC) {
+                shDC = CreateCompatibleDC(hdc);
+                shBmp = CreateCompatibleBitmap(hdc, 1, 1);
+                SelectObject(shDC, shBmp);
+                SetPixel(shDC, 0, 0, RGB(4, 5, 8));
+            }
+            bf.BlendOp = AC_SRC_OVER;
+            bf.BlendFlags = 0;
+            bf.AlphaFormat = 0;
+            step = max(6, fnt->height / 3);
+            for (sy = top; sy < client.bottom; sy += step)
+                for (sx = client.left; sx < right; sx += step) {
+                    double vy = (double) (sy - top) / max(1, client.bottom - top);
+                    double vx = 1.0 - (double) (sx - client.left)
+                                          / max(1, right - client.left);
+                    double a = min(1.0, vy * 2.0) * min(1.0, vx * 2.6);
+
+                    if (a <= 0.02)
+                        continue;
+                    bf.SourceConstantAlpha = (BYTE) (232 * a);
+                    (void) GdiAlphaBlend(hdc, sx, sy, step, step, shDC, 0, 0,
+                                         1, 1, bf);
+                }
+        }
+    }
+
+    /* outline first (dark, all round), then the text */
+    SetBkMode(hdc, TRANSPARENT);
+    for (i = 0; i < n; i++) {
+        int dx, dy;
+
+        /* a soft shadow down and right, then a solid round outline */
+        SetTextColor(hdc, RGB(0, 0, 0));
+        for (dy = 1; dy <= ol + 1; dy++) {
+            RECT r = ln[i].r;
+
+            OffsetRect(&r, dy, dy + 1);
+            DrawTextW(hdc, ln[i].w, ln[i].len, &r,
+                      DT_NOPREFIX | DT_WORDBREAK);
+        }
+        SetTextColor(hdc, RGB(4, 5, 8));
+        for (dy = -ol; dy <= ol; dy++)
+            for (dx = -ol; dx <= ol; dx++) {
+                RECT r = ln[i].r;
+
+                if (!dx && !dy)
+                    continue;
+                if (dx * dx + dy * dy > ol * ol + 1)
+                    continue; /* round, not square, corners */
+                OffsetRect(&r, dx, dy);
+                DrawTextW(hdc, ln[i].w, ln[i].len, &r,
+                          DT_NOPREFIX | DT_WORDBREAK);
+            }
+        SetTextColor(hdc, ln[i].c);
+        DrawTextW(hdc, ln[i].w, ln[i].len, &ln[i].r,
+                  DT_NOPREFIX | DT_WORDBREAK);
+    }
+    if (scrolled) {
+        /* looking back through history (Ctrl+P) */
+        RECT r = ln[n - 1].r;
+
+        OffsetRect(&r, 0, -(fnt->height + 2));
+        SetTextColor(hdc, TH_ACCENT);
+        DrawTextW(hdc, L"\x25B2 earlier messages", -1, &r,
+                  DT_NOPREFIX | DT_SINGLELINE);
+    }
+    SelectObject(hdc, oldFont);
+#undef FX_MSG_SHOW
+#undef FX_MSG_KEEP
 }
 
 /* a keypress snaps every sprite back to its square (design rule 2) */
