@@ -14,9 +14,10 @@ NetHackW port (`win/win32/`, mainly `mhmap.c`, `mhstatus.c`,
 `mhmsgwnd.c`, `mhmenu.c`, `mhmain.c`, `mhsplash.c`, `mhtheme.h`). Every
 effect has its own `fx_*` option (see "Options" at the end).
 
-Settings changed from NetHackW's menus (bar style and border, volumes,
-shade) are written to `nethackmodern.rc` beside the player's own config
-file and read after it, so the player's `.nethackrc` is never touched.
+Any `fx_` setting the player changes while playing (from NetHackW's
+menus or the options menu, `m O`) is written to `nethackmodern.rc`
+beside the player's own config file and read after it, so the player's
+`.nethackrc` is never touched.
 Deleting a line there, or the file, goes back to the player's own
 settings.
 
@@ -309,12 +310,24 @@ consider a new SDL2 or Qt-based port reading the same fx stream.
   warm tint); remembered squares are dimmed and solid rock kept dark.
   Only what the hero can already see is used. The shade level (light,
   medium, dark, deep) is also in the View menu.
+  Candle, oil-lamp and fire-creature light flickers; lanterns and
+  glowing weapons stay steady.
+- **Summoning:** each summoned or created monster in sight arrives with
+  a spiral, a flash and a ring, one after another in a group: violet
+  for create monster, fire and smoke for demons, gold for angels, a
+  dusty burst for insects and snakes. Hidden or disguised ones get
+  nothing.
+- **Message position** (`fx_msg_pos`): the message lines can sit in any
+  corner or the middle of the top or bottom edge, the newest always
+  lowest. Also in the View menu.
+- **Remembered settings:** every `fx_` option changed in play is kept in
+  `nethackmodern.rc`, including whether the inventory panel is hidden
+  (`fx_hide_inventory`).
 - More sounds and effects found in play: bat deaths, vampires rising,
   the inventory bag, menu letters in a clearer font, a hero frame that
   slides with the hero.
 
-*Still to do:* a higher-resolution tileset; perhaps flickering lamp
-light; saving the other menu toggles to `nethackmodern.rc`.
+*Still to do:* a higher-resolution tileset.
 
 ## Open decisions
 
@@ -353,3 +366,5 @@ All are in the full options list (`m O`), under the `fx_` names:
 | `fx_ambience` | on | level ambience loops |
 | `fx_volume` | 100 | sound effects volume, 0 to 100 |
 | `fx_ambience_volume` | 60 | ambience volume, 0 to 100 |
+| `fx_msg_pos` | bottom-left | where messages sit: top or bottom, left, centre or right |
+| `fx_hide_inventory` | off | keep the inventory side panel hidden |
