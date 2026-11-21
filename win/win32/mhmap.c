@@ -36,11 +36,13 @@
 #define FX_KILL_MS 1100     /* lifetime of "Killed" */
 #define FX_STACK_MS 400     /* a new number on a square this young stacks */
 #define FX_MAXFLOAT 64
-#define FX_MAXANIM 32
+#define FX_MAXANIM 96
 #define FXM_LUNGE 1
 #define FXM_SHAKE 2
 #define FXM_DEATH 3
 #define FXM_SLIDE 4         /* hurtled: glide in from the previous square */
+#define FXM_GHOST 5         /* speed afterimage left behind by a step */
+#define FX_GHOST_MS 340
 #define FX_SLIDE_MS 70      /* one hurtled step */
 #define FX_STEP_MS 110      /* an ordinary step */
 #define FX_DEATH_MS 360     /* shake ~35%, then fade out */
@@ -1725,6 +1727,22 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
         a->dur = step ? (max(abs(dx), abs(dy)) > 1 ? FX_STEP_MS + 40
                                                    : FX_STEP_MS)
                       : FX_SLIDE_MS;
+        if (step && iflags.fx_afterimage) {
+            int k;
+            short tile = a->tile;
+
+            for (k = 1; k <= 3; k++) {
+                a = fx_new_anim(data);
+                a->kind = FXM_GHOST;
+                a->x = ev->x, a->y = ev->y;
+                a->dx = dx, a->dy = dy;
+                a->tile = tile;
+                a->hit = FALSE;
+                a->strength = k; /* 1 = nearest the creature */
+                a->start = now;
+                a->dur = FX_GHOST_MS;
+            }
+        }
         fx_start_timer(data);
     } else if (ev->type == FXE_DEATH) {
         DWORD start = now;
@@ -2671,6 +2689,36 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
         if (age < 0 || age >= (long) a->dur)
             continue;
         p = (double) age / a->dur;
+        if (a->kind == FXM_GHOST) {
+            unsigned long au = data->map[a->x][a->y].fxauras;
+            int nghost = (au & FXA_VERYFAST) ? 3 : (au & FXA_FAST) ? 2 : 0;
+
+            /* the hero's intrinsic speed is too common to trail every
+               step: only extra speed (boots, potion, spell) shows */
+            if (a->x == u.ux && a->y == u.uy && !(au & FXA_VERYFAST))
+                nghost = 0;
+            double back, lag;
+            int alpha;
+
+            if (!iflags.fx_afterimage)
+                continue; /* turned off since the step */
+            if (a->strength > nghost
+                || !glyph_is_monster(data->map[a->x][a->y].glyph))
+                continue;
+            /* where the creature is on its slide right now (the slide
+               runs FX_STEP_MS), and each afterimage further back along
+               the way it came, lagging behind and fading */
+            lag = (nghost == 3) ? 0.3 : 0.42;
+            back = 1.0 - min(1.0, (double) age / FX_STEP_MS);
+            back = back * back * (3 - 2 * back);
+            back = min(1.0, back + lag * a->strength * (1.0 - p));
+            alpha = (int) ((150 - 40 * a->strength) * (1.0 - p));
+            cx = ox + a->x * tw - (int) (a->dx * tw * back);
+            cy = oy + a->y * th - (int) (a->dy * th * back);
+            fx_blend_tile(data, hdc, cx, cy, tw, th,
+                          data->map[a->x][a->y].gm.tileidx, alpha);
+            continue;
+        }
         if (a->kind == FXM_SLIDE) {
             /* whatever is drawn there now (the step was reported before
                the map caught up); nothing to slide if it's gone */
