@@ -18,5 +18,7 @@ void nhma_set_master_volume(float); /* 0.0 .. 1.0 */
 int nhma_play(const char *path, float volume, float pitch, float pan);
 /* NetHack Modern: a looping ambience, crossfaded; NULL fades it out */
 void nhma_ambience(const char *path, float volume, unsigned fade_ms);
+/* NetHack Modern: the player's effect and ambience volumes, 0.0 .. 1.0 */
+void nhma_set_volumes(float effects, float ambience);
 
 #endif /* NHMINIAUDIO_H */

@@ -1489,6 +1489,10 @@ nh_compose_unicode_screenshot(void)
 #define TB_ZOOM 3     /* map zoom: arg +1, -1, 0 */
 #define TB_SEP 4
 #define TB_INVEN 5    /* show or hide the inventory panel */
+#define TB_VOLUME 6   /* arg: 1/2 effects up/down, 3/4 ambience up/down */
+
+extern void ma_apply_volumes(void);  /* masound.c */
+extern void ma_volume_preview(void);
 
 struct tb_item {
     const char *label;
@@ -1510,6 +1514,11 @@ static const struct tb_item tb_game[] = {
     TBSEP,
     TBK("Options", "O", "O"),
     TBK("All options", "m O", "mO"),
+    TBSEP,
+    { "Sound louder", "", TB_VOLUME, NULL, 1 },
+    { "Sound quieter", "", TB_VOLUME, NULL, 2 },
+    { "Ambience louder", "", TB_VOLUME, NULL, 3 },
+    { "Ambience quieter", "", TB_VOLUME, NULL, 4 },
 };
 static const struct tb_item tb_view[] = {
     TBZ("Zoom in", "Ctrl+=", 1),
@@ -1643,6 +1652,7 @@ static HWND tb_hwnd;
 static int tb_hot = -1, tb_open = -1;
 static int tb_x[TB_NTOPIC + 1]; /* topic left edges, and the end */
 static RECT tb_inv;             /* the inventory toggle */
+static char tb_toast[40];       /* a passing note, e.g. "Sound 70%" */
 
 int
 mswin_topbar_height(void)
@@ -1707,6 +1717,21 @@ tb_run(const struct tb_item *it)
     case TB_INVEN:
         mswin_toggle_inven_panel();
         break;
+    case TB_VOLUME: {
+        int *v = (it->arg <= 2) ? &iflags.fx_volume
+                                : &iflags.fx_ambience_volume;
+
+        *v += (it->arg == 1 || it->arg == 3) ? 10 : -10;
+        *v = max(0, min(100, *v));
+        ma_apply_volumes();
+        if (it->arg <= 2)
+            ma_volume_preview();
+        Sprintf(tb_toast, "%s %d%%", (it->arg <= 2) ? "Sound" : "Ambience",
+                *v);
+        SetTimer(tb_hwnd, 1, 1800, NULL);
+        InvalidateRect(tb_hwnd, NULL, FALSE);
+        break;
+    }
     }
     SetFocus(GetNHApp()->hMainWnd);
 }
@@ -1781,6 +1806,15 @@ tb_paint(HWND hWnd)
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     } else {
         SetRectEmpty(&tb_inv);
+    }
+    if (*tb_toast) {
+        RECT t = rc;
+
+        t.right = (tb_inv.left > 0 ? tb_inv.left : rc.right) - 16;
+        t.left = tb_x[TB_NTOPIC] + 16;
+        SetTextColor(hdc, TH_ACCENT);
+        DrawTextA(hdc, tb_toast, -1, &t,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
     SelectObject(hdc, of);
     DeleteObject(bg);
@@ -1870,6 +1904,11 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_MOUSELEAVE:
         tb_hot = -1;
+        InvalidateRect(hWnd, NULL, FALSE);
+        return 0;
+    case WM_TIMER: /* the passing note has had its time */
+        KillTimer(hWnd, 1);
+        tb_toast[0] = '\0';
         InvalidateRect(hWnd, NULL, FALSE);
         return 0;
     case WM_LBUTTONDOWN: {

@@ -351,6 +351,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_afterimage, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_afterimage, Term_False,
            "fast creatures leave fading afterimages as they move")
+    NHOPTC(fx_ambience_volume, Advanced, 4, opt_in, set_in_game,
+                Yes, Yes, No, No, NoAlias,
+                "volume of the level ambience, 0 to 100")
     NHOPTB(fx_ambience, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_ambience, Term_False,
            "a quiet background loop for each kind of level")
@@ -387,6 +390,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_screen_shake, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_screen_shake, Term_False,
            "shake the map view for explosions and big hits")
+    NHOPTC(fx_volume, Advanced, 4, opt_in, set_in_game,
+                Yes, Yes, No, No, NoAlias,
+                "volume of the sound effects, 0 to 100")
     NHOPTB(fx_theme, Advanced, 0, opt_out, set_in_config,
            On, Yes, No, No, NoAlias, &iflags.fx_theme, Term_False,
            "NetHackW: modern dark theme and fonts (overrides windowcolors)")

@@ -1549,11 +1549,28 @@ ma_ambience_accents(void)
                   ma_frand(-0.75f, 0.75f));
 }
 
+/* follow the player's volume options (cheap; done on every event) */
+void
+ma_apply_volumes(void)
+{
+    nhma_set_volumes((float) iflags.fx_volume / 100.0f,
+                     (float) iflags.fx_ambience_volume / 100.0f);
+}
+
+/* a short sample at the current effects volume, after it's changed */
+void
+ma_volume_preview(void)
+{
+    ma_apply_volumes();
+    ma_play_named("pickup_coin", 0.7f, 1.0f, 0.0f);
+}
+
 static void
 ma_fx_event(const struct fx_event *ev)
 {
     float vol, pan;
 
+    ma_apply_volumes();
     ma_spatial(ev->x, ev->y, &vol, &pan);
     switch (ev->type) {
     case FXE_ATTACK:
@@ -1774,6 +1791,7 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
 {
     float vol = (float) (volume > 0 ? volume : 50) / 100.0f;
 
+    ma_apply_volumes(); /* NetHack Modern: the player's volume options */
     switch (seid) {
     case se_door_open:
     case se_door_unlock_and_open:

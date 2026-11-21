@@ -286,6 +286,8 @@ struct instance_flags {
     boolean fx_auras;          /* NetHack Modern: lasting status effects */
     boolean fx_afterimage;     /* NetHack Modern: speed afterimages */
     boolean fx_ambience;       /* NetHack Modern: level ambience loops */
+    int fx_volume;             /* NetHack Modern: effects volume, 0..100 */
+    int fx_ambience_volume;    /* NetHack Modern: ambience volume, 0..100 */
     boolean fx_theme;          /* NetHack Modern: NetHackW dark theme */
     boolean fx_msg_overlay;    /* NetHack Modern: messages on the map */
     boolean fx_msg_backdrop;   /* NetHack Modern: panel behind them */

@@ -3768,6 +3768,59 @@ optfn_scores(
     return optn_ok;
 }
 
+/* NetHack Modern: the effects and ambience volumes, 0 to 100 */
+staticfn int
+optfn_fx_volume_common(int optidx, int req, boolean negated, char *opts,
+                       int *val, int dflt)
+{
+    char *op;
+
+    if (req == do_init) {
+        *val = dflt;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        op = string_for_opt(opts, negated);
+        if (negated) {
+            *val = 0;
+        } else if (op != empty_optstr) {
+            int v = atoi(op);
+
+            if (v < 0 || v > 100) {
+                config_error_add("%s must be from 0 to 100",
+                                 allopt[optidx].name);
+                return optn_err;
+            }
+            *val = v;
+        } else {
+            return optn_err;
+        }
+        return optn_ok;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Sprintf(opts, "%d", *val);
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
+staticfn int
+optfn_fx_volume(int optidx, int req, boolean negated, char *opts, char *op)
+{
+    nhUse(op);
+    return optfn_fx_volume_common(optidx, req, negated, opts,
+                                  &iflags.fx_volume, 100);
+}
+
+staticfn int
+optfn_fx_ambience_volume(int optidx, int req, boolean negated, char *opts,
+                         char *op)
+{
+    nhUse(op);
+    return optfn_fx_volume_common(optidx, req, negated, opts,
+                                  &iflags.fx_ambience_volume, 60);
+}
+
 staticfn int
 optfn_scroll_amount(
     int optidx, int req, boolean negated,
