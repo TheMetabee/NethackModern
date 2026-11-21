@@ -1,7 +1,7 @@
 # NetHack Modern
 
 A fork of **NetHack 5.0** (official DevTeam branch `NetHack-5.0`) whose goal is
-to bring the tiles experience up to the feel of *Tales of Maj'Eyal*: clear
+to bring the tiles experience up to the feel of modern roguelikes: clear
 visual feedback on what hit what and where, floating damage numbers, monster
 health bars, attack/spell animations, and a full sound layer.
 
