@@ -387,6 +387,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTC(fx_shade, Advanced, 10, opt_in, set_in_game,
                 No, Yes, No, No, NoAlias,
                 "NetHackW: how dark out-of-sight squares are: light, medium, dark or deep")
+    NHOPTB(fx_hide_inventory, Advanced, 0, opt_in, set_in_game,
+           Off, Yes, No, No, NoAlias, &iflags.fx_hide_inventory, Term_False,
+           "NetHackW: keep the inventory side panel hidden")
     NHOPTB(fx_lighting, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_lighting, Term_False,
            "NetHackW: soft light on the map; remembered squares dimmed")

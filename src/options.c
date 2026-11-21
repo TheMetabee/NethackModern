@@ -3768,6 +3768,71 @@ optfn_scores(
     return optn_ok;
 }
 
+/* NetHack Modern: every fx_ setting the player changes while playing
+   (from NetHackW's menus or the options menu) is kept in
+   nethackmodern.rc.  A snapshot of them is taken once the config files
+   are read; whatever differs from it later is written out. */
+static char *fx_optsnap[OPTCOUNT];
+
+staticfn boolean
+fx_opt_setting(int i, char *buf, size_t bufsz)
+{
+    char v[BUFSZ];
+
+    if (strncmp(allopt[i].name, "fx_", 3))
+        return FALSE;
+    if (allopt[i].opttyp == BoolOpt && allopt[i].addr) {
+        Snprintf(buf, bufsz, "%s%s",
+                 *(boolean *) allopt[i].addr ? "" : "!", allopt[i].name);
+        return TRUE;
+    }
+    if (allopt[i].opttyp == CompOpt && allopt[i].optfn) {
+        v[0] = '\0';
+        if ((*allopt[i].optfn)(allopt[i].idx, get_cnf_val, FALSE, v,
+                               empty_optstr) == optn_ok
+            && v[0]) {
+            Snprintf(buf, bufsz, "%s:%s", allopt[i].name, v);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+void
+fx_options_snapshot(void)
+{
+    char buf[BUFSZ];
+    int i;
+
+    for (i = 0; i < OPTCOUNT && allopt[i].name; i++) {
+        if (fx_optsnap[i])
+            free((genericptr_t) fx_optsnap[i]), fx_optsnap[i] = 0;
+        if (fx_opt_setting(i, buf, sizeof buf))
+            fx_optsnap[i] = dupstr(buf);
+    }
+}
+
+/* called often (each screen flush): cheap when nothing changed */
+void
+fx_options_remember(void)
+{
+    char buf[BUFSZ];
+    int i;
+
+    if (!program_state.in_moveloop)
+        return;
+    for (i = 0; i < OPTCOUNT && allopt[i].name; i++) {
+        if (!fx_opt_setting(i, buf, sizeof buf))
+            continue;
+        if (fx_optsnap[i] && !strcmp(fx_optsnap[i], buf))
+            continue;
+        cfg_remember_option(allopt[i].name, buf);
+        if (fx_optsnap[i])
+            free((genericptr_t) fx_optsnap[i]);
+        fx_optsnap[i] = dupstr(buf);
+    }
+}
+
 /* NetHack Modern: where NetHackW's messages sit on the map */
 static const char *const fx_msg_poses[] = {
     "top-left", "top-centre", "top-right",
@@ -7526,6 +7591,7 @@ initoptions_finish(void)
     disregard_this_option(opt_mention_decor);  /* defer this */
     rcfile();
     modern_rcfile(); /* NetHack Modern: menu-made settings, on top */
+    fx_options_snapshot();
 
     (void) fruitadd(svp.pl_fruit, (struct fruit *) 0);
     /*
@@ -8948,6 +9014,7 @@ doset_simple(void)
         }
     } while (pickedone > 0);
     give_opt_msg = TRUE;
+    fx_options_remember(); /* NetHack Modern */
     return ECMD_OK;
 }
 
@@ -9189,6 +9256,7 @@ doset(void) /* changing options via menu by Per Liboriussen */
     }
 
     reset_needed_visuals();
+    fx_options_remember(); /* NetHack Modern */
     return ECMD_OK;
 }
 

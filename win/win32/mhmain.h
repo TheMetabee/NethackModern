@@ -17,6 +17,8 @@ void mswin_menu_check_intf_mode(void);
 void mswin_topbar_init(HWND main);
 int mswin_topbar_height(void);
 void mswin_topbar_place(int width);
-extern boolean mswin_inven_hidden;
+/* NetHack Modern: the inventory side panel can be hidden (an option, so
+   it's remembered) */
+#define mswin_inven_hidden (iflags.fx_hide_inventory)
 void mswin_toggle_inven_panel(void);
 #endif /* MSWINMainWindow_h */

@@ -1660,13 +1660,12 @@ static const struct tb_topic {
 #define TB_NTOPIC SIZE(tb_topics)
 
 static HWND tb_hwnd_ref; /* (the topic bar, set when it's made) */
-/* NetHack Modern: the inventory side panel can be hidden */
-boolean mswin_inven_hidden = FALSE;
 
 void
 mswin_toggle_inven_panel(void)
 {
     mswin_inven_hidden = !mswin_inven_hidden;
+    fx_options_remember(); /* kept in nethackmodern.rc at once */
     mswin_layout_main_window(NULL);
     if (tb_hwnd_ref)
         InvalidateRect(tb_hwnd_ref, NULL, FALSE);
@@ -1835,6 +1834,7 @@ tb_run(const struct tb_item *it)
         break;
     }
     }
+    fx_options_remember(); /* anything a menu item changed, kept now */
     SetFocus(GetNHApp()->hMainWnd);
 }
 
