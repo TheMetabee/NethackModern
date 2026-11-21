@@ -984,10 +984,45 @@ wiz_light_sources(void)
 
 /*light.c*/
 
+/* NetHack Modern: how much a light source flickers, 0..100: candles and
+   oil flames a lot, a magic lamp a little, burning creatures a lot;
+   lanterns, glowing weapons and lights don't */
+staticfn int
+fx_light_flicker(light_source *ls)
+{
+    if (ls->type == LS_OBJECT && ls->id.a_obj) {
+        switch (ls->id.a_obj->otyp) {
+        case TALLOW_CANDLE:
+        case WAX_CANDLE:
+        case CANDELABRUM_OF_INVOCATION:
+        case OIL_LAMP:
+        case POT_OIL:
+            return 100;
+        case MAGIC_LAMP:
+            return 35;
+        default:
+            return 0;
+        }
+    }
+    if (ls->type == LS_MONSTER && ls->id.a_monst) {
+        struct permonst *ptr = (ls->id.a_monst == &gy.youmonst)
+                                   ? gy.youmonst.data
+                                   : ls->id.a_monst->data;
+
+        if (ptr == &mons[PM_FIRE_ELEMENTAL] || ptr == &mons[PM_FIRE_VORTEX]
+            || ptr == &mons[PM_FLAMING_SPHERE]
+            || ptr == &mons[PM_SALAMANDER])
+            return 80;
+    }
+    return 0;
+}
+
 /* NetHack Modern: the light sources shining right now (as of the last
-   vision pass), for the window port's lighting; returns how many */
+   vision pass), for the window port's lighting; returns how many.
+   'flick' (may be null) gets how much each one flickers, 0..100. */
 int
-fx_light_sources(coordxy *xs, coordxy *ys, short *ranges, int max)
+fx_light_sources(coordxy *xs, coordxy *ys, short *ranges, short *flick,
+                 int max)
 {
     light_source *ls;
     int n = 0;
@@ -996,6 +1031,8 @@ fx_light_sources(coordxy *xs, coordxy *ys, short *ranges, int max)
         if ((ls->flags & 0x1) /* LSF_SHOW */ && ls->range > 0
             && isok(ls->x, ls->y)) {
             xs[n] = ls->x, ys[n] = ls->y, ranges[n] = ls->range;
+            if (flick)
+                flick[n] = (short) fx_light_flicker(ls);
             n++;
         }
     return n;

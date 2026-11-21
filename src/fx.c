@@ -450,6 +450,7 @@ fx_sync(void)
     uchar health;
     int i, j, cur, max;
 
+    fx_options_remember(); /* NetHack Modern: keep changed fx_ settings */
     if (fx.busy || !fx_active() || program_state.in_getlev
         || program_state.restoring || !u.uz.dlevel)
         return;
@@ -1420,14 +1421,31 @@ fx_shade_level(boolean rock)
    (lit rooms fully, squares lit by a lamp or seen in the dark less so);
    remembered squares are dim.  'warm' is the glow of a nearby lamp,
    candle or other light source on a square in sight.  Both 0..255. */
-void
+int
 fx_light_map(unsigned char bright[COLNO][ROWNO],
-             unsigned char warm[COLNO][ROWNO])
+             unsigned char warm[COLNO][ROWNO], double t)
 {
 #define FX_MAXLIGHTS 64
     coordxy lx[FX_MAXLIGHTS], ly[FX_MAXLIGHTS];
-    short lr[FX_MAXLIGHTS];
-    int x, y, i, n = fx_light_sources(lx, ly, lr, FX_MAXLIGHTS);
+    short lr[FX_MAXLIGHTS], lf[FX_MAXLIGHTS];
+    double gain[FX_MAXLIGHTS], dim[FX_MAXLIGHTS], heat[FX_MAXLIGHTS];
+    int x, y, i, n = fx_light_sources(lx, ly, lr, lf, FX_MAXLIGHTS);
+    int flickering = 0;
+
+    /* a flame breathes: the whole pool of light dims and brightens, its
+       reach and warmth swelling with it.  A few slow, unrelated waves
+       (about one breath a second), each flame out of step with the
+       others */
+    for (i = 0; i < n; i++) {
+        double ph = lx[i] * 1.37 + ly[i] * 2.91 + i * 0.73,
+               k = lf[i] / 100.0,
+               wob = 0.6 * sin(t * 3.4 + ph) + 0.28 * sin(t * 5.9 + 2.1 * ph)
+                     + 0.12 * sin(t * 9.7 + 0.7 * ph);
+
+        gain[i] = 1.0 + k * 0.2 * wob;               /* reach */
+        dim[i] = 1.0 - k * 0.2 * (0.5 - 0.5 * wob);  /* whole pool */
+        heat[i] = 1.0 + k * 0.45 * wob;              /* warmth */
+    }
 
     for (x = 0; x < COLNO; x++)
         for (y = 0; y < ROWNO; y++) {
@@ -1448,15 +1466,19 @@ fx_light_map(unsigned char bright[COLNO][ROWNO],
                 b = 0.62;          /* seen in the dark (next to you) */
             for (i = 0; i < n; i++) {
                 double dx = x - lx[i], dy = y - ly[i];
-                double d = sqrt(dx * dx + dy * dy), r = lr[i] + 0.5;
+                double d = sqrt(dx * dx + dy * dy), r = lr[i] + 0.5,
+                       rg = r * gain[i];
 
                 if (d > r)
                     continue;
+                if (lf[i])
+                    flickering = 1;
                 /* a lamp's own light: full at the lamp, softer at the
-                   edge of its reach */
+                   edge of its reach (which a flame makes waver) */
                 if (templit(x, y) && !levl[x][y].lit)
-                    b = max(b, 1.0 - 0.42 * (d / r) * (d / r));
-                w = max(w, 1.0 - d / r);
+                    b = max(b, min(1.0, 1.0 - 0.42 * (d / rg) * (d / rg))
+                                   * dim[i]);
+                w = max(w, min(1.0, (1.0 - d / r) * gain[i] * heat[i]));
             }
             if (b <= 0.0)
                 b = 0.62;
@@ -1466,4 +1488,5 @@ fx_light_map(unsigned char bright[COLNO][ROWNO],
             warm[x][y] = (unsigned char) (w * 255.0);
         }
 #undef FX_MAXLIGHTS
+    return flickering;
 }

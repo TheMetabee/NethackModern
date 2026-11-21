@@ -217,7 +217,7 @@ extern void fx_glyphinfo(coordxy, coordxy, int, glyph_info *);
 
 /* NetHack Modern: how lit each square looks (for the window port) */
 int fx_shade_level(boolean rock);
-void fx_light_map(unsigned char bright[COLNO][ROWNO],
-                  unsigned char warm[COLNO][ROWNO]);
+int fx_light_map(unsigned char bright[COLNO][ROWNO],
+                 unsigned char warm[COLNO][ROWNO], double t);
 
 #endif /* FX_H */

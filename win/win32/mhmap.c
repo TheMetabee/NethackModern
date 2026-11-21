@@ -216,7 +216,7 @@ COLORREF nhcolor_to_RGB(int);
 static void fx_paint_particles(PNHMapWindow, HDC);
 static void fx_paint_messages(PNHMapWindow, HDC);
 static void fx_paint_hero_frame(PNHMapWindow, HDC);
-static void fx_paint_lighting(PNHMapWindow, HDC);
+static boolean fx_paint_lighting(PNHMapWindow, HDC);
 static int fx_paint_auras(PNHMapWindow, HDC);
 static void fx_part_layer(PNHMapWindow, HDC);
 static void fx_make_fonts(PNHMapWindow);
@@ -1356,6 +1356,7 @@ onPaint(HWND hWnd)
            numbers don't flicker */
         RECT client;
         HDC hdc;
+        boolean flicker;
 
         GetClientRect(hWnd, &client);
         if (!data->compDC || data->compW < client.right
@@ -1404,10 +1405,12 @@ onPaint(HWND hWnd)
         }
         fx_paint_translucent(data, hdc);
         fx_paint_sprites(data, hdc);
-        fx_paint_lighting(data, hdc);
+        flicker = fx_paint_lighting(data, hdc);
         fx_paint_hero_frame(data, hdc);
-        if (!fx_paint_auras(data, hdc))
+        if (!fx_paint_auras(data, hdc) && !flicker)
             fx_aura_timer(data, FALSE);
+        else if (flicker)
+            fx_aura_timer(data, TRUE); /* lamp flames keep moving */
         fx_paint_particles(data, hdc);
         fx_paint_overlay(data, hdc);
         data->map_orig.x -= shx, data->map_orig.y -= shy;
@@ -3654,7 +3657,7 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
    light fades off instead of stopping at tile edges.  It is built at a
    few pixels per square and stretched; rebuilt only when the light
    changes. */
-static void
+static boolean
 fx_paint_lighting(PNHMapWindow data, HDC hdc)
 {
     static unsigned char bright[COLNO][ROWNO], warm[COLNO][ROWNO];
@@ -3667,11 +3670,12 @@ fx_paint_lighting(PNHMapWindow data, HDC hdc)
     const int S = 8; /* layer pixels per square */
     int W = COLNO * S, H = ROWNO * S;
     int ox, oy, tw, th, x, y;
+    boolean flicker;
     BLENDFUNCTION bf;
 
     if (!iflags.fx_lighting || data->bAsciiMode || Is_rogue_level(&u.uz)
         || u.uswallow || !program_state.in_moveloop)
-        return;
+        return FALSE;
     if (!lightDC) {
         BITMAPINFO bi;
 
@@ -3686,10 +3690,10 @@ fx_paint_lighting(PNHMapWindow data, HDC hdc)
         lightBmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS,
                                     (void **) &bits, NULL, 0);
         if (!lightDC || !lightBmp || !bits)
-            return;
+            return FALSE;
         SelectObject(lightDC, lightBmp);
     }
-    fx_light_map(bright, warm);
+    flicker = fx_light_map(bright, warm, GetTickCount() / 1000.0) != 0;
     /* squares never seen take their neighbours' shade, so the dark of
        the unknown doesn't make a halo round what you remember */
     for (x = 0; x < COLNO; x++)
@@ -3782,6 +3786,7 @@ fx_paint_lighting(PNHMapWindow data, HDC hdc)
     /* column 0 is never part of the level: leave it alone */
     (void) GdiAlphaBlend(hdc, ox + tw, oy, (COLNO - 1) * tw, ROWNO * th,
                          lightDC, S, 0, W - S, H, bf);
+    return flicker;
 }
 
 /* where the hero is drawn while sliding onto its square: the offset in

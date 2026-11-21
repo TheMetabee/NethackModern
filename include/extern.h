@@ -326,6 +326,8 @@ extern int l_get_config_errors(lua_State *) NONNULLARG1;
 extern int do_write_config_file(void);
 extern void cfg_remember_option(const char *, const char *);
 extern void modern_rcfile(void);
+extern void fx_options_snapshot(void);
+extern void fx_options_remember(void);
 extern boolean parse_config_line(char *) NONNULLARG1;
 #ifdef USER_SOUNDS
 extern boolean can_read_file(const char *) NONNULLARG1;
@@ -1445,7 +1447,7 @@ extern void relink_light_sources(boolean);
 extern void light_sources_sanity_check(void);
 extern void obj_move_light_source(struct obj *, struct obj *) NONNULLARG12;
 extern boolean any_light_source(void);
-extern int fx_light_sources(coordxy *, coordxy *, short *, int);
+extern int fx_light_sources(coordxy *, coordxy *, short *, short *, int);
 extern void snuff_light_source(coordxy, coordxy);
 extern boolean obj_sheds_light(struct obj *) NONNULLARG1;
 extern boolean obj_is_burning(struct obj *) NONNULLARG1;
