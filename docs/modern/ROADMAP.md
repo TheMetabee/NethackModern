@@ -147,6 +147,25 @@ over ~600 ms (colour by type: physical white, fire orange, cold blue, poison
 green, healing bright green, crits larger), and a thin HP bar under each
 visible damaged monster. Options: `fx_damage_numbers`, `fx_healthbars`.
 
+**Phase 2b — Status text floaters (win32).** Like ToME, when a status
+lands on someone, its name briefly floats up from them the same way damage
+numbers do: "Confused", "Stunned", "Blinded", "Fast", "Slowed",
+"Invisible", "Levitating", "Stoning", "Slimed", "Sick", "Paralyzed",
+"Fleeing", "Cancelled" and so on.
+
+- **Source:** `fx_sync()` already compares each creature's `FXA_*` status
+  bits with the last value it saw. Newly set bits become an `FXE_STATUS`
+  event, which carries the gained bits and, optionally, lost bits for a
+  dimmer "-Fast" / "Unconfused".
+- **Look:** a smaller font than damage numbers. Bad statuses are
+  red/purple, good ones gold/green. Several statuses gained in one turn
+  stack upward like numbers.
+- **Rules:** only for things the hero can see (and always for the hero).
+  It's suppressed when a status flickers on and off within one turn, and
+  merged while running. Option: `fx_status_text`.
+- **Later:** the sound layer can attach a short sting per status (dizzy
+  warble for confusion, and so on).
+
 **Phase 3 — Sound backend.** Implement `sound/miniaudio` (single-header,
 public-domain, mixes many sounds at once — unlike basic Win32 PlaySound).
 Add sound effects keyed to fx events (hit, miss, crit, death, spell schools,

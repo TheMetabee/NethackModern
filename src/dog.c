@@ -1263,6 +1263,8 @@ tamedog(
     } else {
         initedog(mtmp, FALSE);
     }
+    if (canspotmon(mtmp)) /* NetHack Modern: a warm, rising chime */
+        Soundeffect(se_tame, 70);
 
     if (obj) { /* thrown food */
         /* defer eating until the edog extension has been set up */

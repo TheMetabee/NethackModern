@@ -354,6 +354,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_healthbars, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_healthbars, Term_False,
            "show health bars under hurt creatures on the map")
+    NHOPTB(fx_status_text, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_status_text, Term_False,
+           "float status names (Confused, Fast...) when they change")
  /* NHOPTC(gender) -- moved to top */
     NHOPTC(glyph, Advanced, 40, opt_in, set_in_game,
                 No, Yes, Yes, No, NoAlias,

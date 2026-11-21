@@ -14,6 +14,8 @@
 #endif
     seffect(air_crackles),
     seffect(alarm),
+    seffect(altar_convert),     /* NetHack Modern: altar converted */
+    seffect(altar_convert_fail), /* NetHack Modern: "Unluckily..." */
     seffect(angry_drone),
     seffect(angry_snakes),
     seffect(angry_voice),
@@ -105,6 +107,7 @@
     seffect(equine_whicker),
     seffect(equine_whinny),
     seffect(explosion),
+    seffect(faint),             /* NetHack Modern: faint from hunger */
     seffect(faint_chime),
     seffect(faint_sloshing),
     seffect(faint_splashing),
@@ -123,6 +126,7 @@
     seffect(glass_crashing),
     seffect(glass_shattering),
     seffect(god_angry),         /* NetHack Modern: prayer angers god */
+    seffect(god_gift),          /* NetHack Modern: sacrifice gift */
     seffect(groan),
     seffect(groans_and_moans),
     seffect(growl),
@@ -135,6 +139,7 @@
     seffect(hollow_sound),
     seffect(holy_glow),         /* NetHack Modern: holy water glow */
     seffect(horn_being_played),
+    seffect(hungry),            /* NetHack Modern: beginning to feel hungry */
     seffect(iron_ball_dragging_you),
     seffect(iron_ball_hits_you),
     seffect(item_tumble_downwards),
@@ -189,6 +194,9 @@
     seffect(rushing_wind_noise),
     seffect(rustling_paper),
     seffect(sad_wailing),
+    seffect(sacrifice_flame),   /* NetHack Modern: chaotic sacrifice */
+    seffect(sacrifice_light),   /* NetHack Modern: lawful sacrifice */
+    seffect(sacrifice_smoke),   /* NetHack Modern: neutral sacrifice */
     seffect(sceptor_pounding),
     seffect(scratching),
     seffect(scream),
@@ -196,6 +204,7 @@
     seffect(secret_found),      /* NetHack Modern: hidden door/passage */
     seffect(sewer_song),
     seffect(sharp_crack),
+    seffect(shop_pay),          /* NetHack Modern: pay a shopkeeper */
     seffect(shriek),
     seffect(shrill_whistle),
     seffect(sinister_laughter),
@@ -238,6 +247,7 @@
     seffect(stone_crumbling),
     seffect(swoosh),
     seffect(sword_blade_rings),
+    seffect(tame),              /* NetHack Modern: a monster is tamed */
     seffect(thud),
     seffect(thump),
     seffect(thunderclap),
@@ -251,6 +261,7 @@
     seffect(wall_of_force),
     seffect(water_splash_in),   /* NetHack Modern: hero falls into water */
     seffect(water_walk),        /* NetHack Modern: water walking step */
+    seffect(weak_hunger),       /* NetHack Modern: weak from hunger */
     seffect(whistle_hum),       /* NetHack Modern: cursed magic whistle */
     seffect(yelp),
     seffect(zap),

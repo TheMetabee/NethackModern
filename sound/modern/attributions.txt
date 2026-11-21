@@ -358,3 +358,18 @@ slides, vibrato and noise), released under the same terms as NetHack.
   se_magic_whistle_1..2.wav    soft flute-like phrases + quiet Chisper
                                level-up-magic-harp (CC0), with reverb
   se_whistle_hum_1.wav         cursed magic whistle: warbling hum
+
+Shops, sacrifices, gifts and altar conversion, built from the packs above:
+  se_shop_pay_1..2.wav <- Chisper purchase-ka-ching; Chisper coin-collect + Kenney RPG handleCoins
+  se_sacrifice_light_1..1.wav <- Chisper success-vibraphone-triad (pitched up) + gem-sparkle, with reverb: a flash of light
+  se_sacrifice_smoke_1..2.wav <- Archery Arrow Whoosh 03,07 (slowed, low-passed) + TomMusic Firespray (low-passed, quiet): a plume of smoke
+  se_sacrifice_flame_1..2.wav <- TomMusic Spells/Firebuff 1..2: a burst of flame
+  se_god_gift_1..2.wav <- Chisper rare-item-found, treasure-chest-reveal, with reverb
+  se_altar_convert_1..2.wav <- TomMusic Spell Impact 1..2 (deep) + Chisper level-up-bells (pitched down), with reverb
+
+Hunger, fainting, taming and failed altar conversion, built from the packs above:
+  se_altar_convert_fail_1..2.wav <- TomMusic Spell Impact 1..2 (deep) + Chisper level-up-bells (reversed, pitched down), with reverb
+  se_hungry_1..2.wav <- rubberduck burble_01..02 (pitched way down, low-passed): stomach growl
+  se_weak_hunger_1..2.wav <- rubberduck burble_01..02 (deeper still) + breath.ogg (pitched down): weak growl and a tired exhale
+  se_faint_1..1.wav <- Chisper xp-gain (reversed, pitched down: woozy) + Kenney Impact impactSoft_heavy_002 (body slumps)
+  se_tame_1..2.wav <- Kenney Impact impactSoft_medium (pitched down, low-passed: two heartbeats) + Chisper heal-restore / success-chime (rising)

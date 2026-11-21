@@ -3439,6 +3439,7 @@ newuhs(boolean incr)
 
                 /* stop what you're doing, then faint */
                 stop_occupation();
+                Soundeffect(se_faint, 80); /* NetHack Modern */
                 You("faint from lack of food.");
                 incr_itimeout(&HDeaf, duration);
                 disp.botl = TRUE;
@@ -3487,6 +3488,8 @@ newuhs(boolean incr)
 
         switch (newhs) {
         case HUNGRY:
+            if (incr) /* NetHack Modern: stomach growl */
+                Soundeffect(se_hungry, 60);
             if (Hallucination) {
                 You(!incr ? "now have a lesser case of the munchies."
                     : "are getting the munchies.");
@@ -3500,6 +3503,8 @@ newuhs(boolean incr)
             end_running(TRUE);
             break;
         case WEAK:
+            if (incr) /* NetHack Modern: weak, empty growl */
+                Soundeffect(se_weak_hunger, 70);
             if (Hallucination)
                 pline(!incr ? "You still have the munchies."
               : "The munchies are interfering with your motor capabilities.");

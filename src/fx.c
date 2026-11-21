@@ -31,6 +31,8 @@ struct fx_track {
     uchar health;         /* last fxhealth sent to the display */
     boolean alive;        /* mark for mark-and-sweep in fx_sync() */
     boolean inview;       /* hero could see it at the last sync */
+    boolean sinit;        /* sbase is valid */
+    unsigned long sbase;  /* statuses last announced (FXE_STATUS) */
 };
 
 static struct {
@@ -48,6 +50,8 @@ static struct {
     long hero_pendmoves;
     unsigned long hero_auras;
     uchar hero_health;
+    boolean hero_sinit;
+    unsigned long hero_sbase;
     /* monsters on the current level */
     struct fx_track tab[FX_MAXTRACK];
     int ntab;
@@ -64,6 +68,7 @@ staticfn unsigned fx_bulk_flag(void);
 staticfn void fx_hpchange(struct monst *, int, int, int *);
 staticfn const char *fx_typename(int);
 staticfn void fx_appear(struct monst *);
+staticfn void fx_status(struct monst *, unsigned long, unsigned long);
 
 void
 fx_set_handler(fx_handler_fn fn)
@@ -147,6 +152,10 @@ fx_typename(int type)
         return "READ";
     case FXE_APPEAR:
         return "APPEAR";
+    case FXE_STATUS:
+        return "STATUS";
+    case FXE_LEVEL:
+        return "LEVEL";
     }
     return "?";
 }
@@ -215,6 +224,8 @@ fx_find(struct monst *mtmp, boolean create)
     t->pendkind = -1;
     t->pendmoves = 0L;
     t->auras = 0UL;
+    t->sinit = FALSE;
+    t->sbase = 0UL;
     t->health = 0;
     t->alive = TRUE;
     return t;
@@ -296,7 +307,9 @@ fx_mon_auras(struct monst *mtmp)
         a |= FXA_CANCELLED;
     if (!mtmp->mcansee)
         a |= FXA_BLIND;
-    if (mtmp->msleeping || !mtmp->mcanmove)
+    if (mtmp->msleeping)
+        a |= FXA_ASLEEP;
+    else if (!mtmp->mcanmove)
         a |= FXA_HELPLESS;
     return a;
 }
@@ -395,6 +408,17 @@ fx_sync(void)
     fx.hero_hp = cur, fx.hero_hpmax = max;
     auras = fx_hero_auras();
     health = fx_health(cur, max);
+    {
+        unsigned long st = auras & ~FXA_HELPLESS;
+
+        if (!fx.hero_sinit) {
+            fx.hero_sinit = TRUE; /* baseline: no "Fast!" at game start */
+        } else if (st != fx.hero_sbase) {
+            fx_status(&gy.youmonst, st & ~fx.hero_sbase,
+                      fx.hero_sbase & ~st);
+        }
+        fx.hero_sbase = st;
+    }
     if (auras != fx.hero_auras || health != fx.hero_health) {
         if (fx.logf && auras != fx.hero_auras) {
             fprintf(fx.logf, "T%ld AURA   hero 0x%05lx -> 0x%05lx\n",
@@ -433,8 +457,10 @@ fx_sync(void)
             t->inview = inview;
         }
         if (t->mndx != monsndx(mtmp->data)) {
-            /* polymorphed: HP was re-rolled, not damaged */
+            /* polymorphed: HP was re-rolled, not damaged; its species
+               statuses (flying etc.) are new, not gained */
             t->mndx = monsndx(mtmp->data);
+            t->sinit = FALSE;
         } else if (canseemon(mtmp)) {
             fx_hpchange(mtmp, t->hp, mtmp->mhp, &t->pendkind);
         }
@@ -442,6 +468,18 @@ fx_sync(void)
         if (DEADMONSTER(mtmp))
             continue;
 
+        if (canseemon(mtmp)) {
+            /* status floaters: only for monsters actually seen, and only
+               changes after the first look (no "Flying" for every bat) */
+            unsigned long st = fx_mon_auras(mtmp);
+
+            if (!t->sinit) {
+                t->sinit = TRUE;
+            } else if (st != t->sbase) {
+                fx_status(mtmp, st & ~t->sbase, t->sbase & ~st);
+            }
+            t->sbase = st;
+        }
         if (canspotmon(mtmp)) {
             auras = fx_mon_auras(mtmp);
             health = fx_health(mtmp->mhp, mtmp->mhpmax);
@@ -588,6 +626,50 @@ fx_appear(struct monst *mtmp)
     ev.adtyp = -1;
     ev.target_id = mtmp->m_id;
     ev.mndx = monsndx(mtmp->data);
+    fx_emit(&ev);
+}
+
+/* mtmp (or the hero) gained and/or lost FXA_* statuses */
+staticfn void
+fx_status(struct monst *mtmp, unsigned long gain, unsigned long lose)
+{
+    struct fx_event ev;
+    boolean hero = (mtmp == &gy.youmonst);
+
+    if (!gain && !lose)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_STATUS;
+    ev.flags = fx_bulk_flag() | (hero ? FXF_HERO_TARGET : 0U)
+               | (!hero && mtmp->mtame ? FXF_TARGET_PET : 0U);
+    ev.x = ev.sx = hero ? u.ux : mtmp->mx;
+    ev.y = ev.sy = hero ? u.uy : mtmp->my;
+    ev.target_id = hero ? 0 : mtmp->m_id;
+    ev.adtyp = -1;
+    ev.st_gain = gain;
+    ev.st_lose = lose;
+    if (fx.logf) {
+        fprintf(fx.logf, "T%ld STATUS %s%u +0x%05lx -0x%05lx\n", svm.moves,
+                hero ? "hero" : "m", ev.target_id, gain, lose);
+        fflush(fx.logf);
+    }
+    fx_emit(&ev);
+}
+
+/* the hero gained (up) or lost an experience level; now at newlevel */
+void
+fx_level_change(int newlevel, boolean up)
+{
+    struct fx_event ev;
+
+    if (!fx_active())
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_LEVEL;
+    ev.flags = fx_bulk_flag() | FXF_HERO_TARGET | (up ? FXF_HIT : 0U);
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
+    ev.amount = newlevel;
     fx_emit(&ev);
 }
 

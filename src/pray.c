@@ -1462,13 +1462,18 @@ consume_offering(struct obj *otmp)
         }
     else if (Blind && u.ualign.type == A_LAWFUL)
         Your("sacrifice disappears!");
-    else
+    else {
+        /* NetHack Modern: light, smoke or flame */
+        Soundeffect((u.ualign.type == A_LAWFUL) ? se_sacrifice_light
+                    : (u.ualign.type == A_NEUTRAL) ? se_sacrifice_smoke
+                      : se_sacrifice_flame, 80);
         Your("sacrifice is consumed in a %s!",
              (u.ualign.type == A_LAWFUL)
                 ? "flash of light"
                 : (u.ualign.type == A_NEUTRAL)
                     ? "plume of smoke"
                     : "burst of flame");
+    }
     if (carried(otmp))
         useup(otmp);
     else
@@ -1665,6 +1670,7 @@ offer_different_alignment_altar(
             struct monst *pri;
             boolean shrine;
 
+            Soundeffect(se_altar_convert, 90); /* NetHack Modern */
             You_feel("the power of %s increase.", u_gname());
             exercise(A_WIS, TRUE);
             change_luck(1);
@@ -1687,6 +1693,7 @@ offer_different_alignment_altar(
                 && !p_coaligned(pri))
                 angry_priest();
         } else {
+            Soundeffect(se_altar_convert_fail, 80); /* NetHack Modern */
             pline("Unluckily, you feel the power of %s decrease.", u_gname());
             change_luck(-1);
             exercise(A_WIS, FALSE);
@@ -1815,6 +1822,7 @@ bestow_artifact(uchar max_giftvalue)
             if (!Blind)
                 Sprintf(eos(buf), " named %s",
                         bare_artifactname(otmp));
+            Soundeffect(se_god_gift, 90); /* NetHack Modern */
             at_your_feet(upstart(buf));
             dropy(otmp);
             godvoice(u.ualign.type, "Use my gift wisely!");

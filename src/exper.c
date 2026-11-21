@@ -229,6 +229,7 @@ losexp(
         adjabil(u.ulevel + 1, u.ulevel);
         livelog_printf(LL_MINORAC, "lost experience level %d", u.ulevel + 1);
         SoundAchievement(0, sa2_xpleveldown, 0);
+        fx_level_change(u.ulevel, FALSE); /* NetHack Modern */
     } else { /* u.ulevel==1 */
         if (drainer) {
             svk.killer.format = KILLED_BY;
@@ -354,6 +355,7 @@ pluslvl(
             u.ulevelmax = u.ulevel;
         adjabil(u.ulevel - 1, u.ulevel); /* give new intrinsics */
         SoundAchievement(0, sa2_xplevelup, 0);
+        fx_level_change(u.ulevel, TRUE); /* NetHack Modern */
         old_ach_cnt = count_achievements();
         newrank = xlev_to_rank(u.ulevel);
         if (newrank > oldrank)

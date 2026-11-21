@@ -36,7 +36,11 @@ enum fx_event_type {
                      * the target (not resisted): Fire Brand burning, etc */
     FXE_APPLY,      /* hero applies tool 'otyp'; amount = 1 if it was lit */
     FXE_READ,       /* hero reads scroll 'otyp'; amount = 1 if confused */
-    FXE_APPEAR      /* a notable monster ('mndx') just came into view */
+    FXE_APPEAR,     /* a notable monster ('mndx') just came into view */
+    FXE_STATUS,     /* target gained ('st_gain') and/or lost ('st_lose')
+                     * FXA_* statuses */
+    FXE_LEVEL       /* hero's experience level is now 'amount'; FXF_HIT
+                     * set if it went up, clear if drained */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
@@ -80,6 +84,8 @@ struct fx_event {
                           * 0 (STRANGE_OBJECT) for none/natural attack */
     int wep_art;         /* ...and its artifact index, 0 if ordinary */
     int launcher_otyp;   /* LAUNCH: bow/crossbow/sling used, else 0 */
+    unsigned long st_gain; /* STATUS: FXA_* bits newly set */
+    unsigned long st_lose; /* STATUS: FXA_* bits that ended */
 };
 
 typedef void (*fx_handler_fn)(const struct fx_event *);
@@ -105,7 +111,8 @@ typedef void (*fx_handler_fn)(const struct fx_event *);
 #define FXA_BLIND      0x00004000UL
 #define FXA_FLEEING    0x00008000UL
 #define FXA_CANCELLED  0x00010000UL
-#define FXA_HELPLESS   0x00020000UL /* asleep or paralyzed */
+#define FXA_HELPLESS   0x00020000UL /* paralyzed (hero: any helplessness) */
+#define FXA_ASLEEP     0x00040000UL /* monster asleep */
 
 /* glyph_info.fxhealth: 0 = no bar, else 1..100 percent of max HP */
 
@@ -123,6 +130,7 @@ extern void fx_weapon_effect(struct monst *, int);
 extern void fx_apply(struct obj *);
 extern void fx_read_scroll(int, boolean);
 extern void fx_wizard_laugh(struct monst *);
+extern void fx_level_change(int, boolean);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);

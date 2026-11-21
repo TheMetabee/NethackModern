@@ -29,6 +29,8 @@
 #define FX_TIMER_ID 2
 #define FX_FRAME_MS 30      /* ~33 frames per second while numbers float */
 #define FX_FLOAT_MS 900     /* lifetime of one number */
+#define FX_TEXT_MS 1400     /* lifetime of a status name */
+#define FX_LEVEL_MS 2600    /* lifetime of "Level N!" */
 #define FX_STACK_MS 400     /* a new number on a square this young stacks */
 #define FX_MAXFLOAT 64
 
@@ -83,8 +85,10 @@ typedef struct mswin_nethack_map_window {
     struct fx_floater {
         int x, y;               /* map square */
         unsigned target;        /* m_id, 0 = hero */
-        int type;               /* FXE_DAMAGE or FXE_HEAL */
+        int type;               /* FXE_DAMAGE, FXE_HEAL or FXE_STATUS */
         int amount;
+        char text[24];          /* status name; empty for numbers */
+        DWORD life;             /* how long it floats, ms */
         int stack;              /* raised this many slots to avoid overlap */
         int xoff;               /* sideways jitter, percent of a tile */
         boolean big;            /* large hit: drawn bigger */
@@ -94,6 +98,7 @@ typedef struct mswin_nethack_map_window {
     int nfloaters;
     boolean fxTimerOn;
     HFONT hFxFont, hFxFontBig;  /* fonts for the numbers */
+    HFONT hFxFontSmall;         /* font for status names */
     int fxFontTileH;            /* yFrontTile the fonts were made for */
     HDC compDC;                 /* composition buffer for onPaint */
     HBITMAP compBmp, compBmpOld;
@@ -673,6 +678,8 @@ MapWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DeleteObject(data->hFxFont);
         if (data->hFxFontBig)
             DeleteObject(data->hFxFontBig);
+        if (data->hFxFontSmall)
+            DeleteObject(data->hFxFontSmall);
         if (data->compDC) {
             SelectObject(data->compDC, data->compBmpOld);
             DeleteObject(data->compBmp);
@@ -1268,6 +1275,10 @@ fx_kind_color(const struct fx_event *ev)
                                          : RGB(255, 255, 255);
 }
 
+static struct fx_floater *fx_add_floater(PNHMapWindow, const struct fx_event *,
+                                         int, const char *, COLORREF);
+static void fx_status_floaters(PNHMapWindow, const struct fx_event *);
+
 /* called by the core (fx.c) */
 static void
 mswin_fx_event(const struct fx_event *ev)
@@ -1275,10 +1286,38 @@ mswin_fx_event(const struct fx_event *ev)
     PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
     struct fx_floater *f;
     DWORD now = GetTickCount();
-    int i, stack = 0;
+    int i;
 
-    if (!data || !iflags.fx_damage_numbers)
+    if (!data)
         return;
+    if (ev->type == FXE_STATUS) {
+        if (iflags.fx_status_text)
+            fx_status_floaters(data, ev);
+        return;
+    }
+    if (ev->type == FXE_LEVEL) {
+        /* "Level 5!" in big gold letters that linger above the hero */
+        if (iflags.fx_status_text) {
+            char buf[32];
+            boolean up = (ev->flags & FXF_HIT) != 0;
+
+            Snprintf(buf, sizeof buf, up ? "Level %d!" : "Level %d",
+                     ev->amount);
+            f = fx_add_floater(data, ev, 0, buf,
+                               up ? RGB(255, 205, 60) : RGB(170, 120, 210));
+            f->big = TRUE;
+            f->life = FX_LEVEL_MS;
+            f->xoff = 0; /* centred over the hero */
+        }
+        return;
+    }
+    if (!iflags.fx_damage_numbers)
+        return;
+    if (ev->type == FXE_MISS) {
+        /* "Miss" floats up off whoever dodged */
+        (void) fx_add_floater(data, ev, 0, "Miss", RGB(190, 190, 190));
+        return;
+    }
     if (ev->type != FXE_DAMAGE && ev->type != FXE_HEAL)
         return;
     if (ev->amount <= 0)
@@ -1303,7 +1342,22 @@ mswin_fx_event(const struct fx_event *ev)
         }
     }
 
-    /* raise above numbers still young on the same square */
+    f = fx_add_floater(data, ev, ev->amount, (const char *) 0,
+                       fx_kind_color(ev));
+    f->big = (ev->type == FXE_DAMAGE
+              && (ev->hp <= 0 || ev->amount * 4 >= max(ev->hpmax, 1)));
+}
+
+/* start a floater over ev's square: a number, or text if not null */
+static struct fx_floater *
+fx_add_floater(PNHMapWindow data, const struct fx_event *ev, int amount,
+               const char *text, COLORREF color)
+{
+    struct fx_floater *f;
+    DWORD now = GetTickCount();
+    int i, stack = 0;
+
+    /* raise above floaters still young on the same square */
     for (i = 0; i < data->nfloaters; i++) {
         f = &data->floaters[i];
         if (f->x == ev->x && f->y == ev->y && now - f->start < FX_STACK_MS
@@ -1321,8 +1375,12 @@ mswin_fx_event(const struct fx_event *ev)
     f->x = ev->x, f->y = ev->y;
     f->target = ev->target_id;
     f->type = ev->type;
-    f->amount = ev->amount;
-    f->stack = min(stack, 3);
+    f->amount = amount;
+    f->text[0] = '\0';
+    if (text)
+        Strcpy(f->text, text);
+    f->life = text ? FX_TEXT_MS : FX_FLOAT_MS;
+    f->stack = min(stack, 4);
     {
         /* jitter sideways so repeated numbers don't sit exactly on top of
            each other; a private generator, never the game's RNG */
@@ -1333,9 +1391,8 @@ mswin_fx_event(const struct fx_event *ev)
         seed = seed * 1103515245UL + 12345UL;
         f->xoff = (int) ((seed >> 16) % 61UL) - 30; /* -30..+30 */
     }
-    f->big = (ev->type == FXE_DAMAGE
-              && (ev->hp <= 0 || ev->amount * 4 >= max(ev->hpmax, 1)));
-    f->color = fx_kind_color(ev);
+    f->big = FALSE;
+    f->color = color;
     f->start = now;
 
     if (!data->fxTimerOn) {
@@ -1343,6 +1400,72 @@ mswin_fx_event(const struct fx_event *ev)
         data->fxTimerOn = TRUE;
     }
     InvalidateRect(data->hWnd, NULL, FALSE);
+    return f;
+}
+
+/* status names, ToME style: "Confused" floats up when it lands */
+#define FXS_GOOD RGB(255, 215, 90)
+#define FXS_BAD RGB(255, 95, 85)
+#define FXS_MIND RGB(205, 130, 255)
+#define FXS_BODY RGB(160, 225, 80)
+#define FXS_LOST RGB(175, 175, 175)
+static const struct fx_status_name {
+    unsigned long bit;
+    const char *name;
+    COLORREF color;
+} fx_status_names[] = {
+    { FXA_VERYFAST, "Very fast", FXS_GOOD },
+    { FXA_FAST, "Fast", FXS_GOOD },
+    { FXA_SLOW, "Slowed", FXS_BAD },
+    { FXA_INVIS, "Invisible", FXS_GOOD },
+    { FXA_LEVITATE, "Levitating", FXS_GOOD },
+    { FXA_FLYING, "Flying", FXS_GOOD },
+    { FXA_REFLECT, "Reflecting", FXS_GOOD },
+    { FXA_PROTECT, "Protected", FXS_GOOD },
+    { FXA_CONFUSED, "Confused", FXS_MIND },
+    { FXA_STUNNED, "Stunned", FXS_MIND },
+    { FXA_HALLU, "Hallucinating", FXS_MIND },
+    { FXA_STONING, "Stoning!", FXS_BAD },
+    { FXA_SLIMED, "Slimed!", FXS_BODY },
+    { FXA_SICK, "Sick", FXS_BODY },
+    { FXA_BLIND, "Blinded", FXS_BAD },
+    { FXA_FLEEING, "Fleeing", FXS_BAD },
+    { FXA_CANCELLED, "Cancelled", FXS_BAD },
+    { FXA_HELPLESS, "Paralyzed", FXS_BAD },
+    { FXA_ASLEEP, "Asleep", FXS_MIND },
+};
+
+static void
+fx_status_floaters(PNHMapWindow data, const struct fx_event *ev)
+{
+    unsigned long gain = ev->st_gain, lose = ev->st_lose;
+    char buf[32];
+    int i;
+
+    /* speeding up from fast to very fast isn't losing "Fast" */
+    if ((gain & FXA_VERYFAST) && (lose & FXA_FAST))
+        lose &= ~FXA_FAST;
+    if ((lose & FXA_VERYFAST) && (gain & FXA_FAST))
+        gain &= ~FXA_FAST; /* "-Very fast" says enough */
+    if (ev->flags & FXF_BULK)
+        lose = 0UL; /* while running, only news that matters */
+    /* a pet "flees" for a few turns when the game makes it step out of
+       the hero's way ("You stop.  Your dog is in the way!"); that isn't
+       fear, so don't announce it */
+    if (ev->flags & FXF_TARGET_PET) {
+        gain &= ~FXA_FLEEING;
+        lose &= ~FXA_FLEEING;
+    }
+    for (i = 0; i < SIZE(fx_status_names); i++) {
+        const struct fx_status_name *s = &fx_status_names[i];
+
+        if (gain & s->bit)
+            (void) fx_add_floater(data, ev, 0, s->name, s->color);
+        if (lose & s->bit) {
+            Snprintf(buf, sizeof buf, "-%s", s->name);
+            (void) fx_add_floater(data, ev, 0, buf, FXS_LOST);
+        }
+    }
 }
 
 /* animation frame: expire old numbers, stop the timer when idle */
@@ -1353,7 +1476,7 @@ fx_tick(PNHMapWindow data)
     int i, j;
 
     for (i = j = 0; i < data->nfloaters; i++)
-        if (now - data->floaters[i].start < FX_FLOAT_MS)
+        if (now - data->floaters[i].start < data->floaters[i].life)
             data->floaters[j++] = data->floaters[i];
     data->nfloaters = j;
     if (!data->nfloaters && data->fxTimerOn) {
@@ -1376,6 +1499,8 @@ fx_make_fonts(PNHMapWindow data)
         DeleteObject(data->hFxFont);
     if (data->hFxFontBig)
         DeleteObject(data->hFxFontBig);
+    if (data->hFxFontSmall)
+        DeleteObject(data->hFxFontSmall);
     ZeroMemory(&lf, sizeof lf);
     lf.lfWeight = FW_HEAVY;
     lf.lfQuality = ANTIALIASED_QUALITY;
@@ -1385,6 +1510,9 @@ fx_make_fonts(PNHMapWindow data)
     data->hFxFont = CreateFontIndirect(&lf);
     lf.lfHeight = -max(16, (h * 17) / 20);
     data->hFxFontBig = CreateFontIndirect(&lf);
+    lf.lfWeight = FW_BOLD;
+    lf.lfHeight = -max(11, (h * 2) / 5);
+    data->hFxFontSmall = CreateFontIndirect(&lf);
     data->fxFontTileH = h;
 }
 
@@ -1409,30 +1537,45 @@ fx_paint_overlay(PNHMapWindow data, HDC hdc)
     for (i = 0; i < data->nfloaters; i++) {
         struct fx_floater *f = &data->floaters[i];
         DWORD age = now - f->start;
-        double t = (double) age / FX_FLOAT_MS; /* 0..1 */
-        char buf[16];
+        double t = (double) age / f->life; /* 0..1 */
+        char buf[32];
         RECT r;
         int cx, cy, rise, fade;
+        double fadefrom;
         COLORREF c = f->color;
 
-        if (age >= FX_FLOAT_MS)
+        if (age >= f->life)
             continue;
-        /* rise fast, then ease out */
-        rise = (int) (data->yFrontTile * 0.9 * (1.0 - (1.0 - t) * (1.0 - t)));
+        if (f->life == FX_LEVEL_MS) {
+            /* level messages rise in the first third, hang above the
+               hero, then fade only over the last quarter */
+            double tr = min(1.0, t / 0.33);
+
+            rise = (int) (data->yFrontTile * 1.3 * (1.0 - (1.0 - tr) * (1.0 - tr)));
+            fadefrom = 0.75;
+        } else {
+            /* rise fast, then ease out */
+            rise = (int) (data->yFrontTile * 0.9 * (1.0 - (1.0 - t) * (1.0 - t)));
+            fadefrom = 0.66;
+        }
         cx = ox + f->x * data->xFrontTile + data->xFrontTile / 2
              + (f->xoff * data->xFrontTile) / 100;
         cy = oy + f->y * data->yFrontTile + data->yFrontTile / 3 - rise
              - f->stack * (data->yFrontTile * 9) / 20;
-        /* fade by darkening over the last third (the map is mostly
-           dark, so this reads as fading out without alpha blending) */
-        if (t > 0.66) {
-            fade = (int) (255 * (1.0 - (t - 0.66) / 0.34));
+        /* fade by darkening near the end (the map is mostly dark, so
+           this reads as fading out without alpha blending) */
+        if (t > fadefrom) {
+            fade = (int) (255 * (1.0 - (t - fadefrom) / (1.0 - fadefrom)));
             c = RGB(GetRValue(c) * fade / 255, GetGValue(c) * fade / 255,
                     GetBValue(c) * fade / 255);
         }
-        Sprintf(buf, "%s%d", f->type == FXE_HEAL ? "+"
-                             : f->target == 0 ? "-" : "", f->amount);
-        SelectObject(hdc, f->big ? data->hFxFontBig : data->hFxFont);
+        if (f->text[0])
+            Strcpy(buf, f->text);
+        else
+            Sprintf(buf, "%s%d", f->type == FXE_HEAL ? "+"
+                                 : f->target == 0 ? "-" : "", f->amount);
+        SelectObject(hdc, f->big ? data->hFxFontBig
+                          : f->text[0] ? data->hFxFontSmall : data->hFxFont);
         SetRect(&r, cx - data->xFrontTile * 2, cy - data->yFrontTile,
                 cx + data->xFrontTile * 2, cy + data->yFrontTile);
         /* black outline */

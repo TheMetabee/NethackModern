@@ -1319,6 +1319,8 @@ pay(long tmp, struct monst *shkp)
     long robbed = ESHK(shkp)->robbed;
     long balance = ((tmp <= 0L) ? tmp : check_credit(tmp, shkp));
 
+    if (tmp > 0L)
+        Soundeffect(se_shop_pay, 70); /* NetHack Modern: ka-ching */
     if (balance > 0)
         money2mon(shkp, balance);
     else if (balance < 0)

@@ -278,6 +278,7 @@ struct instance_flags {
     boolean showdamage;    /* extra message reporting damage hero has taken */
     boolean fx_damage_numbers; /* NetHack Modern: floating numbers on map */
     boolean fx_healthbars;     /* NetHack Modern: health bars on map */
+    boolean fx_status_text;    /* NetHack Modern: floating status names */
     boolean pending_customizations; /* at least one custom. was specified */
     xint8 debug_fuzzer;    /* fuzz testing */
     int at_midnight;       /* only valid during end of game disclosure */
