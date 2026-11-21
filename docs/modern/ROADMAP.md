@@ -3,6 +3,15 @@
 Target: Tales of Maj'Eyal–level feedback (animation + sound) on top of
 NetHack 5.0, game rules unchanged.
 
+## Status
+
+Phases 0 to 4c are done; Phase 5 (polish) is next. The work is in the
+`fx` event stream (`src/fx.c`, `include/fx.h`), the miniaudio soundlib
+(`sound/miniaudio/`, samples and credits in `sound/modern/`) and the
+NetHackW port (`win/win32/`, mainly `mhmap.c`, `mhstatus.c`,
+`mhmsgwnd.c`, `mhmenu.c`, `mhmain.c`, `mhsplash.c`, `mhtheme.h`). Every
+effect has its own `fx_*` option (see "Options" at the end).
+
 ## What 5.0 already gives us
 
 - **Sound interface** (`include/sndprocs.h`, `src/sounds.c`): pluggable
@@ -131,21 +140,27 @@ Applies to every visual and audio effect, in every phase.
 
 ## Phases
 
-**Phase 0 — Baseline build.** Build stock `NetHackW.exe` from this repo with
-Visual Studio; confirm tiles and the existing `windsound` work. Tag it
-`baseline-5.0`.
+**Phase 0 — Baseline build.** *Done.* Build stock `NetHackW.exe` from
+this repo with Visual Studio; confirm tiles and the existing `windsound`
+work. Tag it `baseline-5.0`.
 
 **Phase 1 — Event stream.** Add `fx.c`/`fx.h` and the new window-proc; wire
 the hook sites above. Verify with a debug port that logs events to a file.
 No visuals yet. This is the most important phase: every later feature reads
 from it. This phase also adds the `glyph_info.fxauras` field and fills it in
 for the hero and visible monsters, and the debug port logs mask changes.
+*Done:* the handlers are registered with `fx_set_handler()` (display) and
+`fx_set_audio_handler()` (sound) rather than a new window-proc slot;
+`NETHACK_FXLOG` logs every event. The stream has since grown to cover
+moves, knockback, explosions, wand and scroll effects, quaffing,
+teleports, detection, the unicorn horn and more.
 
 **Phase 2 — Damage numbers & health bars (win32).** In `win/win32/mhmap.c`
 add an overlay layer redrawn on a timer: floating numbers that rise and fade
 over ~600 ms (colour by type: physical white, fire orange, cold blue, poison
 green, healing bright green, crits larger), and a thin HP bar under each
 visible damaged monster. Options: `fx_damage_numbers`, `fx_healthbars`.
+*Done.*
 
 **Phase 2b — Status text floaters (win32).** Like ToME, when a status
 lands on someone, its name briefly floats up from them the same way damage
@@ -166,11 +181,21 @@ numbers do: "Confused", "Stunned", "Blinded", "Fast", "Slowed",
 - **Later:** the sound layer can attach a short sting per status (dizzy
   warble for confusion, and so on).
 
+*Done,* along with "Miss", "Killed"/"Died" where the health bar was,
+"Level N!" in gold and a "+N XP" floater (`fx_exp_text`).
+
 **Phase 3 — Sound backend.** Implement `sound/miniaudio` (single-header,
 public-domain, mixes many sounds at once — unlike basic Win32 PlaySound).
 Add sound effects keyed to fx events (hit, miss, crit, death, spell schools,
 footsteps, doors) plus level ambience. Ship CC0/CC-BY assets with
 attributions.
+*Done:* `sound/miniaudio/masound.c` plays samples from `sound/modern/` for
+fx events, the core's `Soundeffect()` calls and matching messages (hidden
+`MSGTYPE` messages stay silent); weapon sounds per skill with elemental
+layers, death cries per creature type, eating by texture, traps, doors and
+locks, prayer, wands, potions, scrolls and so on. No footsteps except
+wading. Every file is credited in `sound/modern/attributions.txt`.
+Level ambience is still to do.
 
 **Phase 4 — Animation.** Attack "lunge" (sprite nudges toward target and
 back), hit flash/shake on the victim (150–250 ms, strength scaled by damage
@@ -180,11 +205,24 @@ interpolation between squares, particle effects for spells and explosions
 built on `tmp_at` paths. Needs a frame-driven render loop in the map window
 and drawing monster sprites separately from the floor beneath them. All of
 it follows the design rules above.
+*Done:* lunge, hit shake with a recoil away from the blow, death shake and
+fade, screen shake (`fx_screen_shake`), knockback slides, smooth movement
+(`fx_motion`), and particles (`fx_particles`) for rays, explosions,
+striking, every wand, teleports, potions, scrolls and detection. Animations
+keep running through the core's output delays.
 
 **Phase 4b — Persistent auras (win32).** Render the starter set from the
 `fxauras` mask on the low-rate aura timer. Start with hero speed (the
 afterimage trail), because it's the most visible and tests the whole
 pipeline. Add the others one at a time. Option: `fx_auras`.
+*Done:* a single trailing afterimage for speed (`fx_afterimage`; the
+hero's intrinsic speed alone doesn't show), rising z's while asleep
+(magical sleep is kept on the monster, `mfxslept`, so it survives a
+save), stars when stunned, swirls when confused, sinking drops when
+slowed, air under levitation, a glint for reflection, a ring for the
+protection spell, grit, slime and bubbles for stoning, slime and
+sickness, and a see-through sprite when invisible but seen. Gas clouds
+billow. Fleeing and flying were left out as too common.
 
 **Phase 4c — Clean, modern interface.** Restyle the NetHackW window
 chrome around the map, so it looks like a modern client and not a set of
@@ -224,13 +262,53 @@ data: status fields from `status_update`, inventory from
 The only core addition is likely a small "suggested actions here" query
 for the action bar.
 
-**Phase 5 — Polish / possible new front end.** Higher-resolution tileset,
-lighting/FOV shading, UI skin. If GDI in `win/win32` becomes the bottleneck,
+*Done* with `fx_theme` (on by default): one dark palette (`mhtheme.h`),
+Segoe UI fonts, a dark title bar and a topic menu bar whose drop-downs
+send the keys they show; a character panel in the status window (title,
+HP/Pw bars, stat grid with change arrows, conditions, an equipment doll of
+two rows of six slots, and a context action bar); messages floating on the
+map's lower left (`fx_msg_overlay`, `fx_msg_backdrop`) with MSGTYPE,
+menucolor, trap and "You see here" colours and fading; map zoom that
+shows the whole level by default (Ctrl+=, Ctrl+-, Ctrl+0, Ctrl+wheel); a
+hero frame (`fx_hero_frame`, `fx_hero_frame_light`); polished menus and
+inventory with a Hide toggle; and a splash with the dragon-rider painting
+(`win/win32/splash_art.png`, see `ART-CREDITS.txt`). The action bar is
+worked out in the port from game state, so no core query was needed. Not
+built: on-screen zoom and tiles/ASCII buttons (the keys and the View menu
+cover them).
+
+**Phase 5 — Polish / possible new front end.** *Next.* Fix rough edges
+found in play. Then: level ambience, a higher-resolution tileset,
+lighting/FOV shading. If GDI in `win/win32` becomes the bottleneck,
 consider a new SDL2 or Qt-based port reading the same fx stream.
 
 ## Open decisions
 
-- First front end: **win32** (you're on Windows, it ships with tiles) vs
-  **Qt** (cross-platform, already has a Qt soundlib). Current plan: win32.
-- Tileset: keep the default 32×32 tiles at first; choose a larger set in Phase 5.
-- Asset licensing: only CC0 / CC-BY / OGA-licensed sound and art.
+- First front end: **win32** (decided; everything so far is in NetHackW).
+  Qt remains an option later.
+- Tileset: keep the default tiles at first; choose a larger set in Phase 5.
+- Asset licensing: CC0, CC-BY (credited) and royalty-free game packs that
+  allow use in games, each file credited in `sound/modern/attributions.txt`
+  or `win/win32/ART-CREDITS.txt`. Packs that forbid redistribution are not
+  used.
+
+## Options
+
+All are in the full options list (`m O`), under the `fx_` names:
+
+| Option | Default | Effect |
+|---|---|---|
+| `fx_damage_numbers` | on | floating damage and healing numbers |
+| `fx_healthbars` | on | health bars under creatures |
+| `fx_status_text` | on | status names floating up as they land |
+| `fx_exp_text` | on | "+N XP" floaters |
+| `fx_motion` | on | lunges, shakes, death fades, smooth movement |
+| `fx_screen_shake` | on | the view shakes for explosions and big hits |
+| `fx_particles` | on | rays, explosions, wand, potion and scroll effects |
+| `fx_auras` | on | lasting status effects on creatures, gas clouds |
+| `fx_afterimage` | on | speed afterimages |
+| `fx_theme` | on | NetHackW dark theme, fonts, panels and menu bar (restart) |
+| `fx_msg_overlay` | on | messages on the map instead of a strip (restart) |
+| `fx_msg_backdrop` | off | a translucent panel behind those messages |
+| `fx_hero_frame` | on | gold corner marks round the hero |
+| `fx_hero_frame_light` | off | a lighter version of the hero frame |
