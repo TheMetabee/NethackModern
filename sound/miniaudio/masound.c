@@ -1163,11 +1163,18 @@ ma_death_cry(int mndx, float vol, float pan)
     case S_HUMAN:
     case S_HUMANOID:
     case S_ORC:
-    case S_GNOME:
-    case S_KOBOLD:
     case S_GIANT:
     case S_OGRE:
     case S_TROLL:
+        /* a deep, heavy grunt, and the body hitting the floor */
+        if (ma_named_count("death_giant")) {
+            ma_play_named("death_giant", 0.9f * vol, ma_frand(0.92f, 1.04f),
+                          pan);
+            return;
+        }
+        /*FALLTHRU*/
+    case S_GNOME:
+    case S_KOBOLD:
         name = "death_humanoid";
         if (bigmonst(ptr))
             pitch = ma_frand(0.75f, 0.88f); /* deeper for big ones */

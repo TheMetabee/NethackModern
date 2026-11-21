@@ -164,6 +164,8 @@ fx_typename(int type)
         return "SHAKE";
     case FXE_EXPLODE:
         return "EXPLODE";
+    case FXE_KNOCKBACK:
+        return "KNOCKBACK";
     }
     return "?";
 }
@@ -748,6 +750,25 @@ fx_explosion(coordxy x, coordxy y, int adtyp, int dam, boolean seen)
     ev.x = ev.sx = x, ev.y = ev.sy = y;
     ev.adtyp = adtyp;
     ev.amount = max(dam, 0);
+    fx_emit(&ev);
+}
+
+/* a creature was knocked (hurtled) one step from <fx,fy> to <tx,ty> */
+void
+fx_knockback(coordxy fx, coordxy fy, coordxy tx, coordxy ty)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || (fx == tx && fy == ty))
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_KNOCKBACK;
+    ev.flags = fx_bulk_flag();
+    if (tx == u.ux && ty == u.uy)
+        ev.flags |= FXF_HERO_TARGET;
+    ev.sx = fx, ev.sy = fy;
+    ev.x = tx, ev.y = ty;
+    ev.adtyp = -1;
     fx_emit(&ev);
 }
 

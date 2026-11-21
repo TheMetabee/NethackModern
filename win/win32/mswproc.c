@@ -1908,7 +1908,7 @@ mswin_delay_output(void)
 {
     logDebug("mswin_delay_output()\n");
     mswin_map_update(mswin_hwnd_from_winid(WIN_MAP));
-    Sleep(50);
+    mswin_map_fx_pump(50); /* NetHack Modern: animations keep moving */
 }
 
 void

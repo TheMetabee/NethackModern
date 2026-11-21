@@ -38,6 +38,8 @@
 #define FXM_LUNGE 1
 #define FXM_SHAKE 2
 #define FXM_DEATH 3
+#define FXM_SLIDE 4         /* hurtled: glide in from the previous square */
+#define FX_SLIDE_MS 70
 #define FX_DEATH_MS 360     /* shake ~35%, then fade out */
 #define FX_LUNGE_MS 150     /* out ~40%, back ~60% */
 #define FX_LUNGE_GAP 110    /* successive lunges in one turn queue up */
@@ -1617,12 +1619,41 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
         a = fx_new_anim(data);
         a->kind = FXM_SHAKE;
         a->x = ev->x, a->y = ev->y;
-        a->dx = a->dy = 0;
+        /* recoil away from the attacker that lunged in */
+        if (i >= 0)
+            a->dx = data->anims[i].dx, a->dy = data->anims[i].dy;
+        else
+            a->dx = a->dy = 0;
         a->tile = data->map[ev->x][ev->y].gm.tileidx;
         a->hit = TRUE;
         a->strength = max(15, min(100, pct * 3));
         a->start = start;
         a->dur = FX_SHAKE_MS;
+        fx_start_timer(data);
+    } else if (ev->type == FXE_KNOCKBACK) {
+        dx = ev->x - ev->sx, dy = ev->y - ev->sy;
+        if (!isok(ev->x, ev->y) || dx < -1 || dx > 1 || dy < -1 || dy > 1
+            || !glyph_is_monster(data->map[ev->x][ev->y].glyph))
+            return;
+        /* the previous step's slide is over: this one takes over */
+        for (i = 0; i < data->nanims; i++)
+            if (data->anims[i].kind == FXM_SLIDE
+                && data->anims[i].x == ev->sx && data->anims[i].y == ev->sy)
+                data->anims[i].dur = 0;
+        /* shakes and recoils of the knocked creature are left behind */
+        for (i = 0; i < data->nanims; i++)
+            if (data->anims[i].kind == FXM_SHAKE
+                && data->anims[i].x == ev->sx && data->anims[i].y == ev->sy)
+                data->anims[i].dur = 0;
+        a = fx_new_anim(data);
+        a->kind = FXM_SLIDE;
+        a->x = ev->x, a->y = ev->y;
+        a->dx = dx, a->dy = dy;
+        a->tile = data->map[ev->x][ev->y].gm.tileidx;
+        a->hit = TRUE;
+        a->strength = 0;
+        a->start = now;
+        a->dur = FX_SLIDE_MS;
         fx_start_timer(data);
     } else if (ev->type == FXE_DEATH) {
         DWORD start = now;
@@ -1746,6 +1777,29 @@ fx_blend_tile(PNHMapWindow data, HDC hdc, int x, int y, int w, int h,
     (void) GdiAlphaBlend(hdc, x, y, w, h, data->fadeDC, 0, 0, w, h, bf);
 }
 
+/* the core is pausing (nh_delay_output, explosion and missile frames):
+   keep animations moving for 'ms' instead of freezing the window */
+void
+mswin_map_fx_pump(int ms)
+{
+    PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
+    DWORD start = GetTickCount();
+
+    if (!data || (!data->nanims && !data->nfloaters && !data->shakeDur)) {
+        Sleep(ms);
+        return;
+    }
+    for (;;) {
+        long left = ms - (long) (GetTickCount() - start);
+
+        if (left <= 0)
+            break;
+        fx_tick(data);
+        UpdateWindow(data->hWnd);
+        Sleep(min(left, 10L));
+    }
+}
+
 /* a keypress snaps every sprite back to its square (design rule 2) */
 void
 mswin_map_fx_snap(void)
@@ -1805,11 +1859,22 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
             e = e * e * (3 - 2 * e); /* smoothstep */
             offx = (int) (a->dx * reach * e);
             offy = (int) (a->dy * reach * e);
+        } else if (a->kind == FXM_SLIDE) {
+            /* from the square it left, easing in */
+            e = 1.0 - p;
+            e = e * e;
+            offx = (int) (-a->dx * tw * e);
+            offy = (int) (-a->dy * th * e);
         } else { /* FXM_SHAKE: decaying side-to-side jitter */
             double amp = tw * (0.04 + 0.10 * a->strength / 100.0);
+            /* plus a push away from the blow, springing back */
+            double push = tw * (0.06 + 0.10 * a->strength / 100.0)
+                          * (1.0 - p) * (1.0 - p);
 
             offx = (int) (amp * sin(p * 2 * 3.14159265358979 * 3.0) * (1.0 - p));
             offy = (int) (amp * 0.3 * sin(p * 2 * 3.14159265358979 * 5.0) * (1.0 - p));
+            offx += (int) (a->dx * push);
+            offy += (int) (a->dy * push);
         }
         cx = ox + a->x * tw, cy = oy + a->y * th;
         /* the floor under it, so it doesn't leave a copy behind; for

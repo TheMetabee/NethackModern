@@ -910,6 +910,7 @@ hurtle_step(genericptr_t arg, coordxy x, coordxy y)
     newsym(ox, oy);    /* update old position */
     vision_recalc(1);  /* update for new position */
     flush_screen(1);
+    fx_knockback(ox, oy, x, y); /* NetHack Modern: slide, don't jump */
     /* if terrain type changes, levitation or flying might become blocked
        or unblocked; might issue message, so do this after map+vision has
        been updated for new location instead of right after u_on_newpos() */
@@ -1000,6 +1001,8 @@ mhurtle_step(genericptr_t arg, coordxy x, coordxy y)
     if (will_hurtle(mon, x, y) && m_in_out_region(mon, x, y)) {
         int res;
 
+        coordxy kx = mon->mx, ky = mon->my;
+
         if (mon != u.usteed) {
             remove_monster(mon->mx, mon->my);
             newsym(mon->mx, mon->my);
@@ -1013,6 +1016,7 @@ mhurtle_step(genericptr_t arg, coordxy x, coordxy y)
             vision_recalc(0); /* new location => different lines of sight */
         }
         flush_screen(1);
+        fx_knockback(kx, ky, x, y); /* NetHack Modern */
         nh_delay_output();
         set_apparxy(mon);
         if (is_waterwall(x, y))

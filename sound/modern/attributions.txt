@@ -417,3 +417,8 @@ Boulder sounds (softened):
 Poison and acid damage, built from the packs above (shock damage reuses wpn_layer_shock):
   hit_poison_1..2.wav <- AHTu20 snake_hiss_01 (short, high-passed) + rubberduck burble_01..02: a sickly hiss and gurgle
   hit_acid_1..2.wav <- TomMusic Firespray (short, high-passed: sizzle) + AHTu20 slime_move + Kenney Impact impactSoft_medium: corrosive splash
+
+Giant, ogre and troll deaths, built from the packs above:
+  death_giant_1..3.wav   <- se_orc_grunt_6 (AHTu20), _1, _3 (rubberduck)
+                            pitched down to 0.68 with a short echo, plus a
+                            low-passed trap_fall_1..3 (Kenney Impact) body thud

@@ -45,8 +45,9 @@ enum fx_event_type {
                      * the handler call) */
     FXE_EXP,        /* hero gained 'amount' experience points */
     FXE_SHAKE,      /* shake the view; 'amount' = strength 1..100 */
-    FXE_EXPLODE     /* explosion at x,y: 'adtyp' element, 'amount' damage;
+    FXE_EXPLODE,    /* explosion at x,y: 'adtyp' element, 'amount' damage;
                      * FXF_UNSEEN if only heard */
+    FXE_KNOCKBACK   /* a creature was hurtled one step, sx,sy -> x,y */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
@@ -143,6 +144,7 @@ extern void fx_message(const char *);
 extern void fx_exp_gain(int);
 extern void fx_screen_shake(int);
 extern void fx_explosion(coordxy, coordxy, int, int, boolean);
+extern void fx_knockback(coordxy, coordxy, coordxy, coordxy);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);
