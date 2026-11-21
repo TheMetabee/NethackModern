@@ -1591,6 +1591,7 @@ typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
 #include "extern.h"
 #include "savefile.h"
 #include "decl.h"
+#include "fx.h" /* NetHack Modern presentation events */
 
 #endif  /* RECOVER_C */
 

@@ -23,7 +23,18 @@ NetHack 5.0, game rules unchanged.
 
 The game core does not know about pixels. We add one small module,
 `src/fx.c`, which the core calls at interesting moments, and which forwards
-events to the active window port through a new optional window-proc.
+events to the window port through a handler the port registers with
+`fx_set_handler()`. We chose this over a new window-proc slot because a
+new slot would mean editing every port's procs table, and keeping upstream
+files lightly touched makes NetHack updates easier to merge.
+
+Damage and healing aren't hooked at every one of the roughly 140 places
+that change HP. `fx_sync()` runs from `flush_screen()` and compares each
+creature's HP with what it saw last time, so a number shows up together
+with the message it belongs to. The explicit hooks only add what a
+comparison can't know: who attacked whom, misses, deaths, and the damage
+kind. For debugging, setting `NETHACK_FXLOG=<file>` logs every event and
+status change, with any interface.
 
 ```
 fx_damage(x, y, amount, kind, who)   /* hit for N, on that square */

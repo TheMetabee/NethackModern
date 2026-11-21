@@ -503,6 +503,7 @@ explode(
                     mtmp = u.usteed;
                 if (!mtmp)
                     continue;
+                fx_note_kind(mtmp, (int) adtyp);
                 if (do_hallu) {
                     int tryct = 0;
 
@@ -645,6 +646,7 @@ explode(
                that victim might have been killed when hit by the blast) */
             if (grabbing && dist2((int) grabxy.x, (int) grabxy.y, x, y) <= 2)
                 damu *= 2;
+            fx_note_kind(&gy.youmonst, (int) adtyp);
             /* hero does not get same fire-resistant vs cold and
                cold-resistant vs fire double damage as monsters [why not?] */
             if (Upolyd)

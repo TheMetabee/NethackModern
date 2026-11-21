@@ -86,6 +86,7 @@ missmu(struct monst *mtmp, boolean nearmiss, struct attack *mattk)
 {
     gh.hitmsg_mid = 0;
     gh.hitmsg_prev = NULL;
+    fx_attack(mtmp, &gy.youmonst, mattk->adtyp, FALSE);
 
     if (!canspotmon(mtmp))
         map_invisible(mtmp->mx, mtmp->my);
@@ -1151,6 +1152,7 @@ hitmu(struct monst *mtmp, struct attack *mattk)
     mhm.permdmg = 0;
     mhm.specialdmg = 0;
     mhm.done = FALSE;
+    fx_attack(mtmp, &gy.youmonst, mattk->adtyp, TRUE);
 
     if (!canspotmon(mtmp))
         map_invisible(mtmp->mx, mtmp->my);

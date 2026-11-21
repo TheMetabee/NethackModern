@@ -3101,6 +3101,7 @@ mondead(struct monst *mtmp)
     be_sad = iflags.sad_feeling;
     iflags.sad_feeling = FALSE;
 
+    fx_mon_dying(mtmp); /* report the killing blow's damage */
     mtmp->mhp = 0; /* in case caller hasn't done this */
     lifesaved_monster(mtmp);
     if (!DEADMONSTER(mtmp))
@@ -3122,6 +3123,7 @@ mondead(struct monst *mtmp)
     if (mtmp->isgd && !grddead(mtmp))
         return;
 
+    fx_mon_died(mtmp);
     mptr = mtmp->data; /* save this for m_detach() */
     /* restore chameleon, lycanthropes to true form at death */
     if (ismnum(mtmp->cham)) {
@@ -3307,6 +3309,7 @@ monstone(struct monst *mdef)
        3.6.3: also used to unshift shape-changed sandestin */
     if (!vamp_stone(mdef))
         return;
+    fx_mon_died(mdef);
 
     /* we have to make the statue before calling mondead, to be able to
      * put inventory in it, and we have to check for lifesaving before

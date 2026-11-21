@@ -4260,6 +4260,7 @@ zhitm(
     boolean sho_shieldeff = FALSE;
     boolean spellcaster = is_hero_spell(type); /* maybe get a bonus! */
 
+    fx_note_kind(mon, AD_MAGM + damgtype);
     *ootmp = (struct obj *) 0;
     switch (damgtype) {
     case ZT_MAGIC_MISSILE:
@@ -4420,6 +4421,7 @@ zhitu(
     int dam = 0, abstyp = zaptype(type);
     int orig_dam = 0;
 
+    fx_note_kind(&gy.youmonst, AD_MAGM + (abstyp % 10));
     switch (abstyp % 10) {
     case ZT_MAGIC_MISSILE:
         if (Antimagic) {

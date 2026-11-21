@@ -79,6 +79,7 @@ missmm(
     struct attack *mattk) /* attack and damage types */
 {
     pre_mm_attack(magr, mdef);
+    fx_attack(magr, mdef, mattk->adtyp, FALSE);
 
     if (gv.vis) {
         pline("%s %s %s.", Monnam(magr),
@@ -655,6 +656,7 @@ hitmm(
                          && objects[mwep->otyp].oc_material == SILVER);
 
     pre_mm_attack(magr, mdef);
+    fx_attack(magr, mdef, mattk->adtyp, TRUE);
 
     compat = !magr->mcan ? could_seduce(magr, mdef, mattk) : 0;
     if (!compat && shade_miss(magr, mdef, mwep, FALSE, gv.vis))

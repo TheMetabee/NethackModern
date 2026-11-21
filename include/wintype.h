@@ -106,6 +106,10 @@ typedef struct glyphinfo {
     int ttychar;
     uint32 framecolor;
     glyph_map gm;
+    /* NetHack Modern (see fx.h); keep last so short initializers
+       zero-fill them */
+    unsigned long fxauras; /* FXA_* status bits for the creature here */
+    uchar fxhealth;        /* 0 = no bar, else 1..100 percent of max HP */
 } glyph_info;
 /*#define GLYPH_INFO_P struct glyphinfo //not used*/
 

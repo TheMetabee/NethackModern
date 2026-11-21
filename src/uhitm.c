@@ -618,6 +618,7 @@ known_hitum(
 
         /* we hit the monster; be careful: it might die or
            be knocked into a different location */
+        fx_attack(&gy.youmonst, mon, uattk ? uattk->adtyp : AD_PHYS, TRUE);
         gn.notonhead = (mon->mx != gb.bhitpos.x || mon->my != gb.bhitpos.y);
         malive = hmon(mon, weapon, HMON_MELEE, dieroll);
         if (malive) {
@@ -4860,6 +4861,7 @@ damageum(
     mhm.permdmg = 0;
     mhm.specialdmg = specialdmg;
     mhm.done = FALSE;
+    fx_attack(&gy.youmonst, mdef, mattk->adtyp, TRUE);
 
     if (is_demon(gy.youmonst.data) && !rn2(13) && !uwep
         && u.umonnum != PM_AMOROUS_DEMON && u.umonnum != PM_BALROG) {
@@ -5216,6 +5218,7 @@ missum(
     struct attack *mattk,
     boolean wouldhavehit)
 {
+    fx_attack(&gy.youmonst, mdef, mattk ? mattk->adtyp : AD_PHYS, FALSE);
     if (wouldhavehit) /* monk is missing due to penalty for wearing suit */
         Your("armor is rather cumbersome...");
 

@@ -2082,6 +2082,8 @@ show_glyph(coordxy x, coordxy y, int glyph)
         || gg.gbuf[y][x].glyphinfo.gm.glyphflags != glyphinfo.gm.glyphflags
         || gg.gbuf[y][x].glyphinfo.gm.sym.color != glyphinfo.gm.sym.color
         || gg.gbuf[y][x].glyphinfo.gm.tileidx != glyphinfo.gm.tileidx
+        || gg.gbuf[y][x].glyphinfo.fxauras != glyphinfo.fxauras
+        || gg.gbuf[y][x].glyphinfo.fxhealth != glyphinfo.fxhealth
 #endif
         || iflags.use_background_glyph) {
         gg.gbuf[y][x].glyphinfo.glyph = glyph;
@@ -2090,6 +2092,8 @@ show_glyph(coordxy x, coordxy y, int glyph)
         gg.gbuf[y][x].glyphinfo.glyph = glyphinfo.glyph;
         gg.gbuf[y][x].glyphinfo.ttychar = glyphinfo.ttychar;
         gg.gbuf[y][x].glyphinfo.gm = glyphinfo.gm;
+        gg.gbuf[y][x].glyphinfo.fxauras = glyphinfo.fxauras;
+        gg.gbuf[y][x].glyphinfo.fxhealth = glyphinfo.fxhealth;
 #endif
         if (gg.gbuf_start[y] > x)
             gg.gbuf_start[y] = x;
@@ -2272,6 +2276,10 @@ flush_screen(int cursor_on_u)
     if (program_state.done_hup)
         return;
 #endif
+
+    /* NetHack Modern: report HP changes and status changes since the last
+       flush; may newsym() squares whose aura or health bar changed */
+    fx_sync();
 
     /* get this done now, before we place the cursor on the hero */
     if (disp.botl || disp.botlx)
@@ -2693,6 +2701,7 @@ map_glyphinfo(
     }
     glyphinfo->ttychar = gs.showsyms[glyphinfo->gm.sym.symidx];
     glyphinfo->glyph = glyph;
+    fx_glyphinfo(x, y, glyph, glyphinfo);
 }
 
 /*
