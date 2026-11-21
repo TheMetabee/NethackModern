@@ -33,6 +33,12 @@
 #define FX_LEVEL_MS 2600    /* lifetime of "Level N!" */
 #define FX_STACK_MS 400     /* a new number on a square this young stacks */
 #define FX_MAXFLOAT 64
+#define FX_MAXANIM 32
+#define FXM_LUNGE 1
+#define FXM_SHAKE 2
+#define FX_LUNGE_MS 150     /* out ~40%, back ~60% */
+#define FX_LUNGE_GAP 110    /* successive lunges in one turn queue up */
+#define FX_SHAKE_MS 220
 
 #define TILEBMP_X(ntile) \
     ((ntile % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X)
@@ -96,6 +102,19 @@ typedef struct mswin_nethack_map_window {
         DWORD start;            /* GetTickCount() when (re)started */
     } floaters[FX_MAXFLOAT];
     int nfloaters;
+    /* NetHack Modern Phase 4: sprites drawn off their square for a moment
+       (melee lunge, hit shake); the map state itself never moves */
+    struct fx_anim {
+        int kind;               /* FXM_LUNGE or FXM_SHAKE */
+        int x, y;               /* square whose creature moves */
+        int dx, dy;             /* lunge direction */
+        short tile;             /* creature tile when the event happened */
+        boolean hit;            /* lunge connected */
+        int strength;           /* shake: 1..100 */
+        DWORD start, dur;       /* GetTickCount() window */
+    } anims[FX_MAXANIM];
+    int nanims;
+    DWORD animSeq;              /* when the queued lunges finish */
     boolean fxTimerOn;
     HFONT hFxFont, hFxFontBig;  /* fonts for the numbers */
     HFONT hFxFontSmall;         /* font for status names */
@@ -124,6 +143,7 @@ static void clearAll(PNHMapWindow data);
 static void mswin_fx_event(const struct fx_event *ev);
 static void fx_tick(PNHMapWindow data);
 static void fx_paint_overlay(PNHMapWindow data, HDC hdc);
+static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect);
 
 #if (VERSION_MAJOR < 4) && (VERSION_MINOR < 4) && (PATCHLEVEL < 2)
@@ -1197,7 +1217,7 @@ onPaint(HWND hWnd)
     int frontWidth = COLNO * data->xFrontTile;
     int frontHeight = ROWNO * data->yFrontTile;
 
-    if (data->nfloaters > 0) {
+    if (data->nfloaters > 0 || data->nanims > 0) {
         /* compose map + floating numbers off screen, then copy, so the
            numbers don't flicker */
         RECT client;
@@ -1225,6 +1245,7 @@ onPaint(HWND hWnd)
             data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth,
             frontHeight, data->backBufferDC, 0, 0, data->backWidth,
             data->backHeight, SRCCOPY);
+        fx_paint_sprites(data, hdc);
         fx_paint_overlay(data, hdc);
         BitBlt(hFrontBufferDC, ps.rcPaint.left, ps.rcPaint.top,
                ps.rcPaint.right - ps.rcPaint.left,
@@ -1278,6 +1299,9 @@ fx_kind_color(const struct fx_event *ev)
 static struct fx_floater *fx_add_floater(PNHMapWindow, const struct fx_event *,
                                          int, const char *, COLORREF);
 static void fx_status_floaters(PNHMapWindow, const struct fx_event *);
+static void fx_motion_event(PNHMapWindow, const struct fx_event *);
+static void fx_paint_sprites(PNHMapWindow, HDC);
+static void fx_start_timer(PNHMapWindow);
 
 /* called by the core (fx.c) */
 static void
@@ -1290,6 +1314,7 @@ mswin_fx_event(const struct fx_event *ev)
 
     if (!data)
         return;
+    fx_motion_event(data, ev); /* lunges and shakes */
     if (ev->type == FXE_STATUS) {
         if (iflags.fx_status_text)
             fx_status_floaters(data, ev);
@@ -1468,6 +1493,176 @@ fx_status_floaters(PNHMapWindow data, const struct fx_event *ev)
     }
 }
 
+static void
+fx_start_timer(PNHMapWindow data)
+{
+    if (!data->fxTimerOn) {
+        SetTimer(data->hWnd, FX_TIMER_ID, FX_FRAME_MS, NULL);
+        data->fxTimerOn = TRUE;
+    }
+    InvalidateRect(data->hWnd, NULL, FALSE);
+}
+
+static struct fx_anim *
+fx_new_anim(PNHMapWindow data)
+{
+    if (data->nanims >= FX_MAXANIM) {
+        memmove(&data->anims[0], &data->anims[1],
+                (FX_MAXANIM - 1) * sizeof data->anims[0]);
+        data->nanims--;
+    }
+    return &data->anims[data->nanims++];
+}
+
+/* melee attacks lunge the attacker toward its target; damage shakes the
+   victim. Only in tiles mode, never while running, and only for a
+   creature actually drawn on that square. */
+static void
+fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
+{
+    DWORD now = GetTickCount();
+    struct fx_anim *a;
+    int dx, dy, i;
+
+    if (!iflags.fx_motion || (ev->flags & FXF_BULK)
+        || data->bAsciiMode || Is_rogue_level(&u.uz))
+        return;
+
+    if (ev->type == FXE_ATTACK && !(ev->flags & FXF_RANGED)) {
+        dx = ev->x - ev->sx, dy = ev->y - ev->sy;
+        if ((!dx && !dy) || dx < -1 || dx > 1 || dy < -1 || dy > 1)
+            return; /* not adjacent */
+        if (!isok(ev->sx, ev->sy)
+            || !glyph_is_monster(data->map[ev->sx][ev->sy].glyph))
+            return; /* attacker not visibly there */
+        a = fx_new_anim(data);
+        a->kind = FXM_LUNGE;
+        a->x = ev->sx, a->y = ev->sy;
+        a->dx = dx, a->dy = dy;
+        a->tile = data->map[ev->sx][ev->sy].gm.tileidx;
+        a->hit = (ev->flags & FXF_HIT) != 0;
+        a->strength = 0;
+        /* several attacks in one turn play one after another */
+        a->start = ((long) (data->animSeq - now) > 0) ? data->animSeq : now;
+        a->dur = FX_LUNGE_MS;
+        data->animSeq = a->start + FX_LUNGE_GAP;
+        fx_start_timer(data);
+    } else if (ev->type == FXE_DAMAGE && ev->amount > 0) {
+        DWORD start = now;
+        int pct;
+
+        if (!isok(ev->x, ev->y)
+            || !glyph_is_monster(data->map[ev->x][ev->y].glyph))
+            return;
+        /* start at the peak of a lunge that just went for this square */
+        for (i = data->nanims - 1; i >= 0; i--) {
+            struct fx_anim *l = &data->anims[i];
+
+            if (l->kind == FXM_LUNGE && l->x + l->dx == ev->x
+                && l->y + l->dy == ev->y
+                && (long) (l->start + l->dur - now) > 0) {
+                start = l->start + (l->dur * 2) / 5;
+                break;
+            }
+        }
+        pct = (ev->amount * 100) / max(ev->hpmax, 1);
+        a = fx_new_anim(data);
+        a->kind = FXM_SHAKE;
+        a->x = ev->x, a->y = ev->y;
+        a->dx = a->dy = 0;
+        a->tile = data->map[ev->x][ev->y].gm.tileidx;
+        a->hit = TRUE;
+        a->strength = max(15, min(100, pct * 3));
+        a->start = start;
+        a->dur = FX_SHAKE_MS;
+        fx_start_timer(data);
+    }
+}
+
+/* a keypress snaps every sprite back to its square (design rule 2) */
+void
+mswin_map_fx_snap(void)
+{
+    PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
+
+    if (data && data->nanims) {
+        data->nanims = 0;
+        data->animSeq = 0;
+        InvalidateRect(data->hWnd, NULL, FALSE);
+    }
+}
+
+/* draw animating creatures off their squares onto the composed image */
+static void
+fx_paint_sprites(PNHMapWindow data, HDC hdc)
+{
+    DWORD now = GetTickCount();
+    HBITMAP saved;
+    int i, ox, oy, tw, th;
+
+    if (!data->nanims)
+        return;
+    ox = data->map_orig.x - data->xPos * data->xFrontTile;
+    oy = data->map_orig.y - data->yPos * data->yFrontTile;
+    tw = data->xFrontTile, th = data->yFrontTile;
+    saved = SelectObject(data->tileDC, GetNHApp()->bmpMapTiles);
+    for (i = 0; i < data->nanims; i++) {
+        struct fx_anim *a = &data->anims[i];
+        long age = (long) (now - a->start);
+        double p, e;
+        int cx, cy, offx = 0, offy = 0;
+        short bk;
+
+        if (age < 0 || age >= (long) a->dur)
+            continue;
+        p = (double) age / a->dur;
+        if (a->kind == FXM_LUNGE) {
+            /* quick push out, softer ease back */
+            double reach = (a->hit ? 0.28 : 0.2) * tw;
+
+            e = (p < 0.4) ? (p / 0.4) : (1.0 - (p - 0.4) / 0.6);
+            e = e * e * (3 - 2 * e); /* smoothstep */
+            offx = (int) (a->dx * reach * e);
+            offy = (int) (a->dy * reach * e);
+        } else { /* FXM_SHAKE: decaying side-to-side jitter */
+            double amp = tw * (0.04 + 0.10 * a->strength / 100.0);
+
+            offx = (int) (amp * sin(p * 2 * 3.14159265358979 * 3.0) * (1.0 - p));
+            offy = (int) (amp * 0.3 * sin(p * 2 * 3.14159265358979 * 5.0) * (1.0 - p));
+        }
+        cx = ox + a->x * tw, cy = oy + a->y * th;
+        /* the floor under it, so it doesn't leave a copy behind; for
+           plain lit room floor the core sends no background glyph (it
+           reports GLYPH_UNEXPLORED and the creature tile is drawn
+           opaque), so put the room-floor tile back ourselves */
+        bk = -1;
+        if (data->bkmap[a->x][a->y].glyph != NO_GLYPH
+            && data->bkmap[a->x][a->y].glyph != GLYPH_UNEXPLORED) {
+            bk = data->bkmap[a->x][a->y].gm.tileidx;
+        } else {
+            glyph_info floorgi;
+
+            map_glyphinfo(a->x, a->y, cmap_to_glyph(S_room), 0, &floorgi);
+            bk = floorgi.gm.tileidx;
+        }
+        if (bk >= 0) {
+            StretchBlt(hdc, cx, cy, tw, th, data->tileDC, TILEBMP_X(bk),
+                       TILEBMP_Y(bk), GetNHApp()->mapTile_X,
+                       GetNHApp()->mapTile_Y, SRCCOPY);
+        } else {
+            RECT r;
+
+            SetRect(&r, cx, cy, cx + tw, cy + th);
+            FillRect(hdc, &r, (HBRUSH) GetStockObject(BLACK_BRUSH));
+        }
+        (*GetNHApp()->lpfnTransparentBlt)(
+            hdc, cx + offx, cy + offy, tw, th, data->tileDC,
+            TILEBMP_X(a->tile), TILEBMP_Y(a->tile), GetNHApp()->mapTile_X,
+            GetNHApp()->mapTile_Y, TILE_BK_COLOR);
+    }
+    SelectObject(data->tileDC, saved);
+}
+
 /* animation frame: expire old numbers, stop the timer when idle */
 static void
 fx_tick(PNHMapWindow data)
@@ -1479,7 +1674,11 @@ fx_tick(PNHMapWindow data)
         if (now - data->floaters[i].start < data->floaters[i].life)
             data->floaters[j++] = data->floaters[i];
     data->nfloaters = j;
-    if (!data->nfloaters && data->fxTimerOn) {
+    for (i = j = 0; i < data->nanims; i++)
+        if ((long) (now - data->anims[i].start) < (long) data->anims[i].dur)
+            data->anims[j++] = data->anims[i];
+    data->nanims = j;
+    if (!data->nfloaters && !data->nanims && data->fxTimerOn) {
         KillTimer(data->hWnd, FX_TIMER_ID);
         data->fxTimerOn = FALSE;
     }

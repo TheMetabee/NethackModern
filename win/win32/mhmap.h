@@ -14,6 +14,7 @@ HWND mswin_init_map_window(void);
 void mswin_map_layout(HWND hWnd, LPSIZE lpsz);
 int mswin_map_mode(HWND hWnd, int mode);
 void mswin_map_update(HWND hWnd);
+void mswin_map_fx_snap(void);
 
 #define ROGUE_LEVEL_MAP_MODE MAP_MODE_ASCII12x16
 #define ROGUE_LEVEL_MAP_MODE_FIT_TO_SCREEN MAP_MODE_ASCII_FIT_TO_SCREEN

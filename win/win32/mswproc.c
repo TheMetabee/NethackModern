@@ -1462,6 +1462,7 @@ mswin_nhgetch(void)
     while ((event = mswin_input_pop()) == NULL || event->type != NHEVENT_CHAR)
         mswin_main_loop();
 
+    mswin_map_fx_snap(); /* NetHack Modern: a key ends animations */
     key = event->ei.kbd.ch;
     return (key);
 }
@@ -1492,6 +1493,7 @@ mswin_nh_poskey(coordxy *x, coordxy *y, int *mod)
     while ((event = mswin_input_pop()) == NULL)
         mswin_main_loop();
 
+    mswin_map_fx_snap(); /* NetHack Modern: input ends animations */
     if (event->type == NHEVENT_MOUSE) {
         if (iflags.wc_mouse_support) {
             *mod = event->ei.ms.mod;
