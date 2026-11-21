@@ -158,6 +158,8 @@ fx_typename(int type)
         return "LEVEL";
     case FXE_MESSAGE:
         return "MESSAGE";
+    case FXE_EXP:
+        return "EXP";
     }
     return "?";
 }
@@ -691,6 +693,23 @@ fx_message(const char *text)
     ev.adtyp = -1;
     ev.text = text;
     (*fx.audio_handler)(&ev);
+}
+
+/* the hero gained 'amount' experience points */
+void
+fx_exp_gain(int amount)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || amount <= 0)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_EXP;
+    ev.flags = fx_bulk_flag() | FXF_HERO_TARGET;
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
+    ev.amount = amount;
+    fx_emit(&ev);
 }
 
 /* the Wizard of Yendor laughs (returning, cloning, taunting) */

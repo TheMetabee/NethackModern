@@ -181,6 +181,8 @@ more_experienced(int exper, int rexp)
         newrexp = LONG_MAX;
 
     if (newexp != oldexp) {
+        if (newexp > oldexp) /* NetHack Modern: "+N XP" floater */
+            fx_exp_gain((int) min(newexp - oldexp, 999999L));
         u.uexp = newexp;
         if (flags.showexp)
             disp.botl = TRUE;

@@ -351,6 +351,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_damage_numbers, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_damage_numbers, Term_False,
            "show floating damage and healing numbers on the map")
+    NHOPTB(fx_exp_text, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_exp_text, Term_False,
+           "float \"+N XP\" over the hero when gaining experience")
     NHOPTB(fx_healthbars, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_healthbars, Term_False,
            "show health bars under hurt creatures on the map")

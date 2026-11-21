@@ -1333,6 +1333,17 @@ mswin_fx_event(const struct fx_event *ev)
             fx_status_floaters(data, ev);
         return;
     }
+    if (ev->type == FXE_EXP) {
+        /* "+20 XP" in light blue over the hero */
+        if (iflags.fx_exp_text) {
+            char buf[32];
+
+            Snprintf(buf, sizeof buf, "+%d XP", ev->amount);
+            f = fx_add_floater(data, ev, 0, buf, RGB(120, 200, 255));
+            f->xoff = 0;
+        }
+        return;
+    }
     if (ev->type == FXE_LEVEL) {
         /* "Level 5!" in big gold letters that linger above the hero */
         if (iflags.fx_status_text) {

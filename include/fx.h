@@ -41,8 +41,9 @@ enum fx_event_type {
                      * FXA_* statuses */
     FXE_LEVEL,      /* hero's experience level is now 'amount'; FXF_HIT
                      * set if it went up, clear if drained */
-    FXE_MESSAGE     /* a message is being shown: 'text' (valid only during
+    FXE_MESSAGE,    /* a message is being shown: 'text' (valid only during
                      * the handler call) */
+    FXE_EXP         /* hero gained 'amount' experience points */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
@@ -135,6 +136,7 @@ extern void fx_read_scroll(int, boolean);
 extern void fx_wizard_laugh(struct monst *);
 extern void fx_level_change(int, boolean);
 extern void fx_message(const char *);
+extern void fx_exp_gain(int);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);
