@@ -54,8 +54,18 @@ enum fx_event_type {
     FXE_WAND,       /* a wand/spell effect: 'otyp' is the look (0 = an
                      * unidentified wand, shown plainly), 'adtyp' one of
                      * FXW_*, 'amount' the beam step (for timing) */
-    FXE_TELEPORT    /* a creature teleported sx,sy -> x,y; 'amount' bit 0:
+    FXE_TELEPORT,   /* a creature teleported sx,sy -> x,y; 'amount' bit 0:
                      * departure seen, bit 1: arrival seen */
+    FXE_QUAFF,      /* the hero drinks a potion: 'adtyp' 0 as it's drunk,
+                     * 1 once its effect is known; 'otyp' the look (0 =
+                     * unidentified), 'amount' the potion's colour,
+                     * 'mndx' 1 blessed / -1 cursed / 0 */
+    FXE_UNIHORN,    /* unicorn horn applied: 'amount' 1 cured something,
+                     * 0 nothing happened, -1 cursed horn */
+    FXE_DETECT      /* detection revealed things: 'adtyp' FXD_*; with
+                     * FXF_HERO_TARGET once at the hero ('amount' = how
+                     * many), otherwise one per square found ('amount' =
+                     * its distance, for a ripple outward) */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
@@ -81,6 +91,12 @@ enum fx_texture {
 #define FXF_RANGED      0x0040U /* ATTACK/MISS by a thrown/fired missile */
 #define FXF_UNSEEN      0x0080U /* EXPLODE: heard, not seen */
 #define FXF_RESISTED    0x0100U /* IMPACT: it bounced off ("Boing!") */
+#define FXF_DROP        0x0200U /* PICKUP: it was put down, not picked up
+                                 * ('amount' = its weight) */
+
+/* FXE_DETECT kinds */
+#define FXD_MONSTER 1
+#define FXD_OBJECT  2
 
 /* FXE_WAND kinds */
 #define FXW_BEAM 1 /* the beam passing through x,y */
@@ -166,6 +182,9 @@ extern void fx_wand_self(int);
 extern void fx_mon_slept(struct monst *);
 extern void fx_teleport(coordxy, coordxy, coordxy, coordxy, boolean,
                         boolean, boolean);
+extern void fx_quaff(struct obj *, int);
+extern void fx_unihorn(int);
+extern void fx_detected(int);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);
@@ -173,6 +192,7 @@ extern void fx_hear(void);
 extern void fx_swap(struct monst *, coordxy, coordxy);
 extern void fx_bump(struct monst *, coordxy, coordxy);
 extern void fx_pickup(int, int);
+extern void fx_drop(struct obj *);
 extern void fx_trap(struct monst *, int, coordxy, coordxy);
 extern void fx_eat_texture(int);
 extern void fx_eat(int);

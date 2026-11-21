@@ -187,6 +187,9 @@ static void fx_impact_particles(PNHMapWindow, int, int, boolean);
 static void fx_wand_particles(PNHMapWindow, const struct fx_event *);
 static void fx_dig_particles(PNHMapWindow, int, int);
 static void fx_teleport_particles(PNHMapWindow, const struct fx_event *);
+static void fx_quaff_particles(PNHMapWindow, const struct fx_event *);
+static void fx_detect_particles(PNHMapWindow, const struct fx_event *);
+COLORREF nhcolor_to_RGB(int);
 static void fx_paint_particles(PNHMapWindow, HDC);
 static int fx_paint_auras(PNHMapWindow, HDC);
 static void fx_part_layer(PNHMapWindow, HDC);
@@ -1409,6 +1412,11 @@ mswin_fx_event(const struct fx_event *ev)
         fx_wand_particles(data, ev);
     if (ev->type == FXE_TELEPORT && !(ev->flags & FXF_BULK))
         fx_teleport_particles(data, ev);
+    if (ev->type == FXE_QUAFF && !(ev->flags & FXF_UNSEEN))
+        fx_quaff_particles(data, ev);
+    if ((ev->type == FXE_DETECT || ev->type == FXE_UNIHORN)
+        && !(ev->flags & FXF_UNSEEN))
+        fx_detect_particles(data, ev);
     if (ev->type == FXE_IMPACT && !(ev->flags & FXF_BULK))
         fx_impact_particles(data, ev->x, ev->y,
                             (ev->flags & FXF_RESISTED) != 0);
@@ -2448,6 +2456,170 @@ fx_teleport_particles(PNHMapWindow data, const struct fx_event *ev)
             (void) fx_spawn_at(data, &tele, FALSE, ev->x + 0.5f, ev->y + 0.5f,
                                tele.speed * 1.6f, 1.0f, at);
         fx_ring(data, &tele, FALSE, ev->x, ev->y, 26, 0.9f, 0.01f, 400, at);
+    }
+    fx_start_timer(data);
+}
+
+/* drinking a potion: first a swirl of its own colour rising around the
+   hero (what anyone could see); then, if its type is known, its effect */
+static void
+fx_quaff_particles(PNHMapWindow data, const struct fx_event *ev)
+{
+    static const struct fx_pstyle
+        swirl = { RGB(255, 255, 255), RGB(255, 255, 255), RGB(10, 10, 10),
+                  0.0f, -0.6f, 0.4f, 0.06f, 500, 850 },
+        heal = { RGB(200, 255, 200), RGB(110, 240, 120), RGB(0, 40, 0),
+                 0.5f, -1.3f, 0.45f, 0.06f, 600, 1100 },
+        energy = { RGB(190, 215, 255), RGB(110, 150, 255), RGB(0, 10, 50),
+                   0.5f, -1.3f, 0.45f, 0.06f, 600, 1100 },
+        gold = { RGB(255, 235, 150), RGB(255, 200, 80), RGB(50, 30, 0),
+                 0.4f, -1.8f, 0.45f, 0.06f, 700, 1300 },
+        acid = { RGB(220, 255, 70), RGB(170, 230, 30), RGB(30, 45, 0),
+                 1.4f, -0.4f, 0.3f, 0.05f, 300, 600 },
+        sick = { RGB(170, 210, 60), RGB(120, 160, 40), RGB(15, 25, 0),
+                 0.5f, -0.6f, 0.4f, 0.08f, 600, 1000 },
+        booze = { RGB(255, 200, 110), RGB(230, 160, 60), RGB(40, 20, 0),
+                  0.4f, -0.9f, 0.4f, 0.06f, 600, 1000 },
+        holy = { RGB(255, 252, 230), RGB(255, 235, 170), RGB(60, 50, 20),
+                 0.5f, -1.4f, 0.4f, 0.06f, 600, 1100 },
+        unholy = { RGB(200, 40, 40), RGB(120, 20, 40), RGB(20, 0, 5),
+                   0.5f, -0.9f, 0.4f, 0.06f, 600, 1000 },
+        detect = { RGB(220, 170, 255), RGB(160, 110, 255), RGB(25, 0, 50),
+                   0.5f, 0.0f, 0.3f, 0.055f, 500, 900 };
+    const struct fx_pstyle *st = 0;
+    boolean rb = FALSE;
+    int i, x = ev->x, y = ev->y, n = 50;
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+
+    if (ev->adtyp == 0) {
+        /* a spiral of the potion's colour rising round the hero */
+        COLORREF c = nhcolor_to_RGB(ev->amount);
+
+        if (GetRValue(c) + GetGValue(c) + GetBValue(c) < 200)
+            c = RGB(110, 110, 135); /* inky or black: still visible */
+        for (i = 0; i < 26; i++) {
+            float a = (6.2831853f * i) / 13.0f;
+            struct fx_part *p = fx_spawn_at(
+                data, &swirl, Hallucination, x + 0.5f + 0.42f * (float) cos(a),
+                y + 0.85f, 0.0f, 1.0f, (DWORD) (i * 22));
+
+            if (!Hallucination)
+                p->c0 = c;
+            p->vx = -0.9f * (float) sin(a);
+            p->vy = -1.1f;
+        }
+        fx_start_timer(data);
+        return;
+    }
+
+    switch (ev->otyp) {
+    case POT_HEALING:
+        st = &heal, n = 35;
+        break;
+    case POT_EXTRA_HEALING:
+        st = &heal, n = 55;
+        break;
+    case POT_FULL_HEALING:
+        st = &heal, n = 85;
+        break;
+    case POT_GAIN_ENERGY:
+        st = &energy;
+        break;
+    case POT_GAIN_LEVEL:
+    case POT_GAIN_ABILITY:
+    case POT_RESTORE_ABILITY:
+        st = &gold, n = (ev->otyp == POT_GAIN_LEVEL) ? 80 : 50;
+        break;
+    case POT_ACID:
+        st = &acid, n = 40;
+        break;
+    case POT_SICKNESS:
+        st = &sick, n = 30;
+        break;
+    case POT_BOOZE:
+        st = &booze, n = 30;
+        break;
+    case POT_POLYMORPH:
+        st = &booze, rb = TRUE, n = 60;
+        break;
+    case POT_MONSTER_DETECTION:
+    case POT_OBJECT_DETECTION:
+        fx_ring(data, &detect, FALSE, x, y, 80, 6.0f, 0.03f, 800, 0);
+        fx_start_timer(data);
+        return;
+    case POT_ENLIGHTENMENT:
+        st = &gold, n = 60;
+        break;
+    case POT_WATER:
+        if (ev->mndx > 0)
+            st = &holy;
+        else if (ev->mndx < 0)
+            st = &unholy;
+        break;
+    default:
+        break;
+    }
+    if (!st)
+        return;
+    /* motes rising from all around the hero, and a soft ring */
+    for (i = 0; i < n; i++)
+        (void) fx_spawn_at(data, st, rb, x + 0.5f + fx_prange(-0.9f, 0.9f),
+                           y + 0.7f + fx_prange(-0.3f, 0.5f), st->speed,
+                           1.0f, (DWORD) fx_prange(0, 300));
+    fx_ring(data, st, rb, x, y, 32, 1.3f, 0.02f, 550, 0);
+    fx_start_timer(data);
+}
+
+/* detection: each thing found flashes briefly where it appears, in a
+   ripple spreading out from the hero; a unicorn horn that cured
+   something sparkles clean around the hero */
+static void
+fx_detect_particles(PNHMapWindow data, const struct fx_event *ev)
+{
+    static const struct fx_pstyle
+        mon = { RGB(255, 140, 170), RGB(220, 90, 255), RGB(40, 0, 30),
+                1.4f, -0.4f, 0.2f, 0.055f, 350, 650 },
+        obj = { RGB(255, 235, 140), RGB(140, 230, 255), RGB(30, 30, 10),
+                1.4f, -0.4f, 0.2f, 0.055f, 350, 650 },
+        cure = { RGB(235, 250, 255), RGB(150, 230, 255), RGB(0, 30, 40),
+                 0.6f, -1.6f, 0.4f, 0.06f, 500, 950 };
+    int i, x = ev->x, y = ev->y;
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+    if (ev->type == FXE_UNIHORN) {
+        if (ev->amount <= 0)
+            return;
+        for (i = 0; i < 45; i++)
+            (void) fx_spawn_at(data, &cure, FALSE,
+                               x + 0.5f + fx_prange(-0.7f, 0.7f),
+                               y + 0.6f + fx_prange(-0.3f, 0.5f), cure.speed,
+                               1.0f, (DWORD) fx_prange(0, 250));
+        fx_ring(data, &cure, FALSE, x, y, 30, 1.2f, 0.02f, 500, 0);
+        fx_start_timer(data);
+        return;
+    }
+    if (ev->flags & FXF_HERO_TARGET)
+        return; /* the summary is for the sound */
+    {
+        const struct fx_pstyle *st = (ev->adtyp == FXD_MONSTER) ? &mon : &obj;
+        DWORD at = (DWORD) (ev->amount * 45); /* the ripple spreading out */
+
+        for (i = 0; i < 3; i++) {
+            struct fx_part *p = fx_spawn_at(data, st, FALSE, x + 0.5f,
+                                            y + 0.5f, 0.0f, 1.0f, at);
+
+            p->vx = p->vy = 0.0f;
+            p->size = 0.22f;
+            p->c0 = RGB(255, 255, 255);
+            p->life = 160;
+        }
+        for (i = 0; i < 12; i++)
+            (void) fx_spawn_at(data, st, FALSE, x + 0.5f, y + 0.5f,
+                               st->speed, 1.0f, at);
+        fx_ring(data, st, FALSE, x, y, 14, 0.7f, 0.01f, 420, at);
     }
     fx_start_timer(data);
 }

@@ -786,6 +786,10 @@ void
 dropx(struct obj *obj)
 {
     freeinv(obj);
+    /* NetHack Modern: the sound of it being put down (not into water,
+       lava or an engulfer, which make their own) */
+    if (!u.uswallow && !is_pool_or_lava(u.ux, u.uy) && !Levitation)
+        fx_drop(obj);
     if (!u.uswallow) {
         if (ship_object(obj, u.ux, u.uy, FALSE))
             return;

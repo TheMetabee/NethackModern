@@ -473,3 +473,17 @@ this project with ffmpeg unless noted:
   wand_dig_1..2.wav      <- se_dig_rock (TomMusic mine), low-passed se_kaboom
                             and trap_rock (TomMusic Rock Meteor) mixed
   fall_asleep_1.wav      <- a falling three-note chime and a soft breath
+
+Drinking potions:
+  quaff_1..3.wav         <- a synthesized cork pop and click, then one soft
+                            muffled gulp from rubberduck burble_01..02 (CC0)
+  potion_heal_1.wav      <- a rising three-note chime with echo, synthesized
+                            for this project with ffmpeg
+
+Unicorn horn results and detection, synthesized for this project with
+ffmpeg:
+  unihorn_cure_1.wav     <- a quick bright C major arpeggio with a sparkle
+  unihorn_none_1.wav     <- a dull, muted low tap
+  unihorn_bad_1.wav      <- a sour, falling, slightly detuned pair
+  detect_monster_1.wav   <- two deep throbs and a dark rising sweep
+  detect_object_1.wav    <- a glassy rising arpeggio and a glitter

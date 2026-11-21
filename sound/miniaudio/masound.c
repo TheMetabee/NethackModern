@@ -340,8 +340,7 @@ ma_apply(int otyp, boolean was_lit)
         name = "use_crystal";
         break;
     case UNICORN_HORN:
-        name = "use_unihorn";
-        break;
+        return; /* its result has a sound of its own (FXE_UNIHORN) */
     case BULLWHIP:
         name = "wpn_whip_hit";
         break;
@@ -448,10 +447,12 @@ ma_read(int otyp, boolean confused)
 
 /* pickup sound per object class; falls back to a generic one */
 static void
-ma_pickup(int oclass, int otyp)
+ma_pickup(int oclass, int otyp, boolean drop, int weight)
 {
     const char *name;
     float pitch = ma_frand(0.95f, 1.08f);
+    static DWORD drop_window;
+    static int drop_count;
 
     switch (oclass) {
     case COIN_CLASS:
@@ -512,6 +513,22 @@ ma_pickup(int oclass, int otyp)
     default:
         name = "pickup";
         break;
+    }
+    if (drop) {
+        DWORD now = GetTickCount();
+
+        /* dropping many things at once: a few sounds, not a pile-up */
+        if (now - drop_window > 150)
+            drop_window = now, drop_count = 0;
+        if (++drop_count > 3)
+            return;
+        /* set down: a little lower and softer than picking it up, and
+           something heavy lands with a thud */
+        ma_play_named(name, 0.5f, pitch * 0.88f, 0.0f);
+        if (weight >= 100)
+            ma_play_named("trap_fall", min(0.7f, 0.25f + weight / 800.0f),
+                          ma_frand(0.75f, 0.85f), 0.0f);
+        return;
     }
     ma_play_named(name, 0.6f, pitch, 0.0f);
 }
@@ -1406,7 +1423,8 @@ ma_fx_event(const struct fx_event *ev)
         ma_play_group(MAG_BUMP, 0.6f, ma_frand(0.9f, 1.1f), pan);
         break;
     case FXE_PICKUP:
-        ma_pickup(ev->objclass, ev->otyp);
+        ma_pickup(ev->objclass, ev->otyp, (ev->flags & FXF_DROP) != 0,
+                  ev->amount);
         break;
     case FXE_TRAP:
         ma_trap(ev->ttyp, (ev->flags & FXF_HERO_TARGET) ? 1.0f : vol, pan);
@@ -1437,6 +1455,58 @@ ma_fx_event(const struct fx_event *ev)
             ma_beam_hit(ev->otyp, vol, pan);
         else if (ev->adtyp == FXW_SELF)
             ma_wand_self(ev->otyp);
+        break;
+    case FXE_QUAFF:
+        if (ev->adtyp == 0) {
+            /* the cork and a couple of gulps */
+            ma_play_named("quaff", 0.75f, ma_frand(0.96f, 1.04f), 0.0f);
+        } else {
+            switch (ev->otyp) {
+            case POT_HEALING:
+            case POT_EXTRA_HEALING:
+            case POT_FULL_HEALING:
+                ma_play_named("potion_heal", 0.55f,
+                              ev->otyp == POT_FULL_HEALING ? 0.9f
+                              : ev->otyp == POT_EXTRA_HEALING ? 0.95f
+                                                              : 1.0f,
+                              0.0f);
+                break;
+            case POT_GAIN_ENERGY:
+                ma_play_named("potion_heal", 0.45f, 1.25f, 0.0f);
+                break;
+            case POT_ENLIGHTENMENT:
+                ma_play_named("wand_enlight", 0.5f, 1.0f, 0.0f);
+                break;
+            case POT_SPEED:
+                ma_play_named("wand_speed", 0.5f, 1.0f, 0.0f);
+                break;
+            case POT_POLYMORPH:
+                ma_play_named("wand_poly", 0.4f, 1.0f, 0.0f);
+                break;
+            case POT_INVISIBILITY:
+                ma_play_named("wand_invis", 0.45f, 1.0f, 0.0f);
+                break;
+            default:
+                break;
+            }
+        }
+        break;
+    case FXE_UNIHORN:
+        /* cured / nothing / cursed; the cure messages that follow
+           ("You feel somewhat better") don't play over it */
+        ma.last_se = GetTickCount();
+        if (ev->amount > 0)
+            ma_play_named("unihorn_cure", 0.55f, ma_frand(0.97f, 1.03f), 0.0f);
+        else if (ev->amount == 0)
+            ma_play_named("unihorn_none", 0.5f, ma_frand(0.95f, 1.05f), 0.0f);
+        else
+            ma_play_named("unihorn_bad", 0.45f, ma_frand(0.96f, 1.04f), 0.0f);
+        break;
+    case FXE_DETECT:
+        if (ev->flags & FXF_HERO_TARGET)
+            ma_play_named(ev->adtyp == FXD_MONSTER ? "detect_monster"
+                                                   : "detect_object",
+                          0.55f, 1.0f, 0.0f);
         break;
     case FXE_TELEPORT:
         /* a shimmering whoosh, where it was seen (or heard) to go */

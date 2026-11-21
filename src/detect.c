@@ -468,6 +468,7 @@ gold_detect(struct obj *sobj)
     You_feel("very greedy, and sense gold!");
     exercise(A_WIS, TRUE);
 
+    fx_detected(FXD_OBJECT); /* NetHack Modern */
     browse_map(ter_typ, "gold");
 
     map_redisplay();
@@ -586,6 +587,7 @@ food_detect(struct obj *sobj)
             You("sense %s.", what);
         exercise(A_WIS, TRUE);
 
+        fx_detected(FXD_OBJECT); /* NetHack Modern */
         browse_map(ter_typ, "food");
 
         map_redisplay();
@@ -777,6 +779,8 @@ object_detect(struct obj *detector, /* object doing the detecting */
         newsym(u.ux, u.uy);
         ter_typ |= TER_MON;
     }
+    if (ct)
+        fx_detected(FXD_OBJECT); /* NetHack Modern: each one flashes */
     You("detect the %s of %s.", ct ? "presence" : "absence", stuff);
 
     if (!ct)
@@ -841,6 +845,7 @@ monster_detect(struct obj *otmp, /* detecting object (if any) */
         }
         if (!swallowed)
             display_self();
+        fx_detected(FXD_MONSTER); /* NetHack Modern: each one flashes */
         You("sense the presence of monsters.");
         if (woken)
             pline("Monsters sense the presence of you.");

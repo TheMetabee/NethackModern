@@ -177,6 +177,12 @@ fx_typename(int type)
         return "WAND";
     case FXE_TELEPORT:
         return "TELEPORT";
+    case FXE_QUAFF:
+        return "QUAFF";
+    case FXE_UNIHORN:
+        return "UNIHORN";
+    case FXE_DETECT:
+        return "DETECT";
     }
     return "?";
 }
@@ -967,6 +973,82 @@ fx_teleport(coordxy fx, coordxy fy, coordxy tx, coordxy ty, boolean hero,
     fx_emit(&ev);
 }
 
+/* the hero drinks potion 'otmp'; 'stage' 0 as it goes down (a swirl of
+   its colour and a gulp), 1 after its effect (only shown once the type is
+   known, so it never gives an unidentified potion away) */
+void
+fx_quaff(struct obj *otmp, int stage)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || !otmp || otmp->oclass != POTION_CLASS)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_QUAFF;
+    ev.flags = FXF_HERO_TARGET | (Blind ? FXF_UNSEEN : 0U);
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = stage;
+    ev.otyp = objects[otmp->otyp].oc_name_known ? otmp->otyp : 0;
+    ev.amount = objects[otmp->otyp].oc_color; /* its appearance */
+    ev.mndx = !otmp->bknown ? 0 : otmp->blessed ? 1 : otmp->cursed ? -1 : 0;
+    if (otmp->otyp == POT_WATER && otmp->bknown)
+        ev.mndx = otmp->blessed ? 1 : otmp->cursed ? -1 : 0;
+    fx_emit(&ev);
+}
+
+/* the unicorn horn's result: 1 cured something, 0 nothing, -1 cursed */
+void
+fx_unihorn(int result)
+{
+    struct fx_event ev;
+
+    if (!fx_active())
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_UNIHORN;
+    ev.flags = FXF_HERO_TARGET | (Blind ? FXF_UNSEEN : 0U);
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
+    ev.amount = result;
+    fx_emit(&ev);
+}
+
+/* detection has just put things on the map (before the hero is asked to
+   look them over): one event per square showing such a thing, and one
+   at the hero for the sound; 'kind' is FXD_* */
+void
+fx_detected(int kind)
+{
+    struct fx_event ev;
+    coordxy x, y;
+    int n = 0;
+
+    if (!fx_active())
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_DETECT;
+    ev.adtyp = kind;
+    for (x = 1; x < COLNO && n < 80; x++)
+        for (y = 0; y < ROWNO && n < 80; y++) {
+            int glyph = glyph_at(x, y);
+
+            if (u_at(x, y))
+                continue;
+            if (kind == FXD_MONSTER ? !glyph_is_monster(glyph)
+                                    : !glyph_is_object(glyph))
+                continue;
+            ev.flags = 0U;
+            ev.x = ev.sx = x, ev.y = ev.sy = y;
+            ev.amount = distmin(u.ux, u.uy, x, y);
+            fx_emit(&ev);
+            n++;
+        }
+    ev.flags = FXF_HERO_TARGET;
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.amount = n;
+    fx_emit(&ev);
+}
+
 /* a creature was knocked (hurtled) one step from <fx,fy> to <tx,ty> */
 void
 fx_knockback(coordxy fx, coordxy fy, coordxy tx, coordxy ty)
@@ -1131,6 +1213,25 @@ fx_pickup(int oclass, int otyp)
     ev.adtyp = -1;
     ev.objclass = oclass;
     ev.otyp = otyp;
+    fx_emit(&ev);
+}
+
+/* hero put 'obj' down on the floor */
+void
+fx_drop(struct obj *obj)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || !obj)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_PICKUP;
+    ev.flags = fx_bulk_flag() | FXF_HERO_TARGET | FXF_DROP;
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
+    ev.objclass = obj->oclass;
+    ev.otyp = obj->otyp;
+    ev.amount = (int) obj->owt;
     fx_emit(&ev);
 }
 

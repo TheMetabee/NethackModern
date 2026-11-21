@@ -621,6 +621,7 @@ dopotion(struct obj *otmp)
 
     otmp->in_use = TRUE;
     gp.potion_nothing = gp.potion_unkn = 0;
+    fx_quaff(otmp, 0); /* NetHack Modern: the gulp and a swirl */
     if ((retval = peffects(otmp)) >= 0)
         return retval ? ECMD_TIME : ECMD_OK;
 
@@ -636,6 +637,7 @@ dopotion(struct obj *otmp)
         } else
             trycall(otmp);
     }
+    fx_quaff(otmp, 1); /* NetHack Modern: its effect, once known */
     useup(otmp);
     return ECMD_TIME;
 }

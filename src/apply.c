@@ -2270,6 +2270,7 @@ use_unicorn_horn(struct obj **optr)
     if (obj && obj->cursed) {
         long lcount = (long) rn1(90, 10);
 
+        fx_unihorn(-1); /* NetHack Modern: a sour note */
         switch (rn2(13) / 2) { /* case 6 is half as likely as the others */
         case 0:
             make_sick((Sick & TIMEOUT) ? (Sick & TIMEOUT) / 3L + 1L
@@ -2331,6 +2332,7 @@ use_unicorn_horn(struct obj **optr)
         prop_trouble(DEAF);
 
     if (trouble_count == 0) {
+        fx_unihorn(0); /* NetHack Modern: a dull tap, nothing to fix */
         pline1(nothing_happens);
         return;
     } else if (trouble_count > 1)
@@ -2345,6 +2347,11 @@ use_unicorn_horn(struct obj **optr)
     val_limit = rn2(d(2, (obj && obj->blessed) ? 4 : 2));
     if (val_limit > trouble_count)
         val_limit = trouble_count;
+
+    /* NetHack Modern: the result's sound, before the "You feel better"
+       messages so they don't play over it (every trouble taken on below
+       is fixed, so something is cured iff val_limit > 0) */
+    fx_unihorn(val_limit > 0 ? 1 : 0);
 
     /* fix [some of] the troubles */
     for (val = 0; val < val_limit; val++) {
