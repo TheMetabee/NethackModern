@@ -759,8 +759,9 @@ mswin_layout_main_window(HWND changed_child)
         GetNHApp()->rtInvenWindow.right = GetNHApp()->rtMenuWindow.right;
         GetNHApp()->rtInvenWindow.bottom = GetNHApp()->rtMenuWindow.bottom;
 
-        /* adjust map window size only if perm_invent is set */
-        if (iflags.perm_invent)
+        /* adjust map window size only if perm_invent is set (and, for
+           NetHack Modern, the panel isn't hidden) */
+        if (iflags.perm_invent && !mswin_inven_hidden)
             GetNHApp()->rtMapWindow.right = GetNHApp()->rtMenuWindow.left;
     }
 
@@ -784,6 +785,9 @@ mswin_layout_main_window(HWND changed_child)
 
             MoveWindow(GetNHApp()->windowlist[i].win, rt.left, rt.top,
                        rt.right - rt.left, rt.bottom - rt.top, TRUE);
+            if (iflags.perm_invent && i == WIN_INVEN) /* NetHack Modern */
+                ShowWindow(GetNHApp()->windowlist[i].win,
+                           mswin_inven_hidden ? SW_HIDE : SW_SHOW);
         }
     }
     if (IsWindow(changed_child))
@@ -1484,6 +1488,7 @@ nh_compose_unicode_screenshot(void)
 #define TB_CMD 2      /* a main-window menu command (IDM_*) */
 #define TB_ZOOM 3     /* map zoom: arg +1, -1, 0 */
 #define TB_SEP 4
+#define TB_INVEN 5    /* show or hide the inventory panel */
 
 struct tb_item {
     const char *label;
@@ -1510,6 +1515,7 @@ static const struct tb_item tb_view[] = {
     TBZ("Zoom in", "Ctrl+=", 1),
     TBZ("Zoom out", "Ctrl+-", -1),
     TBZ("Whole level", "Ctrl+0", 0),
+    { "Show or hide inventory", "", TB_INVEN, NULL, 0 },
     TBSEP,
     TBC("Tiles", "", IDM_MAP_TILES),
     TBC("ASCII", "", IDM_MAP_ASCII12X16),
@@ -1620,9 +1626,23 @@ static const struct tb_topic {
 };
 #define TB_NTOPIC SIZE(tb_topics)
 
+static HWND tb_hwnd_ref; /* (the topic bar, set when it's made) */
+/* NetHack Modern: the inventory side panel can be hidden */
+boolean mswin_inven_hidden = FALSE;
+
+void
+mswin_toggle_inven_panel(void)
+{
+    mswin_inven_hidden = !mswin_inven_hidden;
+    mswin_layout_main_window(NULL);
+    if (tb_hwnd_ref)
+        InvalidateRect(tb_hwnd_ref, NULL, FALSE);
+}
+
 static HWND tb_hwnd;
 static int tb_hot = -1, tb_open = -1;
 static int tb_x[TB_NTOPIC + 1]; /* topic left edges, and the end */
+static RECT tb_inv;             /* the inventory toggle */
 
 int
 mswin_topbar_height(void)
@@ -1684,6 +1704,9 @@ tb_run(const struct tb_item *it)
     case TB_ZOOM:
         mswin_map_zoom(it->arg);
         break;
+    case TB_INVEN:
+        mswin_toggle_inven_panel();
+        break;
     }
     SetFocus(GetNHApp()->hMainWnd);
 }
@@ -1742,6 +1765,23 @@ tb_paint(HWND hWnd)
         x = r.right + 2;
     }
     tb_x[TB_NTOPIC] = x;
+    if (iflags.perm_invent) {
+        /* the inventory toggle, at the right end */
+        const char *lab = mswin_inven_hidden ? "Show inventory"
+                                             : "Hide inventory";
+        SIZE sz;
+
+        GetTextExtentPoint32A(hdc, lab, (int) strlen(lab), &sz);
+        SetRect(&tb_inv, rc.right - sz.cx - 2 * pad - 8, 2, rc.right - 8,
+                rc.bottom - 3);
+        if (tb_hot == TB_NTOPIC)
+            FillRect(hdc, &tb_inv, hot);
+        SetTextColor(hdc, tb_hot == TB_NTOPIC ? TH_ACCENT : TH_TEXT_DIM);
+        DrawTextA(hdc, lab, -1, &tb_inv,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    } else {
+        SetRectEmpty(&tb_inv);
+    }
     SelectObject(hdc, of);
     DeleteObject(bg);
     DeleteObject(line);
@@ -1754,6 +1794,8 @@ tb_hit(int x)
 {
     int i;
 
+    if (x >= tb_inv.left && x < tb_inv.right)
+        return TB_NTOPIC; /* the inventory toggle */
     for (i = 0; i < TB_NTOPIC; i++)
         if (x >= tb_x[i] && x < tb_x[i + 1])
             return i;
@@ -1833,7 +1875,10 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_LBUTTONDOWN: {
         int t = tb_hit(GET_X_LPARAM(lParam));
 
-        if (t >= 0)
+        if (t == TB_NTOPIC) {
+            mswin_toggle_inven_panel();
+            SetFocus(GetNHApp()->hMainWnd);
+        } else if (t >= 0)
             tb_open_topic(hWnd, t);
         return 0;
     }
@@ -1943,5 +1988,6 @@ mswin_topbar_init(HWND main)
     tb_hwnd = CreateWindow(TEXT("MSNHTopBar"), NULL,
                            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0,
                            rc.right, 24, main, NULL, GetNHApp()->hApp, NULL);
+    tb_hwnd_ref = tb_hwnd;
     /* (sized by the window layout, once the fonts are known) */
 }

@@ -1282,7 +1282,9 @@ mswin_select_menu(winid wid, int how, MENU_ITEM_P **selected)
 
     if ((wid >= 0) && (wid < MAXWINDOWS)
         && (GetNHApp()->windowlist[wid].win != NULL)) {
-        ShowWindow(GetNHApp()->windowlist[wid].win, SW_SHOW);
+        if (!(iflags.perm_invent && wid == WIN_INVEN && how == PICK_NONE
+              && mswin_inven_hidden)) /* NetHack Modern: kept hidden */
+            ShowWindow(GetNHApp()->windowlist[wid].win, SW_SHOW);
         nReturned = mswin_menu_window_select_menu(
             GetNHApp()->windowlist[wid].win, how, selected,
             !(iflags.perm_invent && wid == WIN_INVEN
