@@ -39,8 +39,10 @@ enum fx_event_type {
     FXE_APPEAR,     /* a notable monster ('mndx') just came into view */
     FXE_STATUS,     /* target gained ('st_gain') and/or lost ('st_lose')
                      * FXA_* statuses */
-    FXE_LEVEL       /* hero's experience level is now 'amount'; FXF_HIT
+    FXE_LEVEL,      /* hero's experience level is now 'amount'; FXF_HIT
                      * set if it went up, clear if drained */
+    FXE_MESSAGE     /* a message is being shown: 'text' (valid only during
+                     * the handler call) */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
@@ -86,6 +88,7 @@ struct fx_event {
     int launcher_otyp;   /* LAUNCH: bow/crossbow/sling used, else 0 */
     unsigned long st_gain; /* STATUS: FXA_* bits newly set */
     unsigned long st_lose; /* STATUS: FXA_* bits that ended */
+    const char *text;    /* MESSAGE: the message */
 };
 
 typedef void (*fx_handler_fn)(const struct fx_event *);
@@ -131,6 +134,7 @@ extern void fx_apply(struct obj *);
 extern void fx_read_scroll(int, boolean);
 extern void fx_wizard_laugh(struct monst *);
 extern void fx_level_change(int, boolean);
+extern void fx_message(const char *);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);

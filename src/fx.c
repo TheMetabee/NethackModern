@@ -156,6 +156,8 @@ fx_typename(int type)
         return "STATUS";
     case FXE_LEVEL:
         return "LEVEL";
+    case FXE_MESSAGE:
+        return "MESSAGE";
     }
     return "?";
 }
@@ -671,6 +673,24 @@ fx_level_change(int newlevel, boolean up)
     ev.adtyp = -1;
     ev.amount = newlevel;
     fx_emit(&ev);
+}
+
+/* a message is being shown (called from vpline()); sent to the sound
+   handler only, and not logged (the message window already shows it) */
+void
+fx_message(const char *text)
+{
+    struct fx_event ev;
+
+    if (!fx.audio_handler || !text || !*text)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_MESSAGE;
+    ev.flags = fx_bulk_flag();
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
+    ev.text = text;
+    (*fx.audio_handler)(&ev);
 }
 
 /* the Wizard of Yendor laughs (returning, cloning, taunting) */

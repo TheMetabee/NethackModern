@@ -114,6 +114,7 @@ setuwep(struct obj *obj)
      * *whenever* Sunsword is unwielded, from whatever cause. */
     if (uwep == obj && artifact_light(olduwep) && olduwep->lamplit) {
         end_burn(olduwep, FALSE);
+        Soundeffect(se_glow_fade, 50); /* NetHack Modern */
         if (!Blind)
             pline("%s shining.", Tobjnam(olduwep, "stop"));
     }
@@ -244,6 +245,7 @@ ready_weapon(struct obj *wep)
 
         if (artifact_light(wep) && !wep->lamplit) {
             begin_burn(wep, FALSE);
+            Soundeffect(se_glow_bloom, 60); /* NetHack Modern */
             if (!Blind)
                 pline("%s to shine %s!", Tobjnam(wep, "begin"),
                       arti_light_description(wep));
@@ -880,6 +882,7 @@ uwepgone(void)
     if (uwep) {
         if (artifact_light(uwep) && uwep->lamplit) {
             end_burn(uwep, FALSE);
+            Soundeffect(se_glow_fade, 50); /* NetHack Modern */
             if (!Blind)
                 pline("%s shining.", Tobjnam(uwep, "stop"));
         }

@@ -262,6 +262,9 @@ vpline(const char *line, va_list the_args)
              */
             goto pline_done;
     }
+    /* NetHack Modern: shown messages can carry a sound (not hidden or
+       repeat-suppressed ones) */
+    fx_message(line);
 
     if (gv.vision_full_recalc) {
         int tmp_in_pline = in_pline;

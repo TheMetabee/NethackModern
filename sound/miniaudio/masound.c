@@ -214,7 +214,7 @@ ma_play_group(enum ma_group g, float volume, float pitch, float pan)
 }
 
 /* named sample sets looked up on first use: <name>_1.wav .. <name>_N.wav */
-#define MA_MAXNAMED 64
+#define MA_MAXNAMED 256
 static struct {
     const char *name;
     int nvar;
@@ -877,6 +877,239 @@ ma_launch(const struct fx_event *ev, float vol, float pan)
                       pan);
 }
 
+/*
+ * Message sounds: shown messages are matched in order against these
+ * wildcard patterns (pmatchi: '*' and '?', case-insensitive) and the first
+ * match plays its sample set. Messages hidden by MSGTYPE=hide never get
+ * here. A core sound effect that just played (ma.last_se) wins over a
+ * pattern for the same moment.
+ */
+static struct ma_msgsnd {
+    const char *pat;
+    const char *snd;    /* sample set: <snd>_N.wav */
+    float vol, pitch;
+    DWORD last;         /* per-pattern cooldown */
+} ma_msgsnds[] = {
+    /* death */
+    { "You die*", "msg_death", 0.9f, 1.0f, 0 },
+    { "You turn to stone*", "msg_death", 0.9f, 1.0f, 0 },
+    { "You have turned to stone*", "msg_death", 0.9f, 1.0f, 0 },
+    { "You are a statue*", "msg_death", 0.9f, 1.0f, 0 },
+    { "You suffocate*", "msg_death", 0.9f, 1.0f, 0 },
+    { "Your last thought fades away*", "msg_death", 0.9f, 1.0f, 0 },
+    { "You have become a green slime*", "msg_death", 0.9f, 1.0f, 0 },
+    /* near death */
+    { "*wailing of the Banshee*", "msg_neardeath", 0.9f, 1.0f, 0 },
+    { "*howling of the CwnAnnwn*", "msg_neardeath", 0.9f, 1.0f, 0 },
+    { "*all your powers will be lost*", "msg_neardeath", 0.9f, 1.0f, 0 },
+    { "*your life force is running out*", "msg_neardeath", 0.9f, 1.0f, 0 },
+    { "* is about to die*", "msg_neardeath", 0.9f, 1.0f, 0 },
+    { "You are at Death's door*", "msg_neardeath", 0.9f, 1.0f, 0 },
+    /* stoning: harsher each stage */
+    { "You are slowing down*", "msg_stoning", 0.75f, 1.1f, 0 },
+    { "Your limbs are stiffening*", "msg_stoning", 0.85f, 0.95f, 0 },
+    { "Your limbs have turned to stone*", "msg_stoning", 0.95f, 0.8f, 0 },
+    /* sliming: thicker each stage */
+    { "You don't feel very well*", "msg_sliming", 0.7f, 1.15f, 0 },
+    { "You suck in some slime*", "msg_sliming", 0.75f, 1.1f, 0 },
+    { "You are turning a little green*", "msg_sliming", 0.75f, 1.05f, 0 },
+    { "Your limbs are getting oozy*", "msg_sliming", 0.8f, 0.95f, 0 },
+    { "Your skin begins to peel away*", "msg_sliming", 0.85f, 0.88f, 0 },
+    { "You are turning into *", "msg_sliming", 0.9f, 0.8f, 0 },
+    /* strangulation and suffocation */
+    { "It constricts your throat*", "msg_choke", 0.85f, 1.0f, 0 },
+    { "You find it hard to breathe*", "msg_choke", 0.8f, 1.05f, 0 },
+    { "Your * is becoming constricted*", "msg_choke", 0.85f, 1.0f, 0 },
+    { "You're gasping for air*", "msg_choke", 0.85f, 0.95f, 0 },
+    { "Your blood is having trouble*", "msg_choke", 0.9f, 0.9f, 0 },
+    { "You can no longer breathe*", "msg_choke", 0.9f, 0.88f, 0 },
+    { "The pressure on your * increases*", "msg_choke", 0.9f, 0.85f, 0 },
+    { "You're turning blue*", "msg_choke", 0.95f, 0.82f, 0 },
+    { "Your consciousness is fading*", "msg_choke", 0.95f, 0.78f, 0 },
+    /* illness and recovery */
+    { "You feel deathly sick*", "msg_sick", 0.85f, 1.0f, 0 },
+    { "You feel even worse*", "msg_sick", 0.85f, 0.92f, 0 },
+    { "You feel much worse*", "msg_sick", 0.9f, 0.85f, 0 },
+    { "What a relief*", "use_unihorn", 0.7f, 1.0f, 0 },
+    { "You feel somewhat better*", "use_unihorn", 0.6f, 1.0f, 0 },
+    { "You regain consciousness*", "use_unihorn", 0.6f, 0.9f, 0 },
+    /* vomiting */
+    { "You are feeling mildly nauseated*", "msg_queasy", 0.6f, 1.1f, 0 },
+    { "You feel slightly confused*", "msg_queasy", 0.65f, 1.0f, 0 },
+    { "You can't seem to think straight*", "msg_queasy", 0.7f, 0.92f, 0 },
+    { "You feel incredibly sick*", "msg_queasy", 0.75f, 0.85f, 0 },
+    { "You suddenly vomit*", "msg_vomit", 0.85f, 1.0f, 0 },
+    /* mind flayers */
+    { "You sense a faint wave of psychic energy*", "msg_psychic", 0.5f, 1.1f, 0 },
+    { "A wave of psychic energy pours over you*", "msg_psychic", 0.85f, 0.9f, 0 },
+    { "It locks on to your *", "msg_psychic", 0.8f, 0.8f, 0 },
+    { "* tentacles suck you*", "msg_brain", 0.85f, 1.0f, 0 },
+    { "Your brain is eaten*", "msg_brain", 0.95f, 0.85f, 0 },
+    { "Your helmet blocks the attack*", "msg_ping", 0.6f, 1.0f, 0 },
+    { "You don't seem harmed*", "msg_ping", 0.6f, 1.0f, 0 },
+    /* theft, whips, grabs */
+    { "* stole *", "msg_steal", 0.8f, 1.0f, 0 },
+    { "* snatches *", "msg_steal", 0.8f, 1.05f, 0 },
+    { "* yanks * from your *", "wpn_whip_hit", 0.8f, 1.0f, 0 },
+    { "* yanks * to the *", "wpn_whip_hit", 0.8f, 1.0f, 0 },
+    { "* wraps around * you're wielding*", "wpn_whip_hit", 0.75f, 0.9f, 0 },
+    { "* flicks a bullwhip towards your *", "wpn_whip_swing", 0.75f, 1.0f, 0 },
+    { "*swings itself around you*", "msg_grab", 0.85f, 1.0f, 0 },
+    { "*grabs you*", "msg_grab", 0.8f, 1.05f, 0 },
+    /* pets, omens, the Wizard */
+    { "You have a sad feeling for a moment*", "msg_sad", 0.8f, 1.0f, 0 },
+    { "* drowns.*", "se_water_splash_in", 0.6f, 0.9f, 0 },
+    { "You feel a malignant aura surround*", "se_unholy_glow", 0.8f, 1.0f, 0 },
+    { "You feel vaguely nervous*", "se_unholy_glow", 0.7f, 0.85f, 0 },
+    { "You notice a black glow surrounding you*", "se_unholy_glow", 0.8f, 0.8f, 0 },
+    /* skills and spells */
+    { "You feel more confident in your *skills*", "msg_skill", 0.75f, 1.0f, 0 },
+    { "You are now more skilled in *", "msg_skill", 0.75f, 1.1f, 0 },
+    { "You are now most skilled in *", "msg_skill", 0.8f, 1.2f, 0 },
+    { "You fail to cast the spell correctly*", "msg_fizzle", 0.7f, 1.0f, 0 },
+    { "You don't have enough energy to cast*", "msg_fizzle", 0.6f, 0.85f, 0 },
+    /* knights */
+    { "You caitiff*", "se_god_angry", 0.5f, 1.2f, 0 },
+    { "You joust *", "wpn_pierce_hit", 0.9f, 0.8f, 0 },
+    /* shops and vaults, overheard */
+    { "You hear someone counting money*", "pickup_coin", 0.45f, 0.9f, 0 },
+    { "You hear Ebenezer Scrooge*", "pickup_coin", 0.45f, 0.9f, 0 },
+    { "You hear the quarterback calling the play*", "pickup_coin", 0.45f, 0.9f, 0 },
+    { "You hear the chime of a cash register*", "se_shop_pay", 0.35f, 1.0f, 0 },
+    { "You hear Neiman and Marcus arguing*", "se_shop_pay", 0.35f, 1.0f, 0 },
+    { "You hear someone cursing shoplifters*", "se_grunt", 0.4f, 0.9f, 0 },
+    { "You hear the footsteps of a guard on patrol*", "msg_guard", 0.5f, 1.0f, 0 },
+    /* other events */
+    { "You feel a strange vibration *", "msg_vibrate", 0.8f, 1.0f, 0 },
+    { "You wrest one last charge*", "wpn_layer_shock", 0.8f, 0.9f, 0 },
+    { "You try to move the boulder*", "msg_boulder", 0.55f, 1.0f, 0 },
+    { "* tries to move the boulder*", "msg_boulder", 0.45f, 1.0f, 0 },
+    /* the game's own onomatopoeia */
+    { "Boing!*", "msg_boing", 0.8f, 1.0f, 0 },
+    { "Splat!*", "msg_splat", 0.8f, 1.0f, 0 },
+    { "Splash!*", "se_water_splash_in", 0.6f, 1.1f, 0 },
+    { "Plop!*", "se_dip_potion", 0.7f, 0.9f, 0 },
+    { "Crash!  The ceiling*", "scroll_earth", 0.9f, 1.0f, 0 },
+    { "Crash!  *secret*", "se_kick_door_it_crashes_open", 0.9f, 1.0f, 0 },
+    { "Crash!*", "msg_glass", 0.8f, 1.0f, 0 },
+    { "Whang!*", "trap_bear", 0.7f, 1.1f, 0 },
+    { "Clang!*", "trap_bear", 0.7f, 1.2f, 0 },
+    { "Whap!*", "se_force_bash", 0.7f, 1.1f, 0 },
+    { "Flapp!*", "se_force_bash", 0.6f, 1.2f, 0 },
+    { "Clink!*", "pickup_coin", 0.7f, 1.1f, 0 },
+    { "Clonk!*", "wpn_blunt_wood_hit", 0.7f, 1.0f, 0 },
+    { "THUD!*", "se_force_bash", 0.9f, 0.85f, 0 },
+    { "Thump!*", "se_force_bash", 0.8f, 1.0f, 0 },
+    { "Thwwpingg!*", "msg_coins_fly", 0.8f, 1.0f, 0 },
+    { "Ouch!*", "hurt", 0.7f, 1.0f, 0 },
+    { "*.  Ouch!*", "hurt", 0.7f, 1.0f, 0 },
+    { "Snap!*", "wpn_whip_hit", 0.7f, 1.0f, 0 },
+    /* intrinsics gained and lost (attribute changes such as "You
+       feel strong!" already play se_stat_gain/se_stat_loss) */
+    { "You feel perceptive!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel warm!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel full of hot air*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel very firm*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel totally together*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel cool!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel a momentary chill*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You be chillin'*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel healthy*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel hardy!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel especially healthy*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "Your vision becomes clear*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel insulated!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "Your health currently feels amplified*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel grounded in reality*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel awake!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel wide awake*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel quick!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You seem faster*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel stealthy!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel a strange mental acuity*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel in touch with the cosmos*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel controlled!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel in control of yourself*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel centered in your personal space*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel very jumpy*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel diffuse*", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel sensitive!", "msg_intrinsic_gain", 0.75f, 1.0f, 0 },
+    { "You feel less attractive*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel less perceptive!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel unaware!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel cooler*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel warmer*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel paranoid*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel less healthy!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel less hardy!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel a little sick!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel vulnerable*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You thought you saw something*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You tawt you taw*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel conductive!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel tired!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel slow!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You seem slower*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel slower*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel less stealthy!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel clumsy.", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "Your senses fail*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel uncontrolled!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel less jumpy*", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel less sensitive!", "msg_intrinsic_lose", 0.75f, 1.0f, 0 },
+    { "You feel feverish*", "msg_sick", 0.8f, 1.05f, 0 },
+    { "You feel purified*", "use_unihorn", 0.7f, 1.0f, 0 },
+    /* exercise and abuse feedback */
+    { "You must have been abusing*", "se_stat_loss", 0.7f, 1.0f, 0 },
+    { "You must have been *", "se_stat_gain", 0.7f, 1.0f, 0 },
+    { "You must be leading a healthy*", "se_stat_gain", 0.7f, 1.0f, 0 },
+    { "You haven't been *", "se_stat_loss", 0.7f, 1.0f, 0 },
+    /* the generic notice ping */
+    { "*cockatrice corpse*", "msg_ping", 0.6f, 1.0f, 0 },
+    { "*chickatrice corpse*", "msg_ping", 0.6f, 1.0f, 0 },
+    { "*cockatrice egg*", "msg_ping", 0.6f, 1.0f, 0 },
+    { "*Tsurugi of Muramasa*", "msg_ping", 0.6f, 1.0f, 0 },
+    { "*Vorpal Blade*", "msg_ping", 0.6f, 1.0f, 0 },
+    { "Perhaps that's why *", "msg_ping", 0.5f, 1.0f, 0 },
+    { "*turns to flee*", "msg_ping", 0.4f, 1.1f, 0 },
+    { "Sorry...*", "msg_ping", 0.5f, 0.9f, 0 },
+    { "Oops...*", "msg_ping", 0.5f, 0.9f, 0 },
+    { "Whoops...*", "msg_ping", 0.5f, 0.9f, 0 },
+    { "*Cheapskate.*", "msg_ping", 0.5f, 0.85f, 0 },
+    { "Interesting...*", "msg_ping", 0.45f, 1.0f, 0 },
+};
+
+/* a shown message: play its sound, or the distant-noise cue for
+   "You hear ..." lines nothing more specific claimed */
+static void
+ma_message(const char *text)
+{
+    DWORD now = GetTickCount();
+    int i;
+
+    if (!ma.ok || !text)
+        return;
+    /* a core sound effect for this same moment already played */
+    if (now - ma.last_se < 200)
+        return;
+    for (i = 0; i < SIZE(ma_msgsnds); i++) {
+        struct ma_msgsnd *m = &ma_msgsnds[i];
+
+        if (!pmatchi(m->pat, text))
+            continue;
+        if (now - m->last < 1500) /* the same message again: once is enough */
+            return;
+        m->last = now;
+        ma_play_named(m->snd, m->vol, m->pitch * ma_frand(0.97f, 1.03f),
+                      0.0f);
+        return;
+    }
+    if (!strncmpi(text, "You hear ", 9) || !strncmpi(text, "You barely hear ", 16)
+        || !strncmpi(text, "You dream that you hear ", 24))
+        ma_play_group(MAG_HEAR, 0.4f, ma_frand(0.55f, 0.72f),
+                      ma_frand(-0.5f, 0.5f));
+}
+
 /* death cry by monster class: death_<kind>_N.wav; silent if none */
 static void
 ma_death_cry(int mndx, float vol, float pan)
@@ -1064,11 +1297,11 @@ ma_fx_event(const struct fx_event *ev)
         ma_eat(ev->otyp, ev->texture);
         break;
     case FXE_HEAR:
-        /* a muffled, distant thump for "You hear ..." -- unless the
-           core just played a specific sound for this very noise */
-        if (GetTickCount() - ma.last_se > 250)
-            ma_play_group(MAG_HEAR, 0.4f, ma_frand(0.55f, 0.72f),
-                          ma_frand(-0.5f, 0.5f));
+        /* the distant-noise cue now plays from FXE_MESSAGE, once the
+           message text is known (so specific sounds can claim it) */
+        break;
+    case FXE_MESSAGE:
+        ma_message(ev->text);
         break;
     default:
         break;

@@ -22,4 +22,6 @@ if not exist "%BIN%\NetHackW.exe" (
 )
 
 set "NETHACK_FXLOG=%BIN%\fxlog.txt"
-start "" /D "%BIN%" "%BIN%\NetHackW.exe" -D
+rem -u wizard: wizard mode is only granted to the player named "wizard";
+rem this also keeps its save file separate from your normal games
+start "" /D "%BIN%" "%BIN%\NetHackW.exe" -D -u wizard

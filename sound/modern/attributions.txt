@@ -373,3 +373,39 @@ Hunger, fainting, taming and failed altar conversion, built from the packs above
   se_weak_hunger_1..2.wav <- rubberduck burble_01..02 (deeper still) + breath.ogg (pitched down): weak growl and a tired exhale
   se_faint_1..1.wav <- Chisper xp-gain (reversed, pitched down: woozy) + Kenney Impact impactSoft_heavy_002 (body slumps)
   se_tame_1..2.wav <- Kenney Impact impactSoft_medium (pitched down, low-passed: two heartbeats) + Chisper heal-restore / success-chime (rising)
+
+Message sounds (msg_*.wav), played for matching game messages
+(see ma_msgsnds[] in sound/miniaudio/masound.c); built from the packs above,
+and "synthesized" ones made with ffmpeg for this project:
+  msg_death_1..2.wav <- Kenney Impact impactBell_heavy (very deep: a toll) + Chisper level-up-bells (reversed, deep), large reverb
+  msg_neardeath_1..1.wav <- Kenney Impact impactSoft_medium (deep: heartbeats) + synthesized low warning drone
+  msg_stoning_1..2.wav <- Kenney Impact impactMining (deep) + TomMusic Rock Wall: grinding stone
+  msg_sliming_1..2.wav <- AHTu20 slime_move_01 + rubberduck burble (deep): wet squelch
+  msg_choke_1..2.wav <- rubberduck cough_03/cough_01 (pitched down) + breath + Kenney heartbeats: choking
+  msg_sick_1..1.wav <- synthesized sickly beating drone + rubberduck burble_01 (deep)
+  msg_queasy_1..1.wav <- synthesized wobbling tone + rubberduck burble_02: queasy
+  msg_vomit_1..2.wav <- rubberduck spit_02 + burble (pitched down): retching
+  msg_psychic_1..1.wav <- synthesized detuned eerie tones with reverb
+  msg_brain_1..2.wav <- AHTu20 slime_move_01 (slurp) + TomMusic Spell Impact (deep): brain drain
+  msg_steal_1..2.wav <- Archery Arrow Whoosh 02,08 (pitched up) + Kenney RPG handleCoins: a snatch
+  msg_grab_1..2.wav <- Kenney Impact impactPunch_heavy + Kenney RPG creak (deep): a crushing grip
+  msg_sad_1..1.wav <- Chisper success-vibraphone-triad (reversed, pitched down): sad, falling
+  msg_skill_1..1.wav <- Chisper correct-answer-ding
+  msg_fizzle_1..1.wav <- TomMusic Waterspray (short, high-passed) + Chisper gem-sparkle (reversed): a fizzle
+  msg_guard_1..1.wav <- TomMusic Footsteps/Stone Walk 1..3 (low-passed): distant footsteps
+  msg_vibrate_1..1.wav <- synthesized low rumbling hum
+  msg_ping_1..1.wav <- synthesized soft ping
+  msg_glass_1..3.wav <- Kenney Impact impactGlass_heavy_000..002: a potion shattering
+  msg_splat_1..2.wav <- Kenney Impact impactSoft_medium + AHTu20 slime_move: splat
+  msg_boing_1..1.wav <- synthesized spring "boing"
+  msg_coins_fly_1..1.wav <- Chisper coin-shower
+  msg_intrinsic_gain_1..1.wav <- Chisper achievement-unlocked + gem-sparkle: a power gained
+  msg_intrinsic_lose_1..1.wav <- Chisper achievement-unlocked (reversed, pitched down): a power lost
+
+Boulder pushing and Sunsword light, built from the packs above:
+  se_glow_bloom_1..1.wav <- TomMusic Light Torch 1 + Chisper gem-sparkle + success-vibraphone-triad (pitched up): a bright swell of light
+  se_glow_fade_1..1.wav <- Chisper gem-sparkle (reversed) + Archery Arrow Whoosh 05 (slow, low-passed): the light fading
+
+Boulder sounds (softened):
+  se_boulder_push_1..3.wav <- TomMusic Rock Wall 1..2 (0.65 s slices, pitched down, heavily low-passed, soft fades): a gentle slide
+  msg_boulder_1..3.wav <- Kenney Impact impactSoft_medium_001..003 (pitched down, low-passed): a light thud

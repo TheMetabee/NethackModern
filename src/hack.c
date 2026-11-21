@@ -206,6 +206,9 @@ dopush(
     if (glyph_is_invisible(levl[rx][ry].glyph))
         unmap_object(rx, ry);
     otmp->next_boulder = 0;
+    /* NetHack Modern: a short stone scrape (heard even with the
+       "With great effort..." message hidden) */
+    Soundeffect(se_boulder_push, 45);
     movobj(otmp, rx, ry); /* does newsym(rx,ry) */
     if (Blind) {
         feel_location(rx, ry);

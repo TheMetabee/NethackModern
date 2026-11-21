@@ -39,6 +39,7 @@
     seffect(bone_rattle),
     seffect(boomerang_klonk),
     seffect(boulder_drop),
+    seffect(boulder_push),      /* NetHack Modern: hero pushes a boulder */
     seffect(boulder_roll),      /* NetHack Modern: boulder starts rolling */
     seffect(bovine_bellow),
     seffect(bovine_moo),
@@ -125,6 +126,8 @@
     seffect(gears_turning_chains_rattling),
     seffect(glass_crashing),
     seffect(glass_shattering),
+    seffect(glow_bloom),        /* NetHack Modern: Sunsword starts shining */
+    seffect(glow_fade),         /* NetHack Modern: Sunsword stops shining */
     seffect(god_angry),         /* NetHack Modern: prayer angers god */
     seffect(god_gift),          /* NetHack Modern: sacrifice gift */
     seffect(groan),
