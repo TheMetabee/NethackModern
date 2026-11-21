@@ -402,6 +402,8 @@ explode(
         }
 
     if (visible) {
+        /* NetHack Modern: a boom for its element; the view shakes */
+        fx_explosion(x, y, adtyp, dam, TRUE);
         /* Start the explosion */
         for (i = 0; i < 3; i++)
             for (j = 0; j < 3; j++) {
@@ -458,6 +460,7 @@ explode(
             generic = TRUE;
         }
         if (!Deaf && olet != SCROLL_CLASS) {
+            fx_explosion(x, y, adtyp, dam, FALSE); /* NetHack Modern */
             Soundeffect(se_blast, 75);
             You_hear("a blast.");
             didmsg = TRUE;

@@ -214,6 +214,10 @@ Free Fantasy SFX Pack by TomMusic
                             Waterspray 1..2.ogg (0.6 s) + rubberduck
                             burble_01..02.ogg (gulp)
   se_kaboom_1..2.wav     <- Spells/Rock Meteor Swarm 1..2.ogg (trimmed 1.6 s)
+  expl_fire_1..3.wav     <- Spells/Fireball 1..3.wav + low-passed Rock Meteor
+                            Swarm (boom body), 1.6 s
+  expl_cold_1..2.wav     <- Spells/Ice Barrage 1..2.wav + low-passed Rock
+                            Meteor Swarm, 1.6 s
 
 -------------------------------------------------------------------------
 Swords & Blades Sound Pack and Archery Sound Pack

@@ -1208,6 +1208,42 @@ ma_spatial(coordxy x, coordxy y, float *volume, float *pan)
         *pan = 0.8f;
 }
 
+/* a boom for the explosion's element: fire and cold have their own,
+   everything else is the big rumble, with the element's hit sound laid
+   over it. Only heard: quieter, duller and a little lower. */
+static void
+ma_explosion(const struct fx_event *ev, float vol, float pan)
+{
+    boolean unseen = (ev->flags & FXF_UNSEEN) != 0;
+    float v = (unseen ? 0.45f : 1.0f) * max(vol, 0.35f);
+    float pitch = ma_frand(0.94f, 1.06f) * (unseen ? 0.85f : 1.0f);
+
+    switch (ev->adtyp) {
+    case AD_FIRE:
+        if (ma_named_count("expl_fire")) {
+            ma_play_named("expl_fire", 0.95f * v, pitch, pan);
+            return;
+        }
+        break;
+    case AD_COLD:
+        if (ma_named_count("expl_cold")) {
+            ma_play_named("expl_cold", 0.95f * v, pitch, pan);
+            return;
+        }
+        break;
+    case AD_ELEC:
+        ma_play_named("wpn_layer_shock", 0.8f * v, pitch, pan);
+        break;
+    case AD_DRST:
+        ma_play_named("hit_poison", 0.8f * v, pitch * 0.9f, pan);
+        break;
+    case AD_ACID:
+        ma_play_named("hit_acid", 0.8f * v, pitch * 0.9f, pan);
+        break;
+    }
+    ma_play_named("se_kaboom", 0.9f * v, pitch, pan);
+}
+
 static void
 ma_fx_event(const struct fx_event *ev)
 {
@@ -1312,6 +1348,9 @@ ma_fx_event(const struct fx_event *ev)
         break;
     case FXE_MESSAGE:
         ma_message(ev->text);
+        break;
+    case FXE_EXPLODE:
+        ma_explosion(ev, vol, pan);
         break;
     default:
         break;

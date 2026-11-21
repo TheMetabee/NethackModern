@@ -123,6 +123,8 @@ typedef struct mswin_nethack_map_window {
     HBITMAP fadeBmp, fadeBmpOld;
     int fadeW, fadeH;
     boolean fxTimerOn;
+    DWORD shakeStart, shakeDur; /* screen shake (0 dur = none) */
+    int shakeStrength;          /* 1..100 */
     HFONT hFxFont, hFxFontBig;  /* fonts for the numbers */
     HFONT hFxFontSmall;         /* font for status names */
     int fxFontTileH;            /* yFrontTile the fonts were made for */
@@ -150,6 +152,7 @@ static void clearAll(PNHMapWindow data);
 static void mswin_fx_event(const struct fx_event *ev);
 static void fx_tick(PNHMapWindow data);
 static void fx_paint_overlay(PNHMapWindow data, HDC hdc);
+static boolean fx_shake_offset(PNHMapWindow, int *, int *);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect);
 
@@ -1229,7 +1232,10 @@ onPaint(HWND hWnd)
     int frontWidth = COLNO * data->xFrontTile;
     int frontHeight = ROWNO * data->yFrontTile;
 
-    if (data->nfloaters > 0 || data->nanims > 0) {
+    int shx = 0, shy = 0;
+    boolean shaking = fx_shake_offset(data, &shx, &shy);
+
+    if (data->nfloaters > 0 || data->nanims > 0 || shaking) {
         /* compose map + floating numbers off screen, then copy, so the
            numbers don't flicker */
         RECT client;
@@ -1252,6 +1258,8 @@ onPaint(HWND hWnd)
         }
         hdc = data->compDC;
         FillRect(hdc, &client, (HBRUSH) GetStockObject(BLACK_BRUSH));
+        /* a screen shake moves everything drawn this frame */
+        data->map_orig.x += shx, data->map_orig.y += shy;
         StretchBlt(hdc,
             data->map_orig.x - (data->xPos * data->xFrontTile),
             data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth,
@@ -1259,6 +1267,7 @@ onPaint(HWND hWnd)
             data->backHeight, SRCCOPY);
         fx_paint_sprites(data, hdc);
         fx_paint_overlay(data, hdc);
+        data->map_orig.x -= shx, data->map_orig.y -= shy;
         BitBlt(hFrontBufferDC, ps.rcPaint.left, ps.rcPaint.top,
                ps.rcPaint.right - ps.rcPaint.left,
                ps.rcPaint.bottom - ps.rcPaint.top, hdc, ps.rcPaint.left,
@@ -1314,6 +1323,7 @@ static void fx_status_floaters(PNHMapWindow, const struct fx_event *);
 static void fx_motion_event(PNHMapWindow, const struct fx_event *);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_start_timer(PNHMapWindow);
+static void fx_shake_event(PNHMapWindow, const struct fx_event *);
 static void fx_blend_tile(PNHMapWindow, HDC, int, int, int, int, short, int);
 
 /* called by the core (fx.c) */
@@ -1328,6 +1338,7 @@ mswin_fx_event(const struct fx_event *ev)
     if (!data)
         return;
     fx_motion_event(data, ev); /* lunges and shakes */
+    fx_shake_event(data, ev);  /* the whole view */
     if (ev->type == FXE_STATUS) {
         if (iflags.fx_status_text)
             fx_status_floaters(data, ev);
@@ -1643,6 +1654,63 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
     }
 }
 
+/* explosions, earthquakes and very big hits on the hero shake the whole
+   map view (tiles and ASCII alike); never while running */
+static void
+fx_shake_event(PNHMapWindow data, const struct fx_event *ev)
+{
+    DWORD now = GetTickCount();
+    int s = 0;
+
+    if (!iflags.fx_screen_shake || (ev->flags & FXF_BULK))
+        return;
+    if (ev->type == FXE_SHAKE) {
+        s = ev->amount;
+    } else if (ev->type == FXE_EXPLODE && !(ev->flags & FXF_UNSEEN)) {
+        s = 30 + ev->amount * 2; /* harder for bigger blasts */
+    } else if (ev->type == FXE_DAMAGE && (ev->flags & FXF_HERO_TARGET)
+               && ev->hpmax > 0 && ev->amount * 4 >= ev->hpmax) {
+        /* lost a quarter or more of max HP in one go: a small jolt */
+        s = 15 + min(25, (ev->amount * 100 / ev->hpmax - 25) / 2);
+    }
+    if (s <= 0)
+        return;
+    s = min(s, 100);
+    /* don't cut a bigger shake that's still going short */
+    if (data->shakeDur && (long) (data->shakeStart + data->shakeDur - now) > 0
+        && data->shakeStrength >= s)
+        return;
+    data->shakeStart = now;
+    data->shakeStrength = s;
+    data->shakeDur = 280 + 4 * s;
+    fx_start_timer(data);
+}
+
+/* where the view sits this frame; FALSE when not shaking */
+static boolean
+fx_shake_offset(PNHMapWindow data, int *dx, int *dy)
+{
+    long age;
+    double p, amp, decay;
+
+    *dx = *dy = 0;
+    if (!data->shakeDur)
+        return FALSE;
+    age = (long) (GetTickCount() - data->shakeStart);
+    if (age < 0 || age >= (long) data->shakeDur) {
+        data->shakeDur = 0;
+        return FALSE;
+    }
+    p = (double) age / data->shakeDur;
+    decay = (1.0 - p) * (1.0 - p);
+    amp = data->xFrontTile * (0.06 + 0.22 * data->shakeStrength / 100.0);
+    /* two unrelated frequencies per axis so it rattles, not sways */
+    *dx = (int) (amp * decay * (0.7 * sin(age * 0.105) + 0.3 * sin(age * 0.297)));
+    *dy = (int) (amp * 0.8 * decay
+                 * (0.6 * cos(age * 0.083) + 0.4 * sin(age * 0.241)));
+    return TRUE;
+}
+
 /* draw tile 'tile' at <x,y> on hdc, blended at 'alpha' (0..255) over
    whatever is already there (used to fade dying creatures out) */
 static void
@@ -1684,9 +1752,10 @@ mswin_map_fx_snap(void)
 {
     PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
 
-    if (data && data->nanims) {
+    if (data && (data->nanims || data->shakeDur)) {
         data->nanims = 0;
         data->animSeq = 0;
+        data->shakeDur = 0;
         InvalidateRect(data->hWnd, NULL, FALSE);
     }
 }
@@ -1790,7 +1859,11 @@ fx_tick(PNHMapWindow data)
         if ((long) (now - data->anims[i].start) < (long) data->anims[i].dur)
             data->anims[j++] = data->anims[i];
     data->nanims = j;
-    if (!data->nfloaters && !data->nanims && data->fxTimerOn) {
+    if (data->shakeDur
+        && (long) (now - data->shakeStart) >= (long) data->shakeDur)
+        data->shakeDur = 0;
+    if (!data->nfloaters && !data->nanims && !data->shakeDur
+        && data->fxTimerOn) {
         KillTimer(data->hWnd, FX_TIMER_ID);
         data->fxTimerOn = FALSE;
     }

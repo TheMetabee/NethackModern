@@ -281,6 +281,7 @@ struct instance_flags {
     boolean fx_status_text;    /* NetHack Modern: floating status names */
     boolean fx_motion;         /* NetHack Modern: lunge/shake animation */
     boolean fx_exp_text;       /* NetHack Modern: "+N XP" floaters */
+    boolean fx_screen_shake;   /* NetHack Modern: shake the map view */
     boolean pending_customizations; /* at least one custom. was specified */
     xint8 debug_fuzzer;    /* fuzz testing */
     int at_midnight;       /* only valid during end of game disclosure */

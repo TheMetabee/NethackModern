@@ -355,6 +355,7 @@ do_earthquake(int force)
         tu_pit = is_pit(trap_at_u->ttyp);
     if (force > 13) /* sanity precaution; maximum used is actually 10 */
         force = 13;
+    fx_screen_shake(min(100, 55 + force * 5)); /* NetHack Modern */
     start_x = u.ux - (force * 2);
     start_y = u.uy - (force * 2);
     end_x = u.ux + (force * 2);

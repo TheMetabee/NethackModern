@@ -160,6 +160,10 @@ fx_typename(int type)
         return "MESSAGE";
     case FXE_EXP:
         return "EXP";
+    case FXE_SHAKE:
+        return "SHAKE";
+    case FXE_EXPLODE:
+        return "EXPLODE";
     }
     return "?";
 }
@@ -709,6 +713,41 @@ fx_exp_gain(int amount)
     ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
     ev.adtyp = -1;
     ev.amount = amount;
+    fx_emit(&ev);
+}
+
+/* something big happened: shake the view (strength 1..100) */
+void
+fx_screen_shake(int strength)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || strength <= 0)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_SHAKE;
+    ev.flags = fx_bulk_flag();
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
+    ev.amount = min(strength, 100);
+    fx_emit(&ev);
+}
+
+/* an explosion of element 'adtyp' doing 'dam' at <x,y>; 'seen' if the
+   hero can see it (otherwise it's only heard) */
+void
+fx_explosion(coordxy x, coordxy y, int adtyp, int dam, boolean seen)
+{
+    struct fx_event ev;
+
+    if (!fx_active())
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_EXPLODE;
+    ev.flags = fx_bulk_flag() | (seen ? 0U : FXF_UNSEEN);
+    ev.x = ev.sx = x, ev.y = ev.sy = y;
+    ev.adtyp = adtyp;
+    ev.amount = max(dam, 0);
     fx_emit(&ev);
 }
 

@@ -95,6 +95,7 @@ mkcavearea(boolean rockit)
 
     if (rockit) {
         Soundeffect(se_crashing_rock, 100);
+        fx_screen_shake(70); /* NetHack Modern */
         pline("Crash!  The ceiling collapses around you!");
     } else {
         pline("A mysterious force %s cave around you!",

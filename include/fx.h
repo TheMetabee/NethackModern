@@ -43,7 +43,10 @@ enum fx_event_type {
                      * set if it went up, clear if drained */
     FXE_MESSAGE,    /* a message is being shown: 'text' (valid only during
                      * the handler call) */
-    FXE_EXP         /* hero gained 'amount' experience points */
+    FXE_EXP,        /* hero gained 'amount' experience points */
+    FXE_SHAKE,      /* shake the view; 'amount' = strength 1..100 */
+    FXE_EXPLODE     /* explosion at x,y: 'adtyp' element, 'amount' damage;
+                     * FXF_UNSEEN if only heard */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
@@ -67,6 +70,7 @@ enum fx_texture {
 #define FXF_HALLU       0x0010U /* hero hallucinating; values scrambled */
 #define FXF_TARGET_PET  0x0020U /* target is tame */
 #define FXF_RANGED      0x0040U /* ATTACK/MISS by a thrown/fired missile */
+#define FXF_UNSEEN      0x0080U /* EXPLODE: heard, not seen */
 
 struct fx_event {
     int type;            /* enum fx_event_type */
@@ -137,6 +141,8 @@ extern void fx_wizard_laugh(struct monst *);
 extern void fx_level_change(int, boolean);
 extern void fx_message(const char *);
 extern void fx_exp_gain(int);
+extern void fx_screen_shake(int);
+extern void fx_explosion(coordxy, coordxy, int, int, boolean);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);
