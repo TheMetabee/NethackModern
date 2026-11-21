@@ -3768,6 +3768,38 @@ optfn_scores(
     return optn_ok;
 }
 
+/* NetHack Modern: how dark out-of-sight squares are in NetHackW */
+static const char *const fx_shades[] = { "light", "medium", "dark", "deep" };
+
+staticfn int
+optfn_fx_shade(int optidx, int req, boolean negated, char *opts, char *op)
+{
+    int i;
+
+    if (req == do_init) {
+        iflags.fx_shade = 1;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        op = string_for_opt(opts, negated);
+        if (negated || op == empty_optstr)
+            return optn_err;
+        for (i = 0; i < SIZE(fx_shades); i++)
+            if (!strncmpi(op, fx_shades[i], (int) strlen(op))) {
+                iflags.fx_shade = i;
+                return optn_ok;
+            }
+        config_error_add("%s: light, medium, dark or deep",
+                         allopt[optidx].name);
+        return optn_err;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Strcpy(opts, fx_shades[iflags.fx_shade % SIZE(fx_shades)]);
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
 /* NetHack Modern: how bars are drawn in NetHackW */
 static const char *const fx_bar_styles[] = {
     "flat", "smooth", "gloss", "striped", "bevel"

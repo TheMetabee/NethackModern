@@ -204,4 +204,9 @@ extern void fx_eat_texture(int);
 extern void fx_eat(int);
 extern void fx_glyphinfo(coordxy, coordxy, int, glyph_info *);
 
+/* NetHack Modern: how lit each square looks (for the window port) */
+int fx_shade_level(boolean rock);
+void fx_light_map(unsigned char bright[COLNO][ROWNO],
+                  unsigned char warm[COLNO][ROWNO]);
+
 #endif /* FX_H */

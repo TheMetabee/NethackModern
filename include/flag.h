@@ -296,6 +296,9 @@ struct instance_flags {
     boolean fx_msg_backdrop;   /* NetHack Modern: panel behind them */
     boolean fx_hero_frame;     /* NetHack Modern: mark the hero's square */
     boolean fx_hero_frame_light; /* NetHack Modern: ...faintly */
+    boolean fx_lighting;       /* NetHack Modern: map light and shade */
+    int fx_shade;              /* NetHack Modern: 0 light, 1 medium, 2 dark,
+                                * 3 deep: shade of what's out of sight */
     boolean pending_customizations; /* at least one custom. was specified */
     xint8 debug_fuzzer;    /* fuzz testing */
     int at_midnight;       /* only valid during end of game disclosure */

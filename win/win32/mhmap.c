@@ -215,6 +215,7 @@ COLORREF nhcolor_to_RGB(int);
 static void fx_paint_particles(PNHMapWindow, HDC);
 static void fx_paint_messages(PNHMapWindow, HDC);
 static void fx_paint_hero_frame(PNHMapWindow, HDC);
+static void fx_paint_lighting(PNHMapWindow, HDC);
 static int fx_paint_auras(PNHMapWindow, HDC);
 static void fx_part_layer(PNHMapWindow, HDC);
 static void fx_make_fonts(PNHMapWindow);
@@ -1402,6 +1403,7 @@ onPaint(HWND hWnd)
         }
         fx_paint_translucent(data, hdc);
         fx_paint_sprites(data, hdc);
+        fx_paint_lighting(data, hdc);
         fx_paint_hero_frame(data, hdc);
         if (!fx_paint_auras(data, hdc))
             fx_aura_timer(data, FALSE);
@@ -3540,6 +3542,167 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
 
 /* NetHack Modern: four small gold corner marks around the hero's square,
    with a dark edge so they show on any floor */
+/* NetHack Modern: lighting.  A shade layer over the map, made from how
+   lit each square looks (fx_light_map) and smoothed between squares so
+   light fades off instead of stopping at tile edges.  It is built at a
+   few pixels per square and stretched; rebuilt only when the light
+   changes. */
+static void
+fx_paint_lighting(PNHMapWindow data, HDC hdc)
+{
+    static unsigned char bright[COLNO][ROWNO], warm[COLNO][ROWNO];
+    static unsigned char pbright[COLNO][ROWNO], pwarm[COLNO][ROWNO];
+    static unsigned char rock[COLNO][ROWNO], prock[COLNO][ROWNO];
+    static HDC lightDC;
+    static HBITMAP lightBmp;
+    static DWORD *bits;
+    static int built = 0;
+    const int S = 8; /* layer pixels per square */
+    int W = COLNO * S, H = ROWNO * S;
+    int ox, oy, tw, th, x, y;
+    BLENDFUNCTION bf;
+
+    if (!iflags.fx_lighting || data->bAsciiMode || Is_rogue_level(&u.uz)
+        || u.uswallow || !program_state.in_moveloop)
+        return;
+    if (!lightDC) {
+        BITMAPINFO bi;
+
+        ZeroMemory(&bi, sizeof bi);
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = W;
+        bi.bmiHeader.biHeight = -H; /* top down */
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        lightDC = CreateCompatibleDC(hdc);
+        lightBmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS,
+                                    (void **) &bits, NULL, 0);
+        if (!lightDC || !lightBmp || !bits)
+            return;
+        SelectObject(lightDC, lightBmp);
+    }
+    fx_light_map(bright, warm);
+    /* squares never seen take their neighbours' shade, so the dark of
+       the unknown doesn't make a halo round what you remember */
+    for (x = 0; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++) {
+            int g = data->map[x][y].glyph;
+
+            rock[x][y] = 0;
+            if ((g == NO_GLYPH || g == GLYPH_UNEXPLORED)
+                && !cansee(x, y))
+                bright[x][y] = fx_shade_level(FALSE), warm[x][y] = 0;
+            /* solid rock is only backdrop: keep it well down so the
+               rooms and corridors stand out */
+            else if (glyph_is_cmap(g) && glyph_to_cmap(g) == S_stone)
+                bright[x][y] = fx_shade_level(TRUE), warm[x][y] = 0,
+                rock[x][y] = 1;
+        }
+    if (!built || memcmp(bright, pbright, sizeof bright)
+        || memcmp(warm, pwarm, sizeof warm)
+        || memcmp(rock, prock, sizeof rock)) {
+        int px, py;
+
+        memcpy(pbright, bright, sizeof bright);
+        memcpy(pwarm, warm, sizeof warm);
+        memcpy(prock, rock, sizeof rock);
+        built = 1;
+        for (py = 0; py < H; py++) {
+            double v = (py + 0.5) / S - 0.5;
+            int y0 = (int) floor(v), y1 = y0 + 1;
+            double fy = v - y0;
+
+            fy = fy * fy * (3 - 2 * fy); /* tighter fade: less bleed */
+
+            y0 = max(0, min(ROWNO - 1, y0));
+            y1 = max(0, min(ROWNO - 1, y1));
+            for (px = 0; px < W; px++) {
+                double u0 = (px + 0.5) / S - 0.5;
+                int x0 = (int) floor(u0), x1 = x0 + 1;
+                double fx = u0 - x0, b, w, d, a;
+
+                fx = fx * fx * (3 - 2 * fx);
+                int A, R, G, B;
+
+                int cx = max(1, min(COLNO - 1, px / S)),
+                    cy = max(0, min(ROWNO - 1, py / S));
+                double bs[4], ws[4];
+                int sx[4], sy[4], k;
+
+                x0 = max(1, min(COLNO - 1, x0));
+                x1 = max(1, min(COLNO - 1, x1));
+                if (rock[cx][cy]) {
+                    /* rock is one flat shade: no light spills in */
+                    b = bright[cx][cy], w = 0;
+                } else {
+                    /* blend only with squares that aren't rock, so
+                       nothing bleeds out into it either */
+                    sx[0] = x0, sy[0] = y0, sx[1] = x1, sy[1] = y0;
+                    sx[2] = x0, sy[2] = y1, sx[3] = x1, sy[3] = y1;
+                    for (k = 0; k < 4; k++) {
+                        int qx = sx[k], qy = sy[k];
+
+                        if (rock[qx][qy])
+                            qx = cx, qy = cy;
+                        bs[k] = bright[qx][qy], ws[k] = warm[qx][qy];
+                    }
+                    b = (bs[0] * (1 - fx) + bs[1] * fx) * (1 - fy)
+                        + (bs[2] * (1 - fx) + bs[3] * fx) * fy;
+                    w = (ws[0] * (1 - fx) + ws[1] * fx) * (1 - fy)
+                        + (ws[2] * (1 - fx) + ws[3] * fx) * fy;
+                }
+                d = 1.0 - b / 255.0;          /* how much shade */
+                w = (w / 255.0) * 0.26;       /* a warm lamp tint */
+                a = d + w - d * w;
+                /* premultiplied: black shade plus a lamp-orange tint */
+                A = (int) (a * 255.0);
+                R = (int) (255 * w * (1 - d));
+                G = (int) (140 * w * (1 - d));
+                B = (int) (40 * w * (1 - d));
+                bits[py * W + px] = ((DWORD) A << 24) | ((DWORD) R << 16)
+                                    | ((DWORD) G << 8) | (DWORD) B;
+            }
+        }
+    }
+    ox = data->map_orig.x - data->xPos * data->xFrontTile;
+    oy = data->map_orig.y - data->yPos * data->yFrontTile;
+    tw = data->xFrontTile, th = data->yFrontTile;
+    bf.BlendOp = AC_SRC_OVER;
+    bf.BlendFlags = 0;
+    bf.SourceConstantAlpha = 255;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+    /* column 0 is never part of the level: leave it alone */
+    (void) GdiAlphaBlend(hdc, ox + tw, oy, (COLNO - 1) * tw, ROWNO * th,
+                         lightDC, S, 0, W - S, H, bf);
+}
+
+/* where the hero is drawn while sliding onto its square: the offset in
+   pixels from the square (0, 0 when standing still) */
+static void
+fx_hero_slide_offset(PNHMapWindow data, int *offx, int *offy)
+{
+    DWORD now = GetTickCount();
+    int i;
+
+    *offx = *offy = 0;
+    for (i = 0; i < data->nanims; i++) {
+        struct fx_anim *a = &data->anims[i];
+        long age = (long) (now - a->start);
+        double e;
+
+        if (a->kind != FXM_SLIDE || a->x != u.ux || a->y != u.uy
+            || age < 0 || age >= (long) a->dur)
+            continue;
+        /* the same easing fx_paint_sprites uses */
+        e = 1.0 - (double) age / a->dur;
+        e = a->hit ? e * e : e * e * (3 - 2 * e);
+        *offx = (int) (-a->dx * data->xFrontTile * e);
+        *offy = (int) (-a->dy * data->yFrontTile * e);
+        return;
+    }
+}
+
 static void
 fx_paint_hero_frame(PNHMapWindow data, HDC hdc)
 {
@@ -3557,6 +3720,12 @@ fx_paint_hero_frame(PNHMapWindow data, HDC hdc)
     oy = data->map_orig.y - data->yPos * data->yFrontTile;
     tw = data->xFrontTile, th = data->yFrontTile;
     x = ox + u.ux * tw, y = oy + u.uy * th;
+    {
+        int sx, sy;
+
+        fx_hero_slide_offset(data, &sx, &sy); /* move with the hero */
+        x += sx, y += sy;
+    }
     len = max(3, min(tw, th) / 4);  /* arm length */
     t = max(1, min(tw, th) / 16);   /* thickness */
     if (iflags.fx_hero_frame_light) {

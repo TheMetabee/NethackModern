@@ -146,9 +146,34 @@ mswin_display_splash_window(BOOL show_ver)
     
     GetNHApp()->hPopupWnd = hWnd;
 
-    int left = monitorInfo.left + (monitorInfo.width - splashData.window_width) / 2;
-    int top = monitorInfo.top + (monitorInfo.height - splashData.window_height) / 2;
-    MoveWindow(hWnd, left, top, splashData.window_width, splashData.window_height, TRUE);
+    /* NetHack Modern: centre it over the game window (or the screen),
+       by the size it really ended up */
+    {
+        RECT wr, mr;
+        int w, h, left, top;
+
+        GetWindowRect(hWnd, &wr);
+        w = wr.right - wr.left, h = wr.bottom - wr.top;
+        if (GetNHApp()->hMainWnd && IsWindowVisible(GetNHApp()->hMainWnd)
+            && !IsIconic(GetNHApp()->hMainWnd))
+            GetWindowRect(GetNHApp()->hMainWnd, &mr);
+        else {
+            MONITORINFO mi;
+
+            mi.cbSize = sizeof mi;
+            if (GetMonitorInfo(MonitorFromWindow(hWnd,
+                                                 MONITOR_DEFAULTTONEAREST),
+                               &mi))
+                mr = mi.rcWork;
+            else
+                SetRect(&mr, 0, 0, GetSystemMetrics(SM_CXSCREEN),
+                        GetSystemMetrics(SM_CYSCREEN));
+        }
+        left = mr.left + ((mr.right - mr.left) - w) / 2;
+        top = mr.top + ((mr.bottom - mr.top) - h) / 2;
+        SetWindowPos(hWnd, NULL, left, top, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 
     /* Fill the text control */
     strbuf_reserve(&strbuf, BUFSIZ);

@@ -18,6 +18,7 @@
  */
 
 #include "hack.h"
+#include <math.h>
 
 #define FX_MAXTRACK 400
 
@@ -1361,3 +1362,69 @@ fx_mon_died(struct monst *mtmp)
 }
 
 /*fx.c*/
+
+/* NetHack Modern: the brightness (0..255) of remembered squares, or of
+   solid rock, for the fx_shade the player picked */
+int
+fx_shade_level(boolean rock)
+{
+    static const unsigned char remembered[4] = { 160, 105, 70, 42 },
+                               stone[4] = { 85, 55, 36, 20 };
+    int i = iflags.fx_shade;
+
+    i = (i < 0) ? 0 : (i > 3) ? 3 : i;
+    return rock ? stone[i] : remembered[i];
+}
+
+/* NetHack Modern: how lit each square looks, for NetHackW's lighting.
+   Only what the hero can tell is used: squares in sight are bright
+   (lit rooms fully, squares lit by a lamp or seen in the dark less so);
+   remembered squares are dim.  'warm' is the glow of a nearby lamp,
+   candle or other light source on a square in sight.  Both 0..255. */
+void
+fx_light_map(unsigned char bright[COLNO][ROWNO],
+             unsigned char warm[COLNO][ROWNO])
+{
+#define FX_MAXLIGHTS 64
+    coordxy lx[FX_MAXLIGHTS], ly[FX_MAXLIGHTS];
+    short lr[FX_MAXLIGHTS];
+    int x, y, i, n = fx_light_sources(lx, ly, lr, FX_MAXLIGHTS);
+
+    for (x = 0; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++) {
+            double b, w = 0.0;
+
+            if (!cansee(x, y) && !u_at(x, y)) {
+                bright[x][y] = fx_shade_level(FALSE); /* remembered */
+                warm[x][y] = 0;
+                continue;
+            }
+            if (levl[x][y].lit && !templit(x, y))
+                b = 1.0;           /* a lit room */
+            else if (levl[x][y].lit)
+                b = 1.0;           /* lit room with a lamp in it too */
+            else if (templit(x, y))
+                b = 0.0;           /* lit by a light source: below */
+            else
+                b = 0.62;          /* seen in the dark (next to you) */
+            for (i = 0; i < n; i++) {
+                double dx = x - lx[i], dy = y - ly[i];
+                double d = sqrt(dx * dx + dy * dy), r = lr[i] + 0.5;
+
+                if (d > r)
+                    continue;
+                /* a lamp's own light: full at the lamp, softer at the
+                   edge of its reach */
+                if (templit(x, y) && !levl[x][y].lit)
+                    b = max(b, 1.0 - 0.42 * (d / r) * (d / r));
+                w = max(w, 1.0 - d / r);
+            }
+            if (b <= 0.0)
+                b = 0.62;
+            if (u_at(x, y))
+                b = max(b, 0.8);
+            bright[x][y] = (unsigned char) (b * 255.0);
+            warm[x][y] = (unsigned char) (w * 255.0);
+        }
+#undef FX_MAXLIGHTS
+}

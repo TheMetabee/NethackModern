@@ -1492,6 +1492,7 @@ nh_compose_unicode_screenshot(void)
 #define TB_VOLUME 6   /* arg: 1/2 effects up/down, 3/4 ambience up/down */
 #define TB_BARSTYLE 7 /* arg: the fx_bar_style to use */
 #define TB_BARBORDER 8 /* turn the HP/Pw bar outline on or off */
+#define TB_SHADE 9    /* arg: fx_shade 0..3, or 4 for lighting off */
 
 extern void ma_apply_volumes(void);  /* masound.c */
 extern void ma_volume_preview(void);
@@ -1534,6 +1535,12 @@ static const struct tb_item tb_view[] = {
     { "Bars: striped", "", TB_BARSTYLE, NULL, 3 },
     { "Bars: bevel", "", TB_BARSTYLE, NULL, 4 },
     { "Bar border", "", TB_BARBORDER, NULL, 0 },
+    TBSEP,
+    { "Shade: light", "", TB_SHADE, NULL, 0 },
+    { "Shade: medium", "", TB_SHADE, NULL, 1 },
+    { "Shade: dark", "", TB_SHADE, NULL, 2 },
+    { "Shade: deep", "", TB_SHADE, NULL, 3 },
+    { "Lighting off", "", TB_SHADE, NULL, 4 },
     TBSEP,
     TBC("Tiles", "", IDM_MAP_TILES),
     TBC("ASCII", "", IDM_MAP_ASCII12X16),
@@ -1740,6 +1747,31 @@ tb_run(const struct tb_item *it)
             Sprintf(opt, "fx_bar_style:%s", nm[it->arg % 5]);
             cfg_remember_option("fx_bar_style", opt);
         }
+        SetTimer(tb_hwnd, 1, 1800, NULL);
+        InvalidateRect(tb_hwnd, NULL, FALSE);
+        break;
+    }
+    case TB_SHADE: {
+        static const char *const nm[] = { "light", "medium", "dark", "deep" };
+        HWND mw = mswin_hwnd_from_winid(WIN_MAP);
+        char opt[64];
+
+        if (it->arg >= 4) {
+            iflags.fx_lighting = FALSE;
+            Strcpy(tb_toast, "Lighting off");
+            cfg_remember_option("fx_lighting", "!fx_lighting");
+        } else {
+            iflags.fx_shade = it->arg;
+            Sprintf(tb_toast, "Shade: %s", nm[it->arg]);
+            Sprintf(opt, "fx_shade:%s", nm[it->arg]);
+            cfg_remember_option("fx_shade", opt);
+            if (!iflags.fx_lighting) {
+                iflags.fx_lighting = TRUE;
+                cfg_remember_option("fx_lighting", "fx_lighting");
+            }
+        }
+        if (mw && IsWindow(mw))
+            InvalidateRect(mw, NULL, FALSE);
         SetTimer(tb_hwnd, 1, 1800, NULL);
         InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
@@ -2024,6 +2056,11 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DrawTextA(dis->hDC,
                       (it->kind == TB_BARSTYLE
                        && it->arg == iflags.fx_bar_style) ? "in use"
+                      : (it->kind == TB_SHADE
+                         && ((it->arg == 4 && !iflags.fx_lighting)
+                             || (it->arg < 4 && iflags.fx_lighting
+                                 && it->arg == iflags.fx_shade)))
+                          ? "in use"
                       : (it->kind == TB_BARBORDER)
                           ? (iflags.fx_bar_border ? "on" : "off")
                           : it->hint,

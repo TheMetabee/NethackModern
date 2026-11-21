@@ -983,3 +983,20 @@ wiz_light_sources(void)
 #undef mon_is_local
 
 /*light.c*/
+
+/* NetHack Modern: the light sources shining right now (as of the last
+   vision pass), for the window port's lighting; returns how many */
+int
+fx_light_sources(coordxy *xs, coordxy *ys, short *ranges, int max)
+{
+    light_source *ls;
+    int n = 0;
+
+    for (ls = gl.light_base; ls && n < max; ls = ls->next)
+        if ((ls->flags & 0x1) /* LSF_SHOW */ && ls->range > 0
+            && isok(ls->x, ls->y)) {
+            xs[n] = ls->x, ys[n] = ls->y, ranges[n] = ls->range;
+            n++;
+        }
+    return n;
+}

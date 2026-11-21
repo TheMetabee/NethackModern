@@ -1445,6 +1445,7 @@ extern void relink_light_sources(boolean);
 extern void light_sources_sanity_check(void);
 extern void obj_move_light_source(struct obj *, struct obj *) NONNULLARG12;
 extern boolean any_light_source(void);
+extern int fx_light_sources(coordxy *, coordxy *, short *, int);
 extern void snuff_light_source(coordxy, coordxy);
 extern boolean obj_sheds_light(struct obj *) NONNULLARG1;
 extern boolean obj_is_burning(struct obj *) NONNULLARG1;
