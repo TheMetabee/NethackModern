@@ -183,6 +183,7 @@ extern void fx_mon_slept(struct monst *);
 extern void fx_teleport(coordxy, coordxy, coordxy, coordxy, boolean,
                         boolean, boolean);
 extern void fx_quaff(struct obj *, int);
+extern void fx_scroll_effect(int);
 extern void fx_unihorn(int);
 extern void fx_detected(int);
 extern void fx_note_kind(struct monst *, int);

@@ -1088,9 +1088,27 @@ fx_read_scroll(int otyp, boolean confused)
     ev.type = FXE_READ;
     ev.flags = fx_bulk_flag() | FXF_HERO_SOURCE;
     ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
-    ev.adtyp = -1;
+    ev.adtyp = 0; /* reading it; 1 = its effect (fx_scroll_effect) */
     ev.otyp = otyp;
     ev.amount = confused ? 1 : 0;
+    fx_emit(&ev);
+}
+
+/* a scroll of type otyp has taken effect; its look plays around the hero
+   only if the type is known by now (FXE_READ with 'adtyp' 1) */
+void
+fx_scroll_effect(int otyp)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || Blind || !objects[otyp].oc_name_known)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_READ;
+    ev.flags = fx_bulk_flag() | FXF_HERO_SOURCE | FXF_HERO_TARGET;
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = 1;
+    ev.otyp = otyp;
     fx_emit(&ev);
 }
 

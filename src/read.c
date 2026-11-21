@@ -634,6 +634,8 @@ doread(void)
         }
     }
     fx_read_scroll(otyp, confused); /* NetHack Modern: paper + effect */
+    if (otyp == SCR_EARTH && !confused)
+        fx_screen_shake(40); /* NetHack Modern: boulders crashing down */
     if (!seffects(scroll)) {
         if (!objects[otyp].oc_name_known) {
             if (gk.known)
@@ -645,6 +647,7 @@ doread(void)
         if (otyp != SCR_BLANK_PAPER)
             useup(scroll);
     }
+    fx_scroll_effect(otyp); /* NetHack Modern: its look, once known */
     return ECMD_TIME;
 }
 

@@ -1362,7 +1362,8 @@ ma_fx_event(const struct fx_event *ev)
         ma_apply(ev->otyp, ev->amount != 0);
         break;
     case FXE_READ:
-        ma_read(ev->otyp, ev->amount != 0);
+        if (ev->adtyp == 0) /* (1 is its effect: visual only) */
+            ma_read(ev->otyp, ev->amount != 0);
         break;
     case FXE_APPEAR:
         if (ev->mndx == PM_WIZARD_OF_YENDOR) {

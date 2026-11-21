@@ -189,6 +189,7 @@ static void fx_dig_particles(PNHMapWindow, int, int);
 static void fx_teleport_particles(PNHMapWindow, const struct fx_event *);
 static void fx_quaff_particles(PNHMapWindow, const struct fx_event *);
 static void fx_detect_particles(PNHMapWindow, const struct fx_event *);
+static void fx_scroll_particles(PNHMapWindow, const struct fx_event *);
 COLORREF nhcolor_to_RGB(int);
 static void fx_paint_particles(PNHMapWindow, HDC);
 static int fx_paint_auras(PNHMapWindow, HDC);
@@ -824,8 +825,11 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
         PMSNHMsgPrintGlyph msg_data = (PMSNHMsgPrintGlyph) lParam;
         setGlyph(data, msg_data->x, msg_data->y,
             &msg_data->glyphinfo, &msg_data->bkglyphinfo);
-        if ((msg_data->glyphinfo.fxauras & FX_AURA_MASK) && iflags.fx_auras)
-            fx_aura_timer(data, TRUE);
+        if (iflags.fx_auras
+            && ((msg_data->glyphinfo.fxauras & FX_AURA_MASK)
+                || msg_data->glyphinfo.glyph == cmap_to_glyph(S_poisoncloud)
+                || msg_data->glyphinfo.glyph == cmap_to_glyph(S_cloud)))
+            fx_aura_timer(data, TRUE); /* lasting effects, drifting gas */
         if (msg_data->glyphinfo.glyph == cmap_to_glyph(S_digbeam))
             fx_dig_particles(data, msg_data->x, msg_data->y);
         if (glyph_is_cmap_zap(msg_data->glyphinfo.glyph))
@@ -1414,6 +1418,8 @@ mswin_fx_event(const struct fx_event *ev)
         fx_teleport_particles(data, ev);
     if (ev->type == FXE_QUAFF && !(ev->flags & FXF_UNSEEN))
         fx_quaff_particles(data, ev);
+    if (ev->type == FXE_READ && ev->adtyp == 1 && !(ev->flags & FXF_BULK))
+        fx_scroll_particles(data, ev);
     if ((ev->type == FXE_DETECT || ev->type == FXE_UNIHORN)
         && !(ev->flags & FXF_UNSEEN))
         fx_detect_particles(data, ev);
@@ -2624,6 +2630,175 @@ fx_detect_particles(PNHMapWindow data, const struct fx_event *ev)
     fx_start_timer(data);
 }
 
+/* a scroll whose type is known has taken effect: its look around the hero
+   (teleportation, fire and the detection scrolls have their own) */
+static void
+fx_scroll_particles(PNHMapWindow data, const struct fx_event *ev)
+{
+    static const struct fx_pstyle
+        wpn = { RGB(200, 230, 255), RGB(110, 170, 255), RGB(0, 15, 50),
+                0.4f, -2.0f, 0.4f, 0.055f, 600, 1000 },
+        armor = { RGB(255, 235, 150), RGB(255, 200, 80), RGB(50, 30, 0),
+                  0.6f, -0.9f, 0.4f, 0.06f, 600, 1100 },
+        holy = { RGB(255, 252, 230), RGB(255, 235, 170), RGB(60, 50, 20),
+                 0.5f, -1.4f, 0.4f, 0.06f, 700, 1200 },
+        ident = { RGB(170, 255, 250), RGB(90, 210, 255), RGB(0, 30, 40),
+                  1.4f, -0.3f, 0.25f, 0.05f, 400, 700 },
+        mapping = { RGB(200, 240, 255), RGB(120, 200, 255), RGB(0, 20, 40),
+                    0.0f, 0.0f, 0.1f, 0.055f, 900, 900 },
+        earth = { RGB(195, 165, 125), RGB(145, 125, 100), RGB(30, 25, 20),
+                  2.2f, 1.4f, 0.2f, 0.07f, 450, 850 },
+        taming = { RGB(255, 170, 210), RGB(255, 120, 180), RGB(60, 0, 25),
+                   0.5f, -1.0f, 0.4f, 0.065f, 700, 1200 },
+        genocide = { RGB(210, 30, 40), RGB(120, 0, 30), RGB(15, 0, 5),
+                     0.0f, 0.0f, 0.1f, 0.07f, 1000, 1000 },
+        charging = { RGB(255, 255, 200), RGB(140, 200, 255), RGB(20, 20, 50),
+                     3.0f, 0.0f, 0.05f, 0.045f, 160, 360 },
+        scare = { RGB(170, 90, 230), RGB(90, 40, 150), RGB(10, 0, 20),
+                  0.0f, 0.0f, 0.1f, 0.07f, 800, 800 },
+        shards = { RGB(200, 200, 205), RGB(140, 140, 150), RGB(20, 20, 25),
+                   1.6f, 2.4f, 0.3f, 0.05f, 450, 800 },
+        fog = { RGB(150, 150, 165), RGB(110, 110, 125), RGB(10, 10, 15),
+                0.4f, 0.0f, 0.4f, 0.12f, 900, 1500 },
+        confuse = { RGB(255, 110, 120), RGB(200, 90, 230), RGB(40, 0, 30),
+                    0.4f, -0.6f, 0.4f, 0.055f, 600, 1000 },
+        punish = { RGB(160, 160, 170), RGB(110, 110, 120), RGB(15, 15, 20),
+                   1.4f, 0.8f, 0.2f, 0.06f, 400, 700 };
+    boolean rb;
+    int i, x = ev->x, y = ev->y;
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+    switch (ev->otyp) {
+    case SCR_ENCHANT_WEAPON:
+        /* blue sparks climbing as the weapon glows */
+        for (i = 0; i < 45; i++)
+            (void) fx_spawn_at(data, &wpn, FALSE,
+                               x + 0.5f + fx_prange(-0.35f, 0.35f),
+                               y + 0.8f, wpn.speed, 1.0f,
+                               (DWORD) fx_prange(0, 350));
+        fx_ring(data, &wpn, FALSE, x, y, 24, 0.9f, 0.02f, 450, 0);
+        break;
+    case SCR_ENCHANT_ARMOR:
+        /* a golden shimmer all over */
+        for (i = 0; i < 60; i++)
+            (void) fx_spawn_at(data, &armor, FALSE,
+                               x + 0.5f + fx_prange(-0.55f, 0.55f),
+                               y + 0.5f + fx_prange(-0.5f, 0.5f),
+                               armor.speed, 1.0f, (DWORD) fx_prange(0, 300));
+        fx_ring(data, &armor, FALSE, x, y, 32, 1.1f, 0.02f, 550, 0);
+        break;
+    case SCR_REMOVE_CURSE:
+        for (i = 0; i < 60; i++)
+            (void) fx_spawn_at(data, &holy, FALSE,
+                               x + 0.5f + fx_prange(-1.0f, 1.0f),
+                               y + 0.7f + fx_prange(-0.3f, 0.5f), holy.speed,
+                               1.0f, (DWORD) fx_prange(0, 400));
+        fx_ring(data, &holy, FALSE, x, y, 40, 1.6f, 0.02f, 650, 0);
+        break;
+    case SCR_IDENTIFY:
+        for (i = 0; i < 30; i++)
+            (void) fx_spawn_at(data, &ident, FALSE, x + 0.5f, y + 0.4f,
+                               ident.speed, 1.0f, (DWORD) fx_prange(0, 150));
+        fx_ring(data, &ident, FALSE, x, y, 24, 0.9f, 0.01f, 400, 0);
+        break;
+    case SCR_MAGIC_MAPPING:
+        /* the level drawing itself out from you */
+        fx_ring(data, &mapping, FALSE, x, y, 120, 12.0f, 0.15f, 1300, 0);
+        fx_ring(data, &mapping, FALSE, x, y, 90, 8.0f, 0.15f, 1100, 200);
+        break;
+    case SCR_LIGHT:
+        /* the same wave of light as the wand */
+        {
+            struct fx_event le = *ev;
+
+            le.type = FXE_WAND;
+            le.adtyp = FXW_SELF;
+            le.otyp = WAN_LIGHT;
+            fx_wand_particles(data, &le);
+        }
+        return;
+    case SCR_CREATE_MONSTER:
+    case SCR_STINKING_CLOUD:
+        {
+            struct fx_event le = *ev;
+
+            le.type = FXE_WAND;
+            le.adtyp = FXW_SELF;
+            le.otyp = WAN_CREATE_MONSTER; /* a puff of smoke */
+            fx_wand_particles(data, &le);
+        }
+        return;
+    case SCR_EARTH:
+        /* dust thrown up all around as the boulders land */
+        for (i = 0; i < 70; i++) {
+            float r = fx_prange(0.6f, 1.6f), a = fx_prange(0, 6.283f);
+
+            (void) fx_spawn_at(data, &earth, FALSE,
+                               x + 0.5f + r * (float) cos(a),
+                               y + 0.5f + r * (float) sin(a), earth.speed,
+                               1.0f, (DWORD) fx_prange(0, 200));
+        }
+        break;
+    case SCR_TAMING:
+        for (i = 0; i < 40; i++)
+            (void) fx_spawn_at(data, &taming, FALSE,
+                               x + 0.5f + fx_prange(-1.2f, 1.2f),
+                               y + 0.6f + fx_prange(-0.6f, 0.6f),
+                               taming.speed, 1.0f, (DWORD) fx_prange(0, 400));
+        fx_ring(data, &taming, FALSE, x, y, 40, 1.8f, 0.03f, 700, 0);
+        break;
+    case SCR_GENOCIDE:
+        /* a dark red pulse rolling out, twice */
+        fx_ring(data, &genocide, FALSE, x, y, 90, 7.0f, 0.1f, 1200, 0);
+        fx_ring(data, &genocide, FALSE, x, y, 70, 4.5f, 0.1f, 1000, 250);
+        break;
+    case SCR_CHARGING:
+        for (i = 0; i < 50; i++)
+            (void) fx_spawn_at(data, &charging, FALSE,
+                               x + 0.5f + fx_prange(-0.3f, 0.3f),
+                               y + 0.5f + fx_prange(-0.3f, 0.3f),
+                               charging.speed, 0.9f,
+                               (DWORD) fx_prange(0, 400));
+        break;
+    case SCR_SCARE_MONSTER:
+        fx_ring(data, &scare, FALSE, x, y, 80, 5.0f, 0.08f, 1000, 0);
+        break;
+    case SCR_DESTROY_ARMOR:
+        for (i = 0; i < 40; i++)
+            (void) fx_spawn_at(data, &shards, FALSE,
+                               x + 0.5f + fx_prange(-0.4f, 0.4f),
+                               y + 0.4f + fx_prange(-0.3f, 0.3f),
+                               shards.speed, 1.0f, (DWORD) fx_prange(0, 150));
+        break;
+    case SCR_AMNESIA:
+        for (i = 0; i < 40; i++)
+            (void) fx_spawn_at(data, &fog, FALSE,
+                               x + 0.5f + fx_prange(-1.0f, 1.0f),
+                               y + 0.5f + fx_prange(-0.8f, 0.8f), fog.speed,
+                               1.0f, (DWORD) fx_prange(0, 500));
+        break;
+    case SCR_CONFUSE_MONSTER:
+        /* the hands glowing */
+        for (i = 0; i < 30; i++)
+            (void) fx_spawn_at(data, &confuse, FALSE,
+                               x + 0.5f + ((i & 1) ? 0.35f : -0.35f)
+                                   + fx_prange(-0.1f, 0.1f),
+                               y + 0.65f, confuse.speed, 1.0f,
+                               (DWORD) fx_prange(0, 400));
+        break;
+    case SCR_PUNISHMENT:
+        for (i = 0; i < 26; i++)
+            (void) fx_spawn_at(data, &punish, FALSE, x + 0.5f, y + 0.95f,
+                               punish.speed, 1.0f, (DWORD) fx_prange(0, 100));
+        break;
+    default:
+        return;
+    }
+    (void) rb;
+    fx_start_timer(data);
+}
+
 static COLORREF
 fx_lerp_color(COLORREF a, COLORREF b, float t)
 {
@@ -2825,11 +3000,18 @@ fx_paint_auras(PNHMapWindow data, HDC hdc)
     for (x = 1; x < COLNO; x++)
         for (y = 0; y < ROWNO; y++) {
             unsigned long au = data->map[x][y].fxauras & FX_AURA_MASK;
+            int glyph = data->map[x][y].glyph;
+            /* gas clouds (stinking cloud, breath, a hezrou's trail) and
+               plain clouds drift where they're drawn */
+            int gas = (glyph == cmap_to_glyph(S_poisoncloud)) ? 1
+                      : (glyph == cmap_to_glyph(S_cloud)) ? 2 : 0;
             RECT box;
             int bx, by, cx, cy, hx, hy, r1 = max(2, tw / 13);
 
-            if (!au || !glyph_is_monster(data->map[x][y].glyph))
+            if (!gas && (!au || !glyph_is_monster(glyph)))
                 continue;
+            if (gas)
+                au = 0UL;
             n++;
             bx = ox + x * tw, by = oy + y * th;
             cx = bx + tw / 2, cy = by + th / 2;   /* middle of the tile */
@@ -2842,6 +3024,34 @@ fx_paint_auras(PNHMapWindow data, HDC hdc)
                 continue;
             FillRect(data->partDC, &box, (HBRUSH) GetStockObject(BLACK_BRUSH));
 
+            if (gas) {
+                /* billowing gas: big soft puffs rolling round the square
+                   and spilling past its edges, each swelling and thinning
+                   on its own beat, so a cloud seems to churn */
+                COLORREF gc = (gas == 1) ? RGB(130, 215, 60)
+                                         : RGB(160, 165, 175);
+                COLORREF hc = (gas == 1) ? RGB(200, 255, 120)
+                                         : RGB(215, 220, 228);
+
+                for (i = 0; i < 5; i++) {
+                    double t = fmod(fx_phase(now, x, y, 29 + i * 5, 2300)
+                                    + i / 5.0, 1.0);
+                    double k = sin(t * 3.14159);
+                    /* each puff circles the middle, slowly, its own way */
+                    double a = (x * 1.7 + y * 2.3 + i * 1.26)
+                               + (now % 9000) / 9000.0 * 6.2831853
+                                     * ((i & 1) ? 1 : -1);
+                    int px = cx + (int) (tw * 0.30 * cos(a));
+                    int py = cy + (int) (th * (0.26 * sin(a) - 0.12 * t));
+                    int rr = (int) (tw * (0.22 + 0.2 * t));
+
+                    fx_dot(data->partDC, px, py, rr, fx_dim(gc, k * 0.38));
+                    fx_dot(data->partDC, px, py, (rr * 2) / 3,
+                           fx_dim(gc, k * 0.55));
+                    fx_dot(data->partDC, px - rr / 5, py - rr / 5,
+                           max(1, rr / 3), fx_dim(hc, k * 0.6));
+                }
+            }
             if (au & FXA_ASLEEP) {
                 /* z's rising, drifting, growing and fading */
                 for (i = 0; i < FX_Z_COUNT; i++) {
