@@ -1490,6 +1490,8 @@ nh_compose_unicode_screenshot(void)
 #define TB_SEP 4
 #define TB_INVEN 5    /* show or hide the inventory panel */
 #define TB_VOLUME 6   /* arg: 1/2 effects up/down, 3/4 ambience up/down */
+#define TB_BARSTYLE 7 /* arg: the fx_bar_style to use */
+#define TB_BARBORDER 8 /* turn the HP/Pw bar outline on or off */
 
 extern void ma_apply_volumes(void);  /* masound.c */
 extern void ma_volume_preview(void);
@@ -1525,6 +1527,13 @@ static const struct tb_item tb_view[] = {
     TBZ("Zoom out", "Ctrl+-", -1),
     TBZ("Whole level", "Ctrl+0", 0),
     { "Show or hide inventory", "", TB_INVEN, NULL, 0 },
+    TBSEP,
+    { "Bars: flat", "", TB_BARSTYLE, NULL, 0 },
+    { "Bars: smooth", "", TB_BARSTYLE, NULL, 1 },
+    { "Bars: gloss", "", TB_BARSTYLE, NULL, 2 },
+    { "Bars: striped", "", TB_BARSTYLE, NULL, 3 },
+    { "Bars: bevel", "", TB_BARSTYLE, NULL, 4 },
+    { "Bar border", "", TB_BARBORDER, NULL, 0 },
     TBSEP,
     TBC("Tiles", "", IDM_MAP_TILES),
     TBC("ASCII", "", IDM_MAP_ASCII12X16),
@@ -1716,6 +1725,26 @@ tb_run(const struct tb_item *it)
         break;
     case TB_INVEN:
         mswin_toggle_inven_panel();
+        break;
+    case TB_BARSTYLE: {
+        static const char *const nm[] = { "flat", "smooth", "gloss",
+                                          "striped", "bevel" };
+
+        iflags.fx_bar_style = it->arg;
+        if (IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
+            InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
+        Sprintf(tb_toast, "Bars: %s", nm[it->arg % 5]);
+        SetTimer(tb_hwnd, 1, 1800, NULL);
+        InvalidateRect(tb_hwnd, NULL, FALSE);
+        break;
+    }
+    case TB_BARBORDER:
+        iflags.fx_bar_border = !iflags.fx_bar_border;
+        if (IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
+            InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
+        Sprintf(tb_toast, "Bar border %s", iflags.fx_bar_border ? "on" : "off");
+        SetTimer(tb_hwnd, 1, 1800, NULL);
+        InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
     case TB_VOLUME: {
         int *v = (it->arg <= 2) ? &iflags.fx_volume
@@ -1976,7 +2005,13 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DrawTextA(dis->hDC, it->label, -1, &r,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             SetTextColor(dis->hDC, sel ? TH_ACCENT : TH_TEXT_DIM);
-            DrawTextA(dis->hDC, it->hint, -1, &r,
+            DrawTextA(dis->hDC,
+                      (it->kind == TB_BARSTYLE
+                       && it->arg == iflags.fx_bar_style) ? "in use"
+                      : (it->kind == TB_BARBORDER)
+                          ? (iflags.fx_bar_border ? "on" : "off")
+                          : it->hint,
+                      -1, &r,
                       DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
         SelectObject(dis->hDC, of);

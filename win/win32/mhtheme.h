@@ -18,4 +18,8 @@
 /* the game's 16 colours, tuned to read well on the dark panels */
 extern const COLORREF th_palette[16];
 
+/* fill a panel bar in colour 'c' in the style fx_bar_style picks
+   (flat, smooth, gloss, striped, bevel); 'radius' rounds its corners */
+void th_draw_bar(HDC hdc, const RECT *r, COLORREF c, int radius);
+
 #endif /* MHTHEME_H */

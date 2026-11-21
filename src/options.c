@@ -3768,6 +3768,43 @@ optfn_scores(
     return optn_ok;
 }
 
+/* NetHack Modern: how bars are drawn in NetHackW */
+static const char *const fx_bar_styles[] = {
+    "flat", "smooth", "gloss", "striped", "bevel"
+};
+
+staticfn int
+optfn_fx_bar_style(int optidx, int req, boolean negated, char *opts,
+                   char *op)
+{
+    int i;
+
+    if (req == do_init) {
+        iflags.fx_bar_style = 0;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        op = string_for_opt(opts, negated);
+        if (negated || op == empty_optstr) {
+            iflags.fx_bar_style = 0;
+            return negated ? optn_ok : optn_err;
+        }
+        for (i = 0; i < SIZE(fx_bar_styles); i++)
+            if (!strncmpi(op, fx_bar_styles[i], (int) strlen(op))) {
+                iflags.fx_bar_style = i;
+                return optn_ok;
+            }
+        config_error_add("%s: flat, smooth, gloss, striped or bevel",
+                         allopt[optidx].name);
+        return optn_err;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Strcpy(opts, fx_bar_styles[iflags.fx_bar_style % SIZE(fx_bar_styles)]);
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
 /* NetHack Modern: the effects and ambience volumes, 0 to 100 */
 staticfn int
 optfn_fx_volume_common(int optidx, int req, boolean negated, char *opts,

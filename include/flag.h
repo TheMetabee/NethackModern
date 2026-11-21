@@ -288,6 +288,9 @@ struct instance_flags {
     boolean fx_ambience;       /* NetHack Modern: level ambience loops */
     int fx_volume;             /* NetHack Modern: effects volume, 0..100 */
     int fx_ambience_volume;    /* NetHack Modern: ambience volume, 0..100 */
+    boolean fx_bar_border;     /* NetHack Modern: outline the HP/Pw bars */
+    int fx_bar_style;          /* NetHack Modern: 0 flat, 1 smooth, 2 gloss,
+                                * 3 striped, 4 bevel */
     boolean fx_theme;          /* NetHack Modern: NetHackW dark theme */
     boolean fx_msg_overlay;    /* NetHack Modern: messages on the map */
     boolean fx_msg_backdrop;   /* NetHack Modern: panel behind them */

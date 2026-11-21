@@ -360,6 +360,12 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_auras, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_auras, Term_False,
            "show lasting status effects on creatures (sleeping z's)")
+    NHOPTB(fx_bar_border, Advanced, 0, opt_in, set_in_game,
+           Off, Yes, No, No, NoAlias, &iflags.fx_bar_border, Term_False,
+           "NetHackW: a thin dark border around the HP and Pw bars")
+    NHOPTC(fx_bar_style, Advanced, 10, opt_in, set_in_game,
+                No, Yes, No, No, NoAlias,
+                "NetHackW HP/Pw bar look: flat, smooth, gloss, striped or bevel")
     NHOPTB(fx_damage_numbers, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_damage_numbers, Term_False,
            "show floating damage and healing numbers on the map")

@@ -378,6 +378,100 @@ th_round(HDC hdc, int l, int t, int r, int b, int rad, COLORREF fill)
     DeleteObject(br);
 }
 
+/* ---- bar styles ---- */
+
+static COLORREF
+th_mix(COLORREF a, COLORREF b, double k)
+{
+    return RGB((int) (GetRValue(a) + (GetRValue(b) - GetRValue(a)) * k),
+               (int) (GetGValue(a) + (GetGValue(b) - GetGValue(a)) * k),
+               (int) (GetBValue(a) + (GetBValue(b) - GetBValue(a)) * k));
+}
+
+static void
+th_row(HDC hdc, int l, int r, int y, COLORREF c)
+{
+    RECT rr;
+    HBRUSH b = CreateSolidBrush(c);
+
+    SetRect(&rr, l, y, r, y + 1);
+    FillRect(hdc, &rr, b);
+    DeleteObject(b);
+}
+
+void
+th_draw_bar(HDC hdc, const RECT *rc, COLORREF c, int radius)
+{
+    int l = rc->left, t = rc->top, r = rc->right, b = rc->bottom;
+    int h = b - t, y, saved;
+    COLORREF white = RGB(255, 255, 255), black = RGB(0, 0, 0);
+
+    if (r <= l || h <= 0)
+        return;
+    saved = SaveDC(hdc);
+    if (radius > 0) {
+        HRGN rgn = CreateRoundRectRgn(l, t, r + 1, b + 1, radius, radius);
+
+        ExtSelectClipRgn(hdc, rgn, RGN_AND);
+        DeleteObject(rgn);
+    }
+    switch (iflags.fx_bar_style) {
+    case 1: /* smooth: lighter at the top, darker at the bottom */
+    case 3: /* striped starts from the same gradient */
+        for (y = 0; y < h; y++) {
+            double k = (h > 1) ? (double) y / (h - 1) : 0.0;
+
+            th_row(hdc, l, r, t + y,
+                   th_mix(th_mix(c, white, 0.22), th_mix(c, black, 0.3), k));
+        }
+        if (iflags.fx_bar_style == 3) {
+            /* darker diagonal stripes */
+            HPEN pen = CreatePen(PS_SOLID, max(2, h / 6), th_mix(c, black, 0.3));
+            HGDIOBJ op = SelectObject(hdc, pen);
+            int x, step = max(7, h / 2);
+
+            for (x = l - h; x < r; x += step) {
+                MoveToEx(hdc, x, b, NULL);
+                LineTo(hdc, x + h, t);
+            }
+            SelectObject(hdc, op);
+            DeleteObject(pen);
+        }
+        break;
+    case 2: /* gloss: a glassy shine over the top half */
+        for (y = 0; y < h; y++) {
+            double k = (h > 1) ? (double) y / (h - 1) : 0.0;
+            COLORREF row;
+
+            if (k < 0.5)
+                row = th_mix(th_mix(c, white, 0.5), th_mix(c, white, 0.15),
+                             k / 0.5);
+            else
+                row = th_mix(c, th_mix(c, black, 0.28), (k - 0.5) / 0.5);
+            th_row(hdc, l, r, t + y, row);
+        }
+        if (h > 3)
+            th_row(hdc, l, r, t, th_mix(c, white, 0.7)); /* bright rim */
+        break;
+    case 4: /* bevel: raised, light top edge and dark bottom edge */
+        for (y = 0; y < h; y++)
+            th_row(hdc, l, r, t + y, c);
+        th_row(hdc, l, r, t, th_mix(c, white, 0.45));
+        if (h > 2)
+            th_row(hdc, l, r, b - 1, th_mix(c, black, 0.45));
+        break;
+    default: { /* flat */
+        HBRUSH br = CreateSolidBrush(c);
+        RECT rr = *rc;
+
+        FillRect(hdc, &rr, br);
+        DeleteObject(br);
+        break;
+    }
+    }
+    RestoreDC(hdc, saved);
+}
+
 /* a labelled bar: "HP 29 / 32" over a fill of 'pct' percent */
 static void
 th_bar(HDC hdc, int x, int y, int w, int h, const char *label, int cur,
@@ -390,8 +484,22 @@ th_bar(HDC hdc, int x, int y, int w, int h, const char *label, int cur,
     pct = (pct < 0) ? 0 : (pct > 100) ? 100 : pct;
     th_round(hdc, x, y, x + w, y + h, 5, TH_BG_HEADER); /* softly squared */
     fw = (w * pct) / 100;
-    if (fw > 0)
-        th_round(hdc, x, y, x + max(fw, 3), y + h, 5, fill);
+    if (fw > 0) {
+        RECT fr;
+
+        SetRect(&fr, x, y, x + max(fw, 3), y + h);
+        th_draw_bar(hdc, &fr, fill, 5); /* in the chosen style */
+    }
+    if (iflags.fx_bar_border) { /* a crisp 1-pixel outline */
+        HPEN pen = CreatePen(PS_SOLID, 1, RGB(4, 5, 7));
+        HGDIOBJ op = SelectObject(hdc, pen),
+                ob = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+
+        RoundRect(hdc, x, y, x + w + 1, y + h + 1, 5, 5);
+        SelectObject(hdc, ob);
+        SelectObject(hdc, op);
+        DeleteObject(pen);
+    }
     Sprintf(buf, "%s  %d / %d", label, cur, max);
     SetBkMode(hdc, TRANSPARENT);
     {
