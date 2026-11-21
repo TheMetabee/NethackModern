@@ -1304,6 +1304,10 @@ mswin_update_inventory(int arg)
     if (iflags.perm_invent && program_state.something_worth_saving
         && iflags.window_inited && WIN_INVEN != WIN_ERR)
         repopulate_perminvent();
+    /* NetHack Modern: the character panel's equipment doll */
+    if (iflags.fx_theme && iflags.window_inited && WIN_STATUS != WIN_ERR
+        && IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
+        InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
 }
 
 win_request_info *

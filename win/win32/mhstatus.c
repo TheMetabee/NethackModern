@@ -384,6 +384,64 @@ th_trim(char *dst, const char *src, size_t n)
         memmove(dst, dst + 1, strlen(dst));
 }
 
+/* the equipment doll: what's worn and wielded, as tiles in two rows of
+   six slots starting at x0; returns its width */
+static int
+th_paint_doll(HDC hdc, int x0, int y1, int rowh)
+{
+    struct obj *slot[12];
+    int cell = rowh - 3, gap = 4, i;
+    HDC tdc;
+    HGDIOBJ oldBmp;
+
+    slot[0] = uarmh;   /* helmet */
+    slot[1] = uamul;   /* amulet */
+    slot[2] = uarmc;   /* cloak */
+    slot[3] = uarm;    /* body armour */
+    slot[4] = uarmu;   /* shirt */
+    slot[5] = uarms;   /* shield */
+    slot[6] = uwep;    /* weapon */
+    slot[7] = uswapwep; /* off-hand or alternate weapon */
+    slot[8] = uarmg;   /* gloves */
+    slot[9] = uleft;   /* left ring */
+    slot[10] = uright; /* right ring */
+    slot[11] = uarmf;  /* boots */
+
+    tdc = CreateCompatibleDC(hdc);
+    oldBmp = SelectObject(tdc, GetNHApp()->bmpMapTiles);
+    for (i = 0; i < 12; i++) {
+        int cx = x0 + (i % 6) * (cell + gap);
+        int cy = y1 + (i / 6) * rowh;
+        struct obj *o = slot[i];
+        COLORREF edge = TH_SEPARATOR;
+
+        if (o && o->bknown)
+            edge = o->cursed ? RGB(210, 64, 60)
+                   : o->blessed ? RGB(92, 190, 92) : TH_SEPARATOR;
+        /* the slot: a rounded box, its edge telling blessed/cursed */
+        th_round(hdc, cx, cy, cx + cell, cy + cell, 6, edge);
+        th_round(hdc, cx + 1, cy + 1, cx + cell - 1, cy + cell - 1, 5,
+                 o ? TH_BG_HEADER : TH_BG_PANEL);
+        if (o) {
+            glyph_info gi;
+            int t, tx, ty, pad = max(1, cell / 10);
+
+            map_glyphinfo(0, 0, obj_to_glyph(o, rn2_on_display_rng), 0,
+                          &gi);
+            t = gi.gm.tileidx;
+            tx = (t % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X;
+            ty = (t / GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_Y;
+            (*GetNHApp()->lpfnTransparentBlt)(
+                hdc, cx + pad, cy + pad, cell - 2 * pad, cell - 2 * pad, tdc,
+                tx, ty, GetNHApp()->mapTile_X, GetNHApp()->mapTile_Y,
+                TILE_BK_COLOR);
+        }
+    }
+    SelectObject(tdc, oldBmp);
+    DeleteDC(tdc);
+    return 6 * cell + 5 * gap;
+}
+
 static void
 th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
 {
@@ -393,6 +451,7 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     TEXTMETRIC tm;
     int pad, rowh, y1, y2, x, i, w, colw;
     char buf[BUFSZ], tmp[BUFSZ];
+    int dollx;
     int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
     int hpct = hpmax > 0 ? (hp * 100) / hpmax : 0;
     COLORREF hpc = (hpct > 66) ? RGB(92, 190, 92)
@@ -480,6 +539,11 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
         i = max(i, th_width(hdc, "AC 10")) + 16 + th_width(hdc, buf);
     }
     x += max(w, i) + 18;
+    th_rule(hdc, x - 9, y1, y2 + rowh - 2);
+
+    /* what's worn and wielded */
+    dollx = th_paint_doll(hdc, x, y1, rowh);
+    x += dollx + 18;
     th_rule(hdc, x - 9, y1, y2 + rowh - 2);
 
     /* conditions as chips, wrapping onto the second row */
