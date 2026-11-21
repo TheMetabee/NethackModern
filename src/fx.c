@@ -188,6 +188,8 @@ fx_typename(int type)
         return "ARRIVE";
     case FXE_UI:
         return "UI";
+    case FXE_SUMMON:
+        return "SUMMON";
     }
     return "?";
 }
@@ -1063,6 +1065,43 @@ fx_detected(int kind)
     ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
     ev.amount = n;
     fx_emit(&ev);
+}
+
+/* NetHack Modern: summoning.  fx_summon_begin() notes where monster
+   numbering stands; fx_summon_end() then shows each monster made since
+   (groups included) that the hero can see, one after another.  Hidden
+   or disguised ones are left alone so nothing is given away. */
+unsigned
+fx_summon_begin(void)
+{
+    return svc.context.ident;
+}
+
+void
+fx_summon_end(unsigned mark, int kind)
+{
+    struct monst *mtmp;
+    struct fx_event ev;
+    int n = 0;
+
+    if (!fx_active())
+        return;
+    for (mtmp = fmon; mtmp; mtmp = mtmp->nmon) {
+        if (DEADMONSTER(mtmp) || mtmp->m_id < mark
+            || !isok(mtmp->mx, mtmp->my) || !canspotmon(mtmp)
+            || mtmp->mundetected
+            || (M_AP_TYPE(mtmp) != M_AP_NOTHING
+                && M_AP_TYPE(mtmp) != M_AP_MONSTER))
+            continue;
+        (void) memset((genericptr_t) &ev, 0, sizeof ev);
+        ev.type = FXE_SUMMON;
+        ev.target_id = mtmp->m_id;
+        ev.x = ev.sx = mtmp->mx, ev.y = ev.sy = mtmp->my;
+        ev.adtyp = kind;
+        ev.amount = n++;
+        ev.mndx = monsndx(mtmp->data);
+        fx_emit(&ev);
+    }
 }
 
 /* an interface action with a sound of its own ("inventory") */

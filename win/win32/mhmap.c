@@ -208,6 +208,7 @@ static void fx_impact_particles(PNHMapWindow, int, int, boolean);
 static void fx_wand_particles(PNHMapWindow, const struct fx_event *);
 static void fx_dig_particles(PNHMapWindow, int, int);
 static void fx_teleport_particles(PNHMapWindow, const struct fx_event *);
+static void fx_summon_particles(PNHMapWindow, const struct fx_event *);
 static void fx_quaff_particles(PNHMapWindow, const struct fx_event *);
 static void fx_detect_particles(PNHMapWindow, const struct fx_event *);
 static void fx_scroll_particles(PNHMapWindow, const struct fx_event *);
@@ -1487,6 +1488,8 @@ mswin_fx_event(const struct fx_event *ev)
         fx_wand_particles(data, ev);
     if (ev->type == FXE_TELEPORT && !(ev->flags & FXF_BULK))
         fx_teleport_particles(data, ev);
+    if (ev->type == FXE_SUMMON)
+        fx_summon_particles(data, ev);
     if (ev->type == FXE_QUAFF && !(ev->flags & FXF_UNSEEN))
         fx_quaff_particles(data, ev);
     if (ev->type == FXE_READ && ev->adtyp == 1 && !(ev->flags & FXF_BULK))
@@ -2537,6 +2540,82 @@ fx_teleport_particles(PNHMapWindow data, const struct fx_event *ev)
     fx_start_timer(data);
 }
 
+/* a summoned monster appearing: a spiral drawing in to its square, a
+   flash and a ring; each of a group a little after the one before */
+static void
+fx_summon_particles(PNHMapWindow data, const struct fx_event *ev)
+{
+    static const struct fx_pstyle styles[4] = {
+        /* arcane: violet */
+        { RGB(235, 170, 255), RGB(160, 110, 255), RGB(30, 0, 60),
+          1.4f, 0.0f, 0.22f, 0.06f, 350, 600 },
+        /* demonic: fire and embers */
+        { RGB(255, 190, 80), RGB(240, 70, 30), RGB(50, 0, 0),
+          1.4f, -0.5f, 0.22f, 0.07f, 400, 700 },
+        /* holy: gold-white */
+        { RGB(255, 250, 215), RGB(255, 215, 110), RGB(60, 40, 0),
+          1.3f, -0.3f, 0.2f, 0.06f, 400, 700 },
+        /* swarm: dusty green-brown */
+        { RGB(200, 220, 120), RGB(150, 130, 70), RGB(20, 25, 0),
+          1.8f, 0.4f, 0.25f, 0.05f, 250, 450 },
+    };
+    const struct fx_pstyle *st;
+    DWORD at;
+    float cx, cy;
+    int i, k = ev->adtyp;
+
+    if (!iflags.fx_particles || !isok(ev->x, ev->y))
+        return;
+    k = (k < 0 || k > 3) ? 0 : k;
+    st = &styles[k];
+    at = (DWORD) min(ev->amount, 12) * 120; /* one after another */
+    cx = ev->x + 0.5f, cy = ev->y + 0.5f;
+    if (k != FXS_SWARM) {
+        /* a spiral of motes drawing in to the middle */
+        for (i = 0; i < 28; i++) {
+            float a = (6.2831853f * i) / 14, r = 0.55f + 0.5f * (i / 28.0f);
+            struct fx_part *p = fx_spawn_at(data, st, FALSE,
+                                            cx + r * (float) cos(a),
+                                            cy + r * (float) sin(a), 0.0f,
+                                            0.9f, at + (DWORD) (i * 9));
+
+            /* inward, and around */
+            p->vx = (float) (-cos(a) * 2.2f - sin(a) * 2.6f) * r;
+            p->vy = (float) (-sin(a) * 2.2f + cos(a) * 2.6f) * r;
+            p->drag = 0.04f;
+            p->life = 330;
+        }
+    }
+    /* the moment it's there: a flash, a burst and a ring */
+    at += (k == FXS_SWARM) ? 0 : 280;
+    for (i = 0; i < 3; i++) {
+        struct fx_part *p = fx_spawn_at(data, st, FALSE, cx, cy, 0.0f, 1.0f,
+                                        at);
+
+        p->vx = p->vy = 0.0f;
+        p->size = 0.32f;
+        p->c0 = (k == FXS_DEMONIC) ? RGB(255, 230, 160) : RGB(255, 250, 255);
+        p->life = 170;
+    }
+    for (i = 0; i < 24; i++)
+        (void) fx_spawn_at(data, st, FALSE, cx, cy, st->speed * 1.5f, 1.0f,
+                           at);
+    fx_ring(data, st, FALSE, ev->x, ev->y, 22, 0.8f, 0.01f, 380, at);
+    if (k == FXS_DEMONIC) {
+        /* a curl of smoke rising after */
+        static const struct fx_pstyle smoke = {
+            RGB(90, 80, 80), RGB(60, 55, 55), RGB(10, 10, 10),
+            0.3f, -1.2f, 0.35f, 0.03f, 700, 1100 };
+
+        for (i = 0; i < 10; i++)
+            (void) fx_spawn_at(data, &smoke, FALSE,
+                               cx + fx_prange(-0.3f, 0.3f),
+                               cy + fx_prange(-0.1f, 0.3f), 0.3f, 1.0f,
+                               at + 60);
+    }
+    fx_start_timer(data);
+}
+
 /* drinking a potion: first a swirl of its own colour rising around the
    hero (what anyone could see); then, if its type is known, its effect */
 static void
@@ -3366,10 +3445,11 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
         RECT r;
     } ln[FX_MSG_SHOW];
     char buf[TBUFSZ];
-    RECT client, box;
+    RECT client, box, block;
     cached_font *fnt;
     HGDIOBJ oldFont;
     int n = 0, i, y, wmax, pad, ol, margin;
+    UINT align = DT_LEFT;
     boolean scrolled = FALSE;
 
     if (!(iflags.fx_theme && iflags.fx_msg_overlay))
@@ -3417,15 +3497,33 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
         return;
     }
 
-    /* stack them up from the bottom */
-    y = client.bottom - margin;
-    for (i = 0; i < n; i++) {
-        int h = ln[i].r.bottom - ln[i].r.top;
+    /* the corner (or edge middle) the player picked; the newest line is
+       always the lowest, nearest the action below for the top ones */
+    {
+        int pos = iflags.fx_msg_pos, gap = max(2, fnt->height / 8), tot = 0;
+        boolean top = (pos >= 0 && pos <= 2);
+        int col = (pos < 0 || pos > 5) ? 0 : pos % 3; /* left, centre, right */
 
-        y -= h;
-        OffsetRect(&ln[i].r, client.left + margin, y - ln[i].r.top);
-        y -= max(2, fnt->height / 8);
+        for (i = 0; i < n; i++)
+            tot += (ln[i].r.bottom - ln[i].r.top) + (i ? gap : 0);
+        y = top ? client.top + margin + tot : client.bottom - margin;
+        for (i = 0; i < n; i++) {
+            int h = ln[i].r.bottom - ln[i].r.top, w = ln[i].r.right
+                                                       - ln[i].r.left, x;
+
+            y -= h;
+            x = (col == 0) ? client.left + margin
+                : (col == 1) ? client.left + (client.right - client.left - w) / 2
+                             : client.right - margin - w;
+            OffsetRect(&ln[i].r, x - ln[i].r.left, y - ln[i].r.top);
+            y -= gap;
+        }
+        align = (col == 1) ? DT_CENTER : (col == 2) ? DT_RIGHT : DT_LEFT;
     }
+    /* the block they take up together */
+    block = ln[0].r;
+    for (i = 1; i < n; i++)
+        UnionRect(&block, &block, &ln[i].r);
 
     if (iflags.fx_msg_backdrop) {
         /* a soft dark panel behind them */
@@ -3434,10 +3532,8 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
         BLENDFUNCTION bf;
 
         pad = max(6, fnt->height / 3);
-        SetRect(&box, client.left + margin - pad, ln[n - 1].r.top - pad,
-                client.left + margin, client.bottom - margin + pad);
-        for (i = 0; i < n; i++)
-            box.right = max(box.right, ln[i].r.right + pad);
+        box = block;
+        InflateRect(&box, pad, pad);
         if (!dotDC) {
             dotDC = CreateCompatibleDC(hdc);
             dotBmp = CreateCompatibleBitmap(hdc, 1, 1);
@@ -3454,21 +3550,23 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
 
     if (!iflags.fx_msg_backdrop) {
         /* where the lines lie over the map itself (zoomed in), a soft
-           shade behind them, darkest in the corner and fading out up
-           and to the right, so busy floors don't swallow the text */
-        int mapbottom = data->map_orig.y - data->yPos * data->yFrontTile
-                        + ROWNO * data->yFrontTile;
+           shade behind them, darkest under the text and fading out all
+           round, so busy floors don't swallow it */
+        RECT maprc, isect;
 
-        if (mapbottom > ln[n - 1].r.top) {
+        maprc.left = data->map_orig.x - data->xPos * data->xFrontTile;
+        maprc.top = data->map_orig.y - data->yPos * data->yFrontTile;
+        maprc.right = maprc.left + COLNO * data->xFrontTile;
+        maprc.bottom = maprc.top + ROWNO * data->yFrontTile;
+        if (IntersectRect(&isect, &maprc, &block)) {
             static HDC shDC;
             static HBITMAP shBmp;
             BLENDFUNCTION bf;
-            int right = client.left + margin, top, step, sx, sy;
+            int step, sx, sy, fade = 3 * margin;
+            RECT area = block;
 
-            for (i = 0; i < n; i++)
-                right = max(right, ln[i].r.right);
-            right = min(client.right, right + 4 * margin);
-            top = max(client.top, ln[n - 1].r.top - 3 * margin);
+            InflateRect(&area, fade, fade);
+            IntersectRect(&area, &area, &client);
             if (!shDC) {
                 shDC = CreateCompatibleDC(hdc);
                 shBmp = CreateCompatibleBitmap(hdc, 1, 1);
@@ -3479,12 +3577,21 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
             bf.BlendFlags = 0;
             bf.AlphaFormat = 0;
             step = max(6, fnt->height / 3);
-            for (sy = top; sy < client.bottom; sy += step)
-                for (sx = client.left; sx < right; sx += step) {
-                    double vy = (double) (sy - top) / max(1, client.bottom - top);
-                    double vx = 1.0 - (double) (sx - client.left)
-                                          / max(1, right - client.left);
-                    double a = min(1.0, vy * 2.0) * min(1.0, vx * 2.6);
+            for (sy = area.top; sy < area.bottom; sy += step)
+                for (sx = area.left; sx < area.right; sx += step) {
+                    /* how far this cell is outside the text block */
+                    int ox = (sx + step / 2 < block.left)
+                                 ? block.left - (sx + step / 2)
+                             : (sx + step / 2 > block.right)
+                                 ? (sx + step / 2) - block.right : 0;
+                    int oy = (sy + step / 2 < block.top)
+                                 ? block.top - (sy + step / 2)
+                             : (sy + step / 2 > block.bottom)
+                                 ? (sy + step / 2) - block.bottom : 0;
+                    double d = sqrt((double) ox * ox + (double) oy * oy);
+                    double a = 1.0 - min(1.0, d / fade);
+
+                    a = a * a * (3 - 2 * a);
 
                     if (a <= 0.02)
                         continue;
@@ -3507,7 +3614,7 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
 
             OffsetRect(&r, dy, dy + 1);
             DrawTextW(hdc, ln[i].w, ln[i].len, &r,
-                      DT_NOPREFIX | DT_WORDBREAK);
+                      DT_NOPREFIX | DT_WORDBREAK | align);
         }
         SetTextColor(hdc, RGB(4, 5, 8));
         for (dy = -ol; dy <= ol; dy++)
@@ -3520,11 +3627,11 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
                     continue; /* round, not square, corners */
                 OffsetRect(&r, dx, dy);
                 DrawTextW(hdc, ln[i].w, ln[i].len, &r,
-                          DT_NOPREFIX | DT_WORDBREAK);
+                          DT_NOPREFIX | DT_WORDBREAK | align);
             }
         SetTextColor(hdc, ln[i].c);
         DrawTextW(hdc, ln[i].w, ln[i].len, &ln[i].r,
-                  DT_NOPREFIX | DT_WORDBREAK);
+                  DT_NOPREFIX | DT_WORDBREAK | align);
     }
     if (scrolled) {
         /* looking back through history (Ctrl+P) */
@@ -3533,7 +3640,7 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
         OffsetRect(&r, 0, -(fnt->height + 2));
         SetTextColor(hdc, TH_ACCENT);
         DrawTextW(hdc, L"\x25B2 earlier messages", -1, &r,
-                  DT_NOPREFIX | DT_SINGLELINE);
+                  DT_NOPREFIX | DT_SINGLELINE | align);
     }
     SelectObject(hdc, oldFont);
 #undef FX_MSG_SHOW

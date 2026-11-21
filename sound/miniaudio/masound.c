@@ -1771,6 +1771,18 @@ ma_fx_event(const struct fx_event *ev)
             ma_play_named("teleport", 0.7f * v2, ma_frand(1.0f, 1.12f), p2);
         }
         break;
+    case FXE_SUMMON:
+        /* one sound for the group, as the first of them arrives */
+        if (ev->amount == 0) {
+            static const char *const nm[4] = { "se_glow_bloom",
+                                               "se_unholy_glow",
+                                               "se_holy_glow", "se_bees" };
+            int k = (ev->adtyp < 0 || ev->adtyp > 3) ? 0 : ev->adtyp;
+
+            ma_play_named(nm[k], 0.75f * vol, ma_frand(0.95f, 1.05f), pan);
+            ma_play_named("teleport", 0.35f * vol, ma_frand(0.8f, 0.9f), pan);
+        }
+        break;
     case FXE_IMPACT:
         /* striking / force bolt: a force whump; a softer, higher one
            under the "Boing!" when it bounces off */

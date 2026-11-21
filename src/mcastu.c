@@ -652,16 +652,20 @@ mcast_insects(struct monst *mtmp)
     char whatbuf[QBUFSZ], let = (pm ? S_ANT : S_SNAKE);
     boolean success = FALSE, seecaster;
     int i, quan, oldseen, newseen;
+    unsigned fxmark;
     coord bypos;
     const char *fmt, *what;
 
     oldseen = monster_census(TRUE);
+    fxmark = fx_summon_begin(); /* NetHack Modern */
     quan = (mtmp->m_lev < 2) ? 1 : rnd((int) mtmp->m_lev / 2);
     if (quan < 3)
         quan = 3;
     for (i = 0; i <= quan; i++) {
-        if (!enexto(&bypos, mtmp->mux, mtmp->muy, mtmp->data))
+        if (!enexto(&bypos, mtmp->mux, mtmp->muy, mtmp->data)) {
+            fx_summon_end(fxmark, FXS_SWARM); /* the ones made so far */
             return;
+        }
         if ((pm = mkclass(let, 0)) != 0
             && (mtmp2 = makemon(pm, bypos.x, bypos.y, MM_ANGRY | MM_NOMSG))
             != 0) {
@@ -671,6 +675,7 @@ mcast_insects(struct monst *mtmp)
         }
     }
     newseen = monster_census(TRUE);
+    fx_summon_end(fxmark, FXS_SWARM); /* NetHack Modern */
 
     /* not canspotmon() which includes unseen things sensed via warning */
     seecaster = canseemon(mtmp) || tp_sensemon(mtmp) || Detect_monsters;

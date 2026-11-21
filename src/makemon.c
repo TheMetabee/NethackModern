@@ -1563,6 +1563,7 @@ create_critters(
     struct monst *mon;
     boolean known = FALSE;
     boolean ask = (wizard && !neverask);
+    unsigned fxmark = fx_summon_begin(); /* NetHack Modern */
 
     while (cnt--) {
         if (ask) {
@@ -1586,6 +1587,7 @@ create_critters(
             || sensemon(mon))
             known = TRUE;
     }
+    fx_summon_end(fxmark, FXS_ARCANE); /* NetHack Modern */
     return known;
 }
 

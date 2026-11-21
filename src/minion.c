@@ -58,6 +58,7 @@ msummon(struct monst *mon)
 {
     struct permonst *ptr;
     int dtype = NON_PM, cnt = 0, result = 0, census;
+    unsigned fxmark;
     boolean xlight;
     aligntyp atyp;
     struct monst *mtmp;
@@ -142,6 +143,7 @@ msummon(struct monst *mon)
        count of non-null makemon() result is not sufficient */
     census = monster_census(FALSE);
     xlight = FALSE;
+    fxmark = fx_summon_begin(); /* NetHack Modern */
 
     while (cnt > 0) {
         mtmp = makemon(&mons[dtype], u.ux, u.uy, MM_EMIN|MM_NOMSG);
@@ -189,6 +191,9 @@ msummon(struct monst *mon)
     if (result)
         result = monster_census(FALSE) - census;
 
+    /* NetHack Modern: show them arriving (angels in gold light) */
+    fx_summon_end(fxmark, (dtype != NON_PM && mons[dtype].mlet == S_ANGEL)
+                              ? FXS_HOLY : FXS_DEMONIC);
     return result;
 }
 
@@ -197,6 +202,7 @@ summon_minion(aligntyp alignment, boolean talk)
 {
     struct monst *mon;
     int mnum;
+    unsigned fxmark = fx_summon_begin(); /* NetHack Modern */
 
     switch ((int) alignment) {
     case A_LAWFUL:
@@ -252,6 +258,9 @@ summon_minion(aligntyp alignment, boolean talk)
         mon->mpeaceful = FALSE;
         /* don't call set_malign(); player was naughty */
     }
+    fx_summon_end(fxmark, (alignment == A_LAWFUL) ? FXS_HOLY
+                          : (alignment == A_NEUTRAL) ? FXS_ARCANE
+                            : FXS_DEMONIC);
 }
 
 #define Athome (Inhell && (mtmp->cham == NON_PM))

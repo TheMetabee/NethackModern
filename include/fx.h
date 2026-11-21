@@ -66,11 +66,20 @@ enum fx_event_type {
                      * just started or was restored) */
     FXE_UI,         /* an interface action: 'text' names it ("inventory");
                      * valid only during the handler call */
-    FXE_DETECT      /* detection revealed things: 'adtyp' FXD_*; with
+    FXE_DETECT,     /* detection revealed things: 'adtyp' FXD_*; with
                      * FXF_HERO_TARGET once at the hero ('amount' = how
                      * many), otherwise one per square found ('amount' =
                      * its distance, for a ripple outward) */
+    FXE_SUMMON      /* a summoned or created monster appeared in sight at
+                     * <x,y>: 'adtyp' FXS_*, 'amount' its place in the
+                     * group (0 first), for a staggered entrance */
 };
+
+/* fx_event.adtyp for FXE_SUMMON: what kind of summoning */
+#define FXS_ARCANE  0 /* create monster: a violet swirl */
+#define FXS_DEMONIC 1 /* demons gated in: red fire and smoke */
+#define FXS_HOLY    2 /* angels and lawful minions: gold light */
+#define FXS_SWARM   3 /* insects or snakes: a dusty green burst */
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
 enum fx_texture {
@@ -191,6 +200,8 @@ extern void fx_scroll_effect(int);
 extern void fx_unihorn(int);
 extern void fx_detected(int);
 extern void fx_ui(const char *);
+extern unsigned fx_summon_begin(void);
+extern void fx_summon_end(unsigned, int);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);

@@ -597,12 +597,14 @@ nasty(struct monst *summoner)
     /* when a monster casts the "summon nasties" spell, it gives feedback;
        when random post-Wizard harassment casts that, we give feedback */
     unsigned mmflags = summoner ? MM_NOMSG : NO_MM_FLAGS;
+    unsigned fxmark;
 
 #define MAXNASTIES 10 /* more than this can be created */
 
     /* some candidates may be created in groups, so simple count
        of non-null makemon() return is inadequate */
     census = monster_census(FALSE);
+    fxmark = fx_summon_begin(); /* NetHack Modern */
 
     if (!rn2(10) && Inhell) {
         /* this might summon a demon prince or lord */
@@ -707,6 +709,9 @@ nasty(struct monst *summoner)
 
     if (count)
         count = monster_census(FALSE) - census;
+    /* NetHack Modern: show them arriving (demons in hellfire) */
+    fx_summon_end(fxmark, (Inhell || (summoner && is_demon(summoner->data)))
+                              ? FXS_DEMONIC : FXS_ARCANE);
     return count;
 }
 
