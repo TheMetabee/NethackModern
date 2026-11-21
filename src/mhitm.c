@@ -1218,6 +1218,7 @@ paralyze_monst(struct monst *mon, int amt)
 
     mon->mcanmove = 0;
     mon->mfrozen = amt;
+    mon->mfxslept = 0; /* NetHack Modern: paralyzed, not asleep */
     mon->meating = 0; /* terminate any meal-in-progress */
     mon->mstrategy &= ~STRAT_WAITFORU;
 }

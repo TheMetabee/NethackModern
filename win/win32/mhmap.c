@@ -27,6 +27,8 @@
 /* NetHack Modern floating numbers */
 #define CURSOR_TIMER_ID 0
 #define FX_TIMER_ID 2
+#define FX_AURA_TIMER_ID 3
+#define FX_AURA_MS 50       /* lasting effects (sleeping z's) redraw rate */
 #define FX_FRAME_MS 30      /* ~33 frames per second while numbers float */
 #define FX_FLOAT_MS 900     /* lifetime of one number */
 #define FX_TEXT_MS 1400     /* lifetime of a status name */
@@ -141,6 +143,7 @@ typedef struct mswin_nethack_map_window {
         DWORD start, life;
     } parts[FX_MAXPART];
     int nparts;
+    boolean auraTimerOn;        /* lasting effects are being animated */
     HDC partDC;                 /* black layer the particles are drawn on */
     HBITMAP partBmp, partBmpOld;
     int partW, partH;
@@ -177,6 +180,10 @@ static void fx_wand_particles(PNHMapWindow, const struct fx_event *);
 static void fx_dig_particles(PNHMapWindow, int, int);
 static void fx_teleport_particles(PNHMapWindow, const struct fx_event *);
 static void fx_paint_particles(PNHMapWindow, HDC);
+static int fx_paint_auras(PNHMapWindow, HDC);
+static void fx_part_layer(PNHMapWindow, HDC);
+static void fx_make_fonts(PNHMapWindow);
+static void fx_aura_timer(PNHMapWindow, boolean);
 static void fx_paint_overlay(PNHMapWindow data, HDC hdc);
 static boolean fx_shake_offset(PNHMapWindow, int *, int *);
 static void fx_paint_sprites(PNHMapWindow, HDC);
@@ -730,6 +737,7 @@ MapWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         fx_set_handler((fx_handler_fn) 0);
         if (data->fxTimerOn)
             KillTimer(hWnd, FX_TIMER_ID);
+            KillTimer(hWnd, FX_AURA_TIMER_ID);
         if (data->hFxFont)
             DeleteObject(data->hFxFont);
         if (data->hFxFontBig)
@@ -769,6 +777,10 @@ MapWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             fx_tick(data);
             break;
         }
+        if (wParam == FX_AURA_TIMER_ID) {
+            InvalidateRect(hWnd, NULL, FALSE); /* paint stops it when idle */
+            break;
+        }
         data->cursorOn = !data->cursorOn;
         dirty(data, data->xCur, data->yCur);
         break;
@@ -799,6 +811,8 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
         PMSNHMsgPrintGlyph msg_data = (PMSNHMsgPrintGlyph) lParam;
         setGlyph(data, msg_data->x, msg_data->y,
             &msg_data->glyphinfo, &msg_data->bkglyphinfo);
+        if ((msg_data->glyphinfo.fxauras & FXA_ASLEEP) && iflags.fx_auras)
+            fx_aura_timer(data, TRUE);
         if (msg_data->glyphinfo.glyph == cmap_to_glyph(S_digbeam))
             fx_dig_particles(data, msg_data->x, msg_data->y);
         if (glyph_is_cmap_zap(msg_data->glyphinfo.glyph))
@@ -1307,6 +1321,8 @@ onPaint(HWND hWnd)
             frontHeight, data->backBufferDC, 0, 0, data->backWidth,
             data->backHeight, SRCCOPY);
         fx_paint_sprites(data, hdc);
+        if (!fx_paint_auras(data, hdc))
+            fx_aura_timer(data, FALSE);
         fx_paint_particles(data, hdc);
         fx_paint_overlay(data, hdc);
         data->map_orig.x -= shx, data->map_orig.y -= shy;
@@ -2433,18 +2449,7 @@ fx_paint_particles(PNHMapWindow data, HDC hdc)
     ox = data->map_orig.x - data->xPos * data->xFrontTile;
     oy = data->map_orig.y - data->yPos * data->yFrontTile;
     tw = data->xFrontTile, th = data->yFrontTile;
-    if (!data->partDC || data->partW != data->compW
-        || data->partH != data->compH) {
-        if (data->partDC) {
-            SelectObject(data->partDC, data->partBmpOld);
-            DeleteObject(data->partBmp);
-            DeleteDC(data->partDC);
-        }
-        data->partDC = CreateCompatibleDC(hdc);
-        data->partW = data->compW, data->partH = data->compH;
-        data->partBmp = CreateCompatibleBitmap(hdc, data->partW, data->partH);
-        data->partBmpOld = SelectObject(data->partDC, data->partBmp);
-    }
+    fx_part_layer(data, hdc);
     /* where they are this frame */
     for (i = 0; i < data->nparts; i++) {
         struct fx_part *p = &data->parts[i];
@@ -2525,6 +2530,107 @@ fx_paint_particles(PNHMapWindow data, HDC hdc)
     }
     SelectObject(hdc, oldPen);
     SelectObject(hdc, oldBrush);
+}
+
+/* ---- lasting effects (Phase 4b) ----------------------------------- */
+
+static void
+fx_aura_timer(PNHMapWindow data, boolean on)
+{
+    if (on && !data->auraTimerOn) {
+        SetTimer(data->hWnd, FX_AURA_TIMER_ID, FX_AURA_MS, NULL);
+        data->auraTimerOn = TRUE;
+        InvalidateRect(data->hWnd, NULL, FALSE);
+    } else if (!on && data->auraTimerOn) {
+        KillTimer(data->hWnd, FX_AURA_TIMER_ID);
+        data->auraTimerOn = FALSE;
+    }
+}
+
+/* make sure the black glow layer exists at the composition size */
+static void
+fx_part_layer(PNHMapWindow data, HDC hdc)
+{
+    if (!data->partDC || data->partW != data->compW
+        || data->partH != data->compH) {
+        if (data->partDC) {
+            SelectObject(data->partDC, data->partBmpOld);
+            DeleteObject(data->partBmp);
+            DeleteDC(data->partDC);
+        }
+        data->partDC = CreateCompatibleDC(hdc);
+        data->partW = data->compW, data->partH = data->compH;
+        data->partBmp = CreateCompatibleBitmap(hdc, data->partW, data->partH);
+        data->partBmpOld = SelectObject(data->partDC, data->partBmp);
+    }
+}
+
+/* sleeping creatures: a slow stream of z's rising off them, drifting,
+   growing and fading, for as long as the core says they're asleep (the
+   square's fxauras); returns how many squares had one */
+static int
+fx_paint_auras(PNHMapWindow data, HDC hdc)
+{
+#define FX_Z_PERIOD 2100   /* ms for one z to rise and fade */
+#define FX_Z_COUNT 3       /* z's in the air at once */
+    DWORD now = GetTickCount();
+    int x, y, n = 0, ox, oy, tw, th, i;
+    HFONT oldFont;
+    int oldBk;
+    COLORREF oldColor;
+
+    if (!iflags.fx_auras)
+        return 0;
+    ox = data->map_orig.x - data->xPos * data->xFrontTile;
+    oy = data->map_orig.y - data->yPos * data->yFrontTile;
+    tw = data->xFrontTile, th = data->yFrontTile;
+    fx_make_fonts(data);
+    fx_part_layer(data, hdc);
+    oldFont = SelectObject(data->partDC, data->hFxFontSmall);
+    oldBk = SetBkMode(data->partDC, TRANSPARENT);
+    oldColor = GetTextColor(data->partDC);
+
+    for (x = 1; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++) {
+            RECT box;
+            int bx, by;
+
+            if (!(data->map[x][y].fxauras & FXA_ASLEEP)
+                || !glyph_is_monster(data->map[x][y].glyph))
+                continue;
+            n++;
+            bx = ox + x * tw, by = oy + y * th;
+            /* the z's live in the tile and the one above it */
+            SetRect(&box, bx, by - th, bx + tw + tw / 2, by + th);
+            if (box.right < 0 || box.bottom < 0 || box.left > data->partW
+                || box.top > data->partH)
+                continue;
+            FillRect(data->partDC, &box, (HBRUSH) GetStockObject(BLACK_BRUSH));
+            for (i = 0; i < FX_Z_COUNT; i++) {
+                /* each creature on its own beat, so a room of sleepers
+                   doesn't breathe in step */
+                DWORD beat = (DWORD) (x * 389 + y * 157)
+                             + (DWORD) (i * FX_Z_PERIOD / FX_Z_COUNT);
+                double t = (double) ((now + beat) % FX_Z_PERIOD) / FX_Z_PERIOD;
+                double fade = (t < 0.15) ? t / 0.15 : 1.0 - (t - 0.15) / 0.85;
+                int zx = bx + (int) (tw * (0.55 + 0.35 * t
+                                          + 0.06 * sin(t * 6.2831853 * 1.5)));
+                int zy = by + (int) (th * (0.30 - 0.95 * t));
+                int c = (int) (255 * fade * fade);
+                const char *z = (t < 0.45) ? "z" : "Z";
+
+                SetTextColor(data->partDC,
+                             RGB((c * 190) / 255, (c * 215) / 255, c));
+                TextOutA(data->partDC, zx, zy - th / 3, z, 1);
+            }
+            BitBlt(hdc, box.left, box.top, box.right - box.left,
+                   box.bottom - box.top, data->partDC, box.left, box.top,
+                   SRCPAINT);
+        }
+    SetTextColor(data->partDC, oldColor);
+    SetBkMode(data->partDC, oldBk);
+    SelectObject(data->partDC, oldFont);
+    return n;
 }
 
 /* a keypress snaps every sprite back to its square (design rule 2) */

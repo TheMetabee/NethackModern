@@ -309,51 +309,26 @@ fx_hero_auras(void)
 
 /* monsters put to sleep by magic (sleep rays, spells, gas): the core
    holds them with the same "can't move for N turns" as paralysis, so
-   remember which ones are really asleep */
-#define FX_MAXSLEPT 32
-static unsigned fx_slept[FX_MAXSLEPT];
-static int fx_nslept;
-
+   the monster carries a flag saying it's really asleep (mfxslept, which
+   is saved with it) */
 void
 fx_mon_slept(struct monst *mtmp)
 {
-    int i;
-
-    if (!mtmp || mtmp == &gy.youmonst)
-        return;
-    for (i = 0; i < fx_nslept; i++)
-        if (fx_slept[i] == mtmp->m_id)
-            return;
-    if (fx_nslept >= FX_MAXSLEPT) {
-        memmove(&fx_slept[0], &fx_slept[1],
-                (FX_MAXSLEPT - 1) * sizeof fx_slept[0]);
-        fx_nslept--;
-    }
-    fx_slept[fx_nslept++] = mtmp->m_id;
+    if (mtmp && mtmp != &gy.youmonst)
+        mtmp->mfxslept = 1;
 }
 
 staticfn boolean
 fx_is_slept(struct monst *mtmp)
 {
-    int i;
-
-    for (i = 0; i < fx_nslept; i++)
-        if (fx_slept[i] == mtmp->m_id)
-            return TRUE;
-    return FALSE;
+    return mtmp->mfxslept ? TRUE : FALSE;
 }
 
-/* it can move again (or is gone): forget it */
+/* it can move again: forget it */
 staticfn void
 fx_wake(struct monst *mtmp)
 {
-    int i;
-
-    for (i = 0; i < fx_nslept; i++)
-        if (fx_slept[i] == mtmp->m_id) {
-            fx_slept[i] = fx_slept[--fx_nslept];
-            return;
-        }
+    mtmp->mfxslept = 0;
 }
 
 staticfn unsigned long

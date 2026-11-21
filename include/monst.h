@@ -172,7 +172,10 @@ struct monst {
     Bitfield(mspotted, 1);  /* mon is currently seen by hero */
     Bitfield(mwandexp, 1);  /* mon has experience with wands */
     Bitfield(mgenmklev, 1); /* made by the level generation */
-    /* 5 spare bits */
+    Bitfield(mfxslept, 1);  /* NetHack Modern: held by magical sleep, not
+                             * paralysis (display only; uses a spare bit,
+                             * so the save layout is unchanged) */
+    /* 4 spare bits */
 
     unsigned long mstrategy; /* for monsters with mflag3: current strategy */
 #ifdef NHSTDC
