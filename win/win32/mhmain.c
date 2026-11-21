@@ -17,6 +17,7 @@
 #include "mhmsgwnd.h"
 #include "mhmap.h"
 #include "mhtheme.h"
+#include "mhfont.h"
 
 typedef struct mswin_nethack_main_window {
     int mapAcsiiModeSave;
@@ -646,6 +647,10 @@ mswin_layout_main_window(HWND changed_child)
         /* set window positions */
         SetRect(&wnd_rect, client_rt.left, client_rt.top, client_rt.right,
                 client_rt.bottom);
+        if (mswin_topbar_height() > 0) { /* NetHack Modern: topic bar */
+            mswin_topbar_place(client_rt.right);
+            wnd_rect.top += mswin_topbar_height();
+        }
         switch (iflags.wc_align_status) {
         case ALIGN_LEFT:
             status_size.cx = (wnd_rect.right - wnd_rect.left) / 4;
@@ -1468,3 +1473,474 @@ nh_compose_unicode_screenshot(void)
     return retval;
 }
 #endif
+
+/* ------------------------------------------------------------------ */
+/* NetHack Modern (Phase 4c): a dark title bar and a topic menu bar in
+   place of the light Win32 menu. Each topic opens a dark drop-down; an
+   entry shows its key and choosing it sends exactly that key, so the
+   menus teach the keys. */
+
+#define TB_KEYS 1     /* send 'keys' to the game */
+#define TB_CMD 2      /* a main-window menu command (IDM_*) */
+#define TB_ZOOM 3     /* map zoom: arg +1, -1, 0 */
+#define TB_SEP 4
+
+struct tb_item {
+    const char *label;
+    const char *hint;   /* the key, as shown */
+    int kind;
+    const char *keys;   /* TB_KEYS */
+    int arg;            /* TB_CMD / TB_ZOOM */
+};
+
+#define TBK(l, h, k) { l, h, TB_KEYS, k, 0 }
+#define TBC(l, h, id) { l, h, TB_CMD, NULL, id }
+#define TBZ(l, h, d) { l, h, TB_ZOOM, NULL, d }
+#define TBSEP { NULL, NULL, TB_SEP, NULL, 0 }
+#define META(c) "\x1b" c   /* marked for Meta (see tb_send) */
+
+static const struct tb_item tb_game[] = {
+    TBK("Save and quit", "S", "S"),
+    TBC("Quit without saving", "", IDM_EXIT),
+    TBSEP,
+    TBK("Options", "O", "O"),
+    TBK("All options", "m O", "mO"),
+};
+static const struct tb_item tb_view[] = {
+    TBZ("Zoom in", "Ctrl+=", 1),
+    TBZ("Zoom out", "Ctrl+-", -1),
+    TBZ("Whole level", "Ctrl+0", 0),
+    TBSEP,
+    TBC("Tiles", "", IDM_MAP_TILES),
+    TBC("ASCII", "", IDM_MAP_ASCII12X16),
+    TBSEP,
+    TBK("Previous messages", "Ctrl+P", "\x10"),
+    TBK("Dungeon overview", "Ctrl+O", "\x0f"),
+};
+static const struct tb_item tb_move[] = {
+    TBK("Search", "s", "s"),
+    TBK("Rest a turn", ".", "."),
+    TBK("Go up", "<", "<"),
+    TBK("Go down", ">", ">"),
+    TBK("Travel", "_", "_"),
+    TBSEP,
+    TBK("Kick", "Ctrl+D", "\x04"),
+    TBK("Jump", "M-j", META("j")),
+    TBK("Sit", "M-s", META("s")),
+};
+static const struct tb_item tb_items[] = {
+    TBK("Inventory", "i", "i"),
+    TBK("Pick up", ",", ","),
+    TBK("Drop", "d", "d"),
+    TBK("Drop several", "D", "D"),
+    TBSEP,
+    TBK("Eat", "e", "e"),
+    TBK("Quaff", "q", "q"),
+    TBK("Read", "r", "r"),
+    TBK("Apply", "a", "a"),
+    TBK("Throw", "t", "t"),
+    TBK("Fire", "f", "f"),
+    TBSEP,
+    TBK("Loot", "M-l", META("l")),
+    TBK("Dip", "M-d", META("d")),
+    TBK("Name or call", "M-n", META("n")),
+    TBK("Adjust letters", "M-a", META("a")),
+};
+static const struct tb_item tb_gear[] = {
+    TBK("Wield", "w", "w"),
+    TBK("Swap weapons", "x", "x"),
+    TBK("Quiver", "Q", "Q"),
+    TBSEP,
+    TBK("Wear", "W", "W"),
+    TBK("Take off", "T", "T"),
+    TBK("Put on", "P", "P"),
+    TBK("Remove", "R", "R"),
+    TBSEP,
+    TBK("Show equipment", "*", "*"),
+};
+static const struct tb_item tb_act[] = {
+    TBK("Open", "o", "o"),
+    TBK("Close", "c", "c"),
+    TBK("Force a lock", "M-f", META("f")),
+    TBK("Untrap", "M-u", META("u")),
+    TBK("Engrave", "E", "E"),
+    TBSEP,
+    TBK("Chat", "M-c", META("c")),
+    TBK("Pay", "p", "p"),
+    TBK("Pray", "M-p", META("p")),
+    TBK("Offer", "M-o", META("o")),
+};
+static const struct tb_item tb_magic[] = {
+    TBK("Cast a spell", "Z", "Z"),
+    TBK("Known spells", "+", "+"),
+    TBK("Zap a wand", "z", "z"),
+    TBSEP,
+    TBK("Turn undead", "M-t", META("t")),
+    TBK("Invoke", "M-i", META("i")),
+    TBK("Enhance skills", "M-e", META("e")),
+};
+static const struct tb_item tb_info[] = {
+    TBK("Attributes", "Ctrl+X", "\x18"),
+    TBK("Look here", ":", ":"),
+    TBK("Far look", ";", ";"),
+    TBK("What is a symbol", "/", "/"),
+    TBK("Discoveries", "\\", "\\"),
+    TBK("Conduct", "M-C", META("C")),
+    TBSEP,
+    TBK("Help", "?", "?"),
+};
+static const struct tb_item tb_help[] = {
+    TBC("List of commands", "", IDM_HELP_COMMANDS),
+    TBC("Extended commands", "", IDM_HELP_EXTCMD),
+    TBC("Game options", "", IDM_HELP_OPTIONS),
+    TBC("Long description of the game", "", IDM_HELP_LONG),
+    TBC("NetHack for Windows", "", IDM_HELP_PORTHELP),
+    TBSEP,
+    TBC("About", "", IDM_ABOUT),
+};
+#undef TBK
+#undef TBC
+#undef TBZ
+#undef TBSEP
+
+static const struct tb_topic {
+    const char *name;
+    const struct tb_item *items;
+    int n;
+} tb_topics[] = {
+    { "Game", tb_game, SIZE(tb_game) },
+    { "View", tb_view, SIZE(tb_view) },
+    { "Move", tb_move, SIZE(tb_move) },
+    { "Items", tb_items, SIZE(tb_items) },
+    { "Gear", tb_gear, SIZE(tb_gear) },
+    { "Act", tb_act, SIZE(tb_act) },
+    { "Magic", tb_magic, SIZE(tb_magic) },
+    { "Info", tb_info, SIZE(tb_info) },
+    { "Help", tb_help, SIZE(tb_help) },
+};
+#define TB_NTOPIC SIZE(tb_topics)
+
+static HWND tb_hwnd;
+static int tb_hot = -1, tb_open = -1;
+static int tb_x[TB_NTOPIC + 1]; /* topic left edges, and the end */
+
+int
+mswin_topbar_height(void)
+{
+    HDC hdc;
+    cached_font *f;
+    int h;
+
+    if (!tb_hwnd)
+        return 0;
+    /* not before the font sizes are settled: fonts are made once and
+       kept, so measuring too early would fix every menu at a tiny size */
+    if (iflags.wc_fontsiz_menu < NHFONT_SIZE_MIN
+        || iflags.wc_fontsiz_menu > NHFONT_SIZE_MAX)
+        return 24;
+    hdc = GetDC(tb_hwnd);
+    f = mswin_get_font(NHW_MENU, ATR_NONE, hdc, FALSE);
+    h = f->height + f->height / 2 + 2;
+    ReleaseDC(tb_hwnd, hdc);
+    return h;
+}
+
+void
+mswin_topbar_place(int width)
+{
+    if (tb_hwnd) {
+        MoveWindow(tb_hwnd, 0, 0, width, mswin_topbar_height(), TRUE);
+        InvalidateRect(tb_hwnd, NULL, TRUE); /* all of it, not just what
+                                                a resize uncovered */
+    }
+}
+
+static void
+tb_send(const char *keys)
+{
+    const unsigned char *p;
+
+    for (p = (const unsigned char *) keys; *p; p++) {
+        if (*p == 0x1b && p[1]) { /* Meta + the next key */
+            p++;
+            NHEVENT_KBD(M(*p));
+        } else {
+            NHEVENT_KBD(*p);
+        }
+    }
+}
+
+static void
+tb_run(const struct tb_item *it)
+{
+    switch (it->kind) {
+    case TB_KEYS:
+        tb_send(it->keys);
+        break;
+    case TB_CMD:
+        SendMessage(GetNHApp()->hMainWnd, WM_COMMAND,
+                    MAKEWPARAM(it->arg, 0), 0);
+        break;
+    case TB_ZOOM:
+        mswin_map_zoom(it->arg);
+        break;
+    }
+    SetFocus(GetNHApp()->hMainWnd);
+}
+
+static void
+tb_paint(HWND hWnd)
+{
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hWnd, &ps);
+    RECT rc, r;
+    HBRUSH bg = CreateSolidBrush(TH_BG_PANEL), line = CreateSolidBrush(TH_SEPARATOR),
+           hot = CreateSolidBrush(TH_BG_HEADER);
+    cached_font *f;
+    HGDIOBJ of;
+    int i, x = 10, pad;
+
+    GetClientRect(hWnd, &rc);
+    FillRect(hdc, &rc, bg);
+    if (iflags.wc_fontsiz_menu < NHFONT_SIZE_MIN
+        || iflags.wc_fontsiz_menu > NHFONT_SIZE_MAX) {
+        /* too early to make the font (see mswin_topbar_height) */
+        DeleteObject(bg);
+        DeleteObject(line);
+        DeleteObject(hot);
+        EndPaint(hWnd, &ps);
+        return;
+    }
+    f = mswin_get_font(NHW_MENU, ATR_NONE, hdc, FALSE);
+    of = SelectObject(hdc, f->hFont);
+    pad = max(10, f->width * 2);
+    r = rc;
+    r.top = r.bottom - 1;
+    FillRect(hdc, &r, line);
+    SetBkMode(hdc, TRANSPARENT);
+    for (i = 0; i < TB_NTOPIC; i++) {
+        SIZE sz;
+
+        GetTextExtentPoint32A(hdc, tb_topics[i].name,
+                              (int) strlen(tb_topics[i].name), &sz);
+        tb_x[i] = x;
+        SetRect(&r, x, 2, x + sz.cx + 2 * pad, rc.bottom - 3);
+        if (i == tb_open || i == tb_hot)
+            FillRect(hdc, &r, hot);
+        if (i == tb_open) { /* a gold line under the open topic */
+            RECT u = r;
+            HBRUSH g = CreateSolidBrush(TH_ACCENT);
+
+            u.top = u.bottom - 2;
+            FillRect(hdc, &u, g);
+            DeleteObject(g);
+        }
+        SetTextColor(hdc, (i == tb_open || i == tb_hot) ? TH_TEXT
+                                                        : TH_TEXT_DIM);
+        DrawTextA(hdc, tb_topics[i].name, -1, &r,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        x = r.right + 2;
+    }
+    tb_x[TB_NTOPIC] = x;
+    SelectObject(hdc, of);
+    DeleteObject(bg);
+    DeleteObject(line);
+    DeleteObject(hot);
+    EndPaint(hWnd, &ps);
+}
+
+static int
+tb_hit(int x)
+{
+    int i;
+
+    for (i = 0; i < TB_NTOPIC; i++)
+        if (x >= tb_x[i] && x < tb_x[i + 1])
+            return i;
+    return -1;
+}
+
+static void
+tb_open_topic(HWND hWnd, int t)
+{
+    const struct tb_topic *tp = &tb_topics[t];
+    HMENU pop = CreatePopupMenu();
+    MENUINFO mi;
+    POINT pt;
+    int i, cmd;
+    static HBRUSH menubg;
+
+    for (i = 0; i < tp->n; i++)
+        AppendMenuA(pop,
+                    MF_OWNERDRAW
+                        | (tp->items[i].kind == TB_SEP ? MF_DISABLED : 0),
+                    1000 + i, (LPCSTR) &tp->items[i]);
+    if (!menubg)
+        menubg = CreateSolidBrush(TH_BG_PANEL);
+    ZeroMemory(&mi, sizeof mi);
+    mi.cbSize = sizeof mi;
+    mi.fMask = MIM_BACKGROUND;
+    mi.hbrBack = menubg;
+    SetMenuInfo(pop, &mi);
+
+    tb_open = t;
+    InvalidateRect(hWnd, NULL, FALSE);
+    UpdateWindow(hWnd);
+    pt.x = tb_x[t];
+    pt.y = mswin_topbar_height() - 1;
+    ClientToScreen(hWnd, &pt);
+    cmd = TrackPopupMenuEx(pop, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN
+                                    | TPM_LEFTBUTTON,
+                           pt.x, pt.y, hWnd, NULL);
+    DestroyMenu(pop);
+    tb_open = -1;
+    InvalidateRect(hWnd, NULL, FALSE);
+    if (cmd >= 1000 && cmd < 1000 + tp->n)
+        tb_run(&tp->items[cmd - 1000]);
+    else
+        SetFocus(GetNHApp()->hMainWnd);
+}
+
+static LRESULT CALLBACK
+tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg) {
+    case WM_PAINT:
+        tb_paint(hWnd);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEMOVE: {
+        int t = tb_hit(GET_X_LPARAM(lParam));
+
+        if (t != tb_hot) {
+            TRACKMOUSEEVENT tme;
+
+            tb_hot = t;
+            InvalidateRect(hWnd, NULL, FALSE);
+            tme.cbSize = sizeof tme;
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hWnd;
+            tme.dwHoverTime = 0;
+            TrackMouseEvent(&tme);
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        tb_hot = -1;
+        InvalidateRect(hWnd, NULL, FALSE);
+        return 0;
+    case WM_LBUTTONDOWN: {
+        int t = tb_hit(GET_X_LPARAM(lParam));
+
+        if (t >= 0)
+            tb_open_topic(hWnd, t);
+        return 0;
+    }
+    case WM_MEASUREITEM: {
+        LPMEASUREITEMSTRUCT mis = (LPMEASUREITEMSTRUCT) lParam;
+        const struct tb_item *it = (const struct tb_item *) mis->itemData;
+        HDC hdc = GetDC(hWnd);
+        cached_font *f = mswin_get_font(NHW_MENU, ATR_NONE, hdc, FALSE);
+        HGDIOBJ of = SelectObject(hdc, f->hFont);
+        SIZE a = { 0, 0 }, b = { 0, 0 };
+
+        if (it && it->kind == TB_SEP) {
+            mis->itemHeight = max(5, f->height / 3);
+            mis->itemWidth = 40;
+        } else if (it) {
+            GetTextExtentPoint32A(hdc, it->label, (int) strlen(it->label), &a);
+            GetTextExtentPoint32A(hdc, it->hint, (int) strlen(it->hint), &b);
+            mis->itemHeight = f->height + f->height / 2;
+            mis->itemWidth = a.cx + b.cx + 4 * f->width + 40;
+        }
+        SelectObject(hdc, of);
+        ReleaseDC(hWnd, hdc);
+        return TRUE;
+    }
+    case WM_DRAWITEM: {
+        LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT) lParam;
+        const struct tb_item *it = (const struct tb_item *) dis->itemData;
+        cached_font *f = mswin_get_font(NHW_MENU, ATR_NONE, dis->hDC, FALSE);
+        HGDIOBJ of = SelectObject(dis->hDC, f->hFont);
+        boolean sel = (dis->itemState & ODS_SELECTED) != 0;
+        HBRUSH bg = CreateSolidBrush(sel ? TH_BG_HEADER : TH_BG_PANEL);
+        RECT r = dis->rcItem;
+
+        FillRect(dis->hDC, &r, bg);
+        DeleteObject(bg);
+        if (it && it->kind == TB_SEP) {
+            HBRUSH line = CreateSolidBrush(TH_SEPARATOR);
+
+            r.left += 10, r.right -= 10;
+            r.top = (r.top + r.bottom) / 2;
+            r.bottom = r.top + 1;
+            FillRect(dis->hDC, &r, line);
+            DeleteObject(line);
+        } else if (it) {
+            SetBkMode(dis->hDC, TRANSPARENT);
+            if (sel) { /* a gold mark on the chosen line */
+                RECT m = r;
+                HBRUSH g = CreateSolidBrush(TH_ACCENT);
+
+                m.right = m.left + 3;
+                FillRect(dis->hDC, &m, g);
+                DeleteObject(g);
+            }
+            r.left += 16, r.right -= 16;
+            SetTextColor(dis->hDC, TH_TEXT);
+            DrawTextA(dis->hDC, it->label, -1, &r,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SetTextColor(dis->hDC, sel ? TH_ACCENT : TH_TEXT_DIM);
+            DrawTextA(dis->hDC, it->hint, -1, &r,
+                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+        SelectObject(dis->hDC, of);
+        return TRUE;
+    }
+    }
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+/* a dark title bar (Windows 10 1809 and later), if the system has it */
+static void
+tb_dark_titlebar(HWND hWnd)
+{
+    typedef HRESULT(WINAPI * dwmset_fn)(HWND, DWORD, LPCVOID, DWORD);
+    HMODULE dwm = LoadLibraryA("dwmapi.dll");
+    dwmset_fn fn;
+    BOOL on = TRUE;
+
+    if (!dwm)
+        return;
+    fn = (dwmset_fn) (void *) GetProcAddress(dwm, "DwmSetWindowAttribute");
+    if (fn && FAILED(fn(hWnd, 20, &on, sizeof on)))
+        (void) fn(hWnd, 19, &on, sizeof on); /* older Windows 10 */
+    SetWindowPos(hWnd, NULL, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+}
+
+/* with the theme: drop the Win32 menu for the topic bar */
+void
+mswin_topbar_init(HWND main)
+{
+    WNDCLASS wc;
+    RECT rc;
+
+    if (!iflags.fx_theme || tb_hwnd)
+        return;
+    tb_dark_titlebar(main);
+    ZeroMemory(&wc, sizeof wc);
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = tb_proc;
+    wc.hInstance = GetNHApp()->hApp;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.lpszClassName = TEXT("MSNHTopBar");
+    RegisterClass(&wc);
+    SetMenu(main, NULL);
+    GetClientRect(main, &rc);
+    tb_hwnd = CreateWindow(TEXT("MSNHTopBar"), NULL,
+                           WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0,
+                           rc.right, 24, main, NULL, GetNHApp()->hApp, NULL);
+    /* (sized by the window layout, once the fonts are known) */
+}

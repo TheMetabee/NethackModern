@@ -58,6 +58,23 @@ mswin_font_supports_unicode(HFONT hFont)
 
 /* create font based on window type, character attributes and
    window device context */
+/* the size option behind a window type's font */
+static int
+mswin_font_optsize(int win_type)
+{
+    switch (win_type) {
+    case NHW_STATUS:
+        return iflags.wc_fontsiz_status;
+    case NHW_MENU:
+        return iflags.wc_fontsiz_menu;
+    case NHW_MESSAGE:
+        return iflags.wc_fontsiz_message;
+    case NHW_TEXT:
+        return iflags.wc_fontsiz_text;
+    }
+    return 0;
+}
+
 cached_font *
 mswin_get_font(int win_type, int attr, HDC hdc, BOOL replace)
 {
@@ -78,6 +95,12 @@ mswin_get_font(int win_type, int attr, HDC hdc, BOOL replace)
     for (font_index = 0; font_index < font_table_size; font_index++)
         if (NHFONT_CODE(win_type, attr) == font_table[font_index].code)
             break;
+
+    /* NetHack Modern: a font made before the size options were settled
+       (or since changed) is made again at the current size */
+    if (!replace && font_index < font_table_size
+        && font_table[font_index].optsize != mswin_font_optsize(win_type))
+        replace = TRUE;
 
     if (!replace && font_index < font_table_size)
         return &font_table[font_index];
@@ -217,6 +240,7 @@ mswin_get_font(int win_type, int attr, HDC hdc, BOOL replace)
     }
 
     font_table[font_index].code = NHFONT_CODE(win_type, attr);
+    font_table[font_index].optsize = mswin_font_optsize(win_type);
     font_table[font_index].hFont = fnt;
     font_table[font_index].supportsUnicode = winos_font_support_cp437(fnt);
 

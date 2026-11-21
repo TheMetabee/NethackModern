@@ -18,6 +18,7 @@ typedef struct cached_font {
     BOOL supportsUnicode;
     int width;
     int height;
+    int optsize; /* NetHack Modern: the size option it was made for */
 } cached_font;
 
 BOOL mswin_font_supports_unicode(HFONT hFont);

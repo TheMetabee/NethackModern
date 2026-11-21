@@ -219,6 +219,7 @@ mswin_init_nhwindows(int *argc, char **argv)
     if (!GetNHApp()->hMainWnd) {
         panic("Cannot create main window");
     }
+    mswin_topbar_init(GetNHApp()->hMainWnd); /* NetHack Modern */
 
     /* Set menu check mark for interface mode */
     mswin_menu_check_intf_mode();

@@ -14,4 +14,7 @@ void mswin_layout_main_window(HWND changed_child);
 void mswin_select_map_mode(int map_mode);
 void mswin_menu_check_intf_mode(void);
 
+void mswin_topbar_init(HWND main);
+int mswin_topbar_height(void);
+void mswin_topbar_place(int width);
 #endif /* MSWINMainWindow_h */
