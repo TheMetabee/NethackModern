@@ -52,6 +52,7 @@ logDebug(const char *fmt, ...)
 
 static void mswin_main_loop(void);
 static BOOL initMapTiles(void);
+BOOL mswin_set_tileset(const char *, int, int);
 static void mswin_apply_theme(void);
 static void mswin_color_from_string(char *colorstring, HBRUSH *brushptr,
                                     COLORREF *colorptr);
@@ -2282,6 +2283,12 @@ initMapTiles(void)
 
     /* calculate tile dimensions */
     GetObject(hBmp, sizeof(BITMAP), (LPVOID) &bm);
+    /* NetHack Modern: no size given, so the game's own layout (40 tiles
+       to a row, square tiles) */
+    if (iflags.wc_tile_width <= 0)
+        iflags.wc_tile_width = max(1, bm.bmWidth / TILES_PER_LINE);
+    if (iflags.wc_tile_height <= 0)
+        iflags.wc_tile_height = iflags.wc_tile_width;
     if (bm.bmWidth % iflags.wc_tile_width
         || bm.bmHeight % iflags.wc_tile_height) {
         DeleteObject(hBmp);
@@ -2312,6 +2319,41 @@ initMapTiles(void)
     map_size.cx = GetNHApp()->mapTile_X * COLNO;
     map_size.cy = GetNHApp()->mapTile_Y * ROWNO;
     mswin_map_layout(mswin_hwnd_from_winid(WIN_MAP), &map_size);
+    return TRUE;
+}
+
+/* NetHack Modern: change the map's tiles while playing.  file null or
+   "" is the built-in tiles; w or h 0 works the size out from the image.
+   FALSE (and the old tiles kept) if the file won't do. */
+BOOL
+mswin_set_tileset(const char *file, int w, int h)
+{
+    char *oldfile = iflags.wc_tile_file;
+    int ow = iflags.wc_tile_width, oh = iflags.wc_tile_height;
+
+    if (!file || !*file) {
+        if (GetNHApp()->bmpMapTiles != GetNHApp()->bmpTiles)
+            DeleteObject(GetNHApp()->bmpMapTiles);
+        GetNHApp()->bmpMapTiles = GetNHApp()->bmpTiles;
+        GetNHApp()->mapTile_X = TILE_X;
+        GetNHApp()->mapTile_Y = TILE_Y;
+        GetNHApp()->mapTilesPerLine = TILES_PER_LINE;
+        iflags.wc_tile_file = 0;
+        iflags.wc_tile_width = iflags.wc_tile_height = 0;
+    } else {
+        iflags.wc_tile_file = dupstr(file);
+        iflags.wc_tile_width = w, iflags.wc_tile_height = h;
+        if (!initMapTiles()) {
+            free(iflags.wc_tile_file);
+            iflags.wc_tile_file = oldfile;
+            iflags.wc_tile_width = ow, iflags.wc_tile_height = oh;
+            return FALSE;
+        }
+    }
+    if (oldfile)
+        free(oldfile);
+    mswin_map_tiles_changed(mswin_hwnd_from_winid(WIN_MAP));
+    mswin_update_inventory(0);
     return TRUE;
 }
 

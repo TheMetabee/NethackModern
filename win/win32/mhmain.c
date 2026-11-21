@@ -1494,6 +1494,7 @@ nh_compose_unicode_screenshot(void)
 #define TB_BARBORDER 8 /* turn the HP/Pw bar outline on or off */
 #define TB_SHADE 9    /* arg: fx_shade 0..3, or 4 for lighting off */
 #define TB_MSGPOS 10  /* arg: fx_msg_pos 0..5 */
+#define TB_TILES 11   /* arg: 0 built-in tiles, 1 pick a tile file */
 
 extern void ma_apply_volumes(void);  /* masound.c */
 extern void ma_volume_preview(void);
@@ -1549,6 +1550,9 @@ static const struct tb_item tb_view[] = {
     { "Messages: bottom left", "", TB_MSGPOS, NULL, 3 },
     { "Messages: bottom centre", "", TB_MSGPOS, NULL, 4 },
     { "Messages: bottom right", "", TB_MSGPOS, NULL, 5 },
+    TBSEP,
+    { "Tiles: built-in", "", TB_TILES, NULL, 0 },
+    { "Tiles: from file...", "", TB_TILES, NULL, 1 },
     TBSEP,
     TBC("Tiles", "", IDM_MAP_TILES),
     TBC("ASCII", "", IDM_MAP_ASCII12X16),
@@ -1723,6 +1727,66 @@ tb_send(const char *keys)
     }
 }
 
+extern BOOL mswin_set_tileset(const char *, int, int);
+
+/* NetHack Modern: the built-in tiles, or a tile image the player picks
+   (in the game's own layout, 40 to a row); kept in nethackmodern.rc */
+static void
+tb_pick_tiles(int pick)
+{
+    if (!pick) {
+        if (GetNHApp()->bmpMapTiles == GetNHApp()->bmpTiles)
+            Strcpy(tb_toast, "Tiles: built-in");
+        else if (mswin_set_tileset(NULL, 0, 0))
+            Strcpy(tb_toast, "Tiles: built-in");
+        cfg_remember_option("tile_file", "tile_file:none");
+        cfg_remember_option("tile_width", NULL);
+        cfg_remember_option("tile_height", NULL);
+    } else {
+        OPENFILENAME ofn;
+        TCHAR filename[MAX_PATH], dir[MAX_PATH];
+        char path[MAX_PATH], opt[MAX_PATH + 16], *sl;
+
+        if (iflags.debug_fuzzer)
+            return;
+        ZeroMemory(filename, sizeof filename);
+        ZeroMemory(&ofn, sizeof ofn);
+        /* start where the current tile file is, else the game's folder */
+        Strcpy(path, iflags.wc_tile_file ? iflags.wc_tile_file : gh.hackdir);
+        if (iflags.wc_tile_file && (sl = strrchr(path, '\\')) != 0)
+            *sl = '\0';
+        ofn.lStructSize = sizeof ofn;
+        ofn.hwndOwner = GetNHApp()->hMainWnd;
+        ofn.hInstance = GetNHApp()->hApp;
+        ofn.lpstrFilter = TEXT("Tile images (*.bmp)\x0*.bmp\x0")
+            TEXT("All Files (*.*)\x0*.*\x0") TEXT("\x0\x0");
+        ofn.nFilterIndex = 1;
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = SIZE(filename);
+        ofn.lpstrInitialDir = NH_A2W(path, dir, MAX_PATH);
+        ofn.lpstrTitle = TEXT("Choose a tile image");
+        ofn.Flags = OFN_LONGNAMES | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST
+                    | OFN_NOCHANGEDIR;
+        if (!GetOpenFileName(&ofn))
+            return;
+        NH_W2A(filename, path, MAX_PATH);
+        if (!mswin_set_tileset(path, 0, 0)) {
+            Strcpy(tb_toast, "Those tiles won't do");
+        } else {
+            Sprintf(tb_toast, "Tiles: %dx%d", iflags.wc_tile_width,
+                    iflags.wc_tile_height);
+            Snprintf(opt, sizeof opt, "tile_file:%s", path);
+            cfg_remember_option("tile_file", opt);
+            Sprintf(opt, "tile_width:%d", iflags.wc_tile_width);
+            cfg_remember_option("tile_width", opt);
+            Sprintf(opt, "tile_height:%d", iflags.wc_tile_height);
+            cfg_remember_option("tile_height", opt);
+        }
+    }
+    SetTimer(tb_hwnd, 1, 1800, NULL);
+    InvalidateRect(tb_hwnd, NULL, FALSE);
+}
+
 static void
 tb_run(const struct tb_item *it)
 {
@@ -1758,6 +1822,9 @@ tb_run(const struct tb_item *it)
         InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
     }
+    case TB_TILES:
+        tb_pick_tiles(it->arg);
+        break;
     case TB_MSGPOS: {
         static const char *const nm[] = { "top-left", "top-centre",
                                           "top-right", "bottom-left",
@@ -2083,6 +2150,11 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                        && it->arg == iflags.fx_bar_style) ? "in use"
                       : (it->kind == TB_MSGPOS
                          && it->arg == iflags.fx_msg_pos)
+                          ? "in use"
+                      : (it->kind == TB_TILES
+                         && (it->arg == 0)
+                                == (GetNHApp()->bmpMapTiles
+                                    == GetNHApp()->bmpTiles))
                           ? "in use"
                       : (it->kind == TB_SHADE
                          && ((it->arg == 4 && !iflags.fx_lighting)

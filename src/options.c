@@ -4570,7 +4570,11 @@ optfn_tile_file(
         if (op != empty_optstr) {
             if (iflags.wc_tile_file)
                 free(iflags.wc_tile_file);
-            iflags.wc_tile_file = dupstr(op);
+            iflags.wc_tile_file = 0;
+            /* NetHack Modern: "none" for the built-in tiles, so a later
+               config file can undo an earlier one's choice */
+            if (strcmpi(op, "none"))
+                iflags.wc_tile_file = dupstr(op);
         } else
             return optn_err;
         return optn_ok;

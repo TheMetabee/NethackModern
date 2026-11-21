@@ -457,19 +457,23 @@ mswin_map_layout(HWND hWnd, LPSIZE map_size)
                player can zoom in (the map then follows the hero) with
                Ctrl+=/- and Ctrl+wheel, Ctrl+0 goes back to automatic */
             int z;
+            /* the steps are sizes on screen, whatever size the tiles are
+               drawn at: bigger tiles are shrunk to fit, and look their
+               best zoomed in */
+            double tref = (double) TILE_X / max(1, data->xBackTile);
 
             /* automatic: the largest step that shows the whole level */
             data->zoomAuto = 0;
             for (z = FX_NZOOM - 1; z >= 0; z--)
-                if (data->yBackTile * data->monitorScale * fx_zooms[z]
+                if (data->yBackTile * data->monitorScale * fx_zooms[z] * tref
                         * ROWNO <= wnd_size.cy
                     && data->xBackTile * data->monitorScale * fx_zooms[z]
-                           * COLNO <= wnd_size.cx) {
+                           * tref * COLNO <= wnd_size.cx) {
                     data->zoomAuto = z;
                     break;
                 }
             z = data->zoomSet ? data->zoomLevel : data->zoomAuto;
-            data->frontScale = data->monitorScale * fx_zooms[z];
+            data->frontScale = data->monitorScale * fx_zooms[z] * tref;
         }
 
     }
@@ -542,6 +546,28 @@ mswin_map_layout(HWND hWnd, LPSIZE map_size)
 
     // invalidate entire map window
     InvalidateRect(hWnd, NULL, TRUE);
+}
+
+/* NetHack Modern: the tiles changed (another tileset picked) */
+void
+mswin_map_tiles_changed(HWND hWnd)
+{
+    PNHMapWindow data;
+    SIZE sz;
+
+    if (!hWnd || !IsWindow(hWnd))
+        return;
+    data = (PNHMapWindow) GetWindowLongPtr(hWnd, GWLP_USERDATA);
+    if (!data)
+        return;
+    if (!data->bAsciiMode) {
+        data->tileWidth = GetNHApp()->mapTile_X;
+        data->tileHeight = GetNHApp()->mapTile_Y;
+    }
+    sz.cx = data->tileWidth * COLNO;
+    sz.cy = data->tileHeight * ROWNO;
+    mswin_map_layout(hWnd, &sz);
+    InvalidateRect(hWnd, NULL, FALSE);
 }
 
 /* set map mode */
@@ -1385,6 +1411,12 @@ onPaint(HWND hWnd)
         }
         /* a screen shake moves everything drawn this frame */
         data->map_orig.x += shx, data->map_orig.y += shy;
+        /* shrinking big tiles: average, don't drop pixels */
+        if (data->xFrontTile < data->xBackTile) {
+            SetStretchBltMode(hdc, HALFTONE);
+            SetBrushOrgEx(hdc, 0, 0, NULL);
+        } else
+            SetStretchBltMode(hdc, COLORONCOLOR);
         StretchBlt(hdc,
             data->map_orig.x - (data->xPos * data->xFrontTile),
             data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth,

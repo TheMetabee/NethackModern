@@ -13,6 +13,7 @@ COLORREF nhcolor_to_RGB(int c);
 HWND mswin_init_map_window(void);
 void mswin_map_layout(HWND hWnd, LPSIZE lpsz);
 int mswin_map_mode(HWND hWnd, int mode);
+void mswin_map_tiles_changed(HWND hWnd);
 void mswin_map_update(HWND hWnd);
 void mswin_map_fx_snap(void);
 void mswin_map_fx_pump(int ms);

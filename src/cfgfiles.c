@@ -286,7 +286,8 @@ cfg_remember_option(const char *name, const char *setting)
         fclose(fp);
         crlf = (strstr(text, "\r\n") != 0);
     }
-    out = (char *) alloc((unsigned) len + nlen + strlen(setting) + 256);
+    out = (char *) alloc((unsigned) len + nlen
+                         + (setting ? strlen(setting) : 0) + 256);
     out[0] = '\0';
     for (p = text; p && *p; p = nl) {
         const char *q = p;
@@ -324,8 +325,10 @@ cfg_remember_option(const char *name, const char *setting)
         Strcpy(out, hdr);
         olen = strlen(out);
     }
-    Sprintf(out + olen, "OPTIONS=%s%s", setting, crlf ? "\r\n" : "\n");
-    olen += strlen(out + olen);
+    if (setting) { /* (null: just forget the option) */
+        Sprintf(out + olen, "OPTIONS=%s%s", setting, crlf ? "\r\n" : "\n");
+        olen += strlen(out + olen);
+    }
     if ((fp = fopen(modern_cfg, "wb")) != 0) {
         (void) fwrite(out, 1, olen, fp);
         fclose(fp);
