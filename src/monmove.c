@@ -53,6 +53,11 @@ msg_mon_movement(struct monst *mtmp, coordxy omx, coordxy omy)
 boolean
 mb_trapped(struct monst *mtmp, boolean canseeit)
 {
+    /* NetHack Modern: the blast (burst, boom and shake if seen; a
+       duller boom if only heard) */
+    if (!Unaware)
+        fx_explosion(mtmp->mx, mtmp->my, AD_FIRE, 12,
+                     canseeit ? TRUE : FALSE);
     if (flags.verbose) {
         if (canseeit && !Unaware)
             pline_mon(mtmp, "KABOOM!!  You see a door explode.");

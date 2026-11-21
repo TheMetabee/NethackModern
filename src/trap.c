@@ -6728,6 +6728,9 @@ b_trapped(const char *item, int bodypart)
         dmg = rnd(5 + (lvl < 5 ? lvl : 2 + lvl / 2));
 
     Soundeffect(se_kaboom, 80);
+    /* NetHack Modern: a fiery burst where the hero is caught in it, a
+       boom on top of the kaboom, and the view shakes */
+    fx_explosion(u.ux, u.uy, AD_FIRE, dmg * 2, !Blind);
     pline("KABOOM!!  %s was booby-trapped!", The(item));
     wake_nearby(FALSE);
     losehp(Maybe_Half_Phys(dmg), "explosion", KILLED_BY_AN);
