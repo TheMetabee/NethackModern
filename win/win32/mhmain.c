@@ -1734,6 +1734,12 @@ tb_run(const struct tb_item *it)
         if (IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
             InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
         Sprintf(tb_toast, "Bars: %s", nm[it->arg % 5]);
+        {
+            char opt[64];
+
+            Sprintf(opt, "fx_bar_style:%s", nm[it->arg % 5]);
+            cfg_remember_option("fx_bar_style", opt);
+        }
         SetTimer(tb_hwnd, 1, 1800, NULL);
         InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
@@ -1743,6 +1749,9 @@ tb_run(const struct tb_item *it)
         if (IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
             InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
         Sprintf(tb_toast, "Bar border %s", iflags.fx_bar_border ? "on" : "off");
+        cfg_remember_option("fx_bar_border", iflags.fx_bar_border
+                                                 ? "fx_bar_border"
+                                                 : "!fx_bar_border");
         SetTimer(tb_hwnd, 1, 1800, NULL);
         InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
@@ -1757,6 +1766,13 @@ tb_run(const struct tb_item *it)
             ma_volume_preview();
         Sprintf(tb_toast, "%s %d%%", (it->arg <= 2) ? "Sound" : "Ambience",
                 *v);
+        {
+            const char *on = (it->arg <= 2) ? "fx_volume" : "fx_ambience_volume";
+            char opt[64];
+
+            Sprintf(opt, "%s:%d", on, *v);
+            cfg_remember_option(on, opt);
+        }
         SetTimer(tb_hwnd, 1, 1800, NULL);
         InvalidateRect(tb_hwnd, NULL, FALSE);
         break;

@@ -324,6 +324,8 @@ extern int l_get_config_errors(lua_State *) NONNULLARG1;
 #endif
 #endif
 extern int do_write_config_file(void);
+extern void cfg_remember_option(const char *, const char *);
+extern void modern_rcfile(void);
 extern boolean parse_config_line(char *) NONNULLARG1;
 #ifdef USER_SOUNDS
 extern boolean can_read_file(const char *) NONNULLARG1;

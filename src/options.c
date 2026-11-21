@@ -7449,6 +7449,7 @@ initoptions_finish(void)
 
     disregard_this_option(opt_mention_decor);  /* defer this */
     rcfile();
+    modern_rcfile(); /* NetHack Modern: menu-made settings, on top */
 
     (void) fruitadd(svp.pl_fruit, (struct fruit *) 0);
     /*

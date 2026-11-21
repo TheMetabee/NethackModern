@@ -212,6 +212,128 @@ do_write_config_file(void)
     }
     return ECMD_OK;
 }
+
+/* NetHack Modern: settings changed from NetHackW's menus are kept in a
+   file of their own, nethackmodern.rc beside the player's config file,
+   so the ordinary config stays untouched.  It is read after that file,
+   so what is in it wins. */
+static char modern_cfg[BUFSZ];
+
+void
+modern_rcfile(void)
+{
+    char keep[BUFSZ], *sep;
+    FILE *fp;
+
+    if (!configfile[0] || strstri(configfile, "sysconf"))
+        return;
+    Strcpy(keep, configfile);
+    Strcpy(modern_cfg, configfile);
+    sep = strrchr(modern_cfg, '/');
+#ifdef WIN32
+    {
+        char *bs = strrchr(modern_cfg, '\\');
+
+        if (!sep || (bs && bs > sep))
+            sep = bs;
+    }
+#endif
+    if (sep)
+        sep[1] = '\0';
+    else
+        modern_cfg[0] = '\0';
+    if (strlen(modern_cfg) + sizeof "nethackmodern.rc" > sizeof modern_cfg) {
+        modern_cfg[0] = '\0';
+        return;
+    }
+    Strcat(modern_cfg, "nethackmodern.rc");
+    if ((fp = fopen(modern_cfg, "r")) != 0) {
+        fclose(fp);
+        /* the reader stops at once without an error frame to report to */
+        config_error_init(TRUE, modern_cfg, FALSE);
+        (void) read_config_file(modern_cfg, set_in_config);
+        config_error_done();    }
+    set_configfile_name(keep); /* messages and #saveoptions mean the
+                                  player's own file */
+}
+
+/* keep one option in nethackmodern.rc.  'setting' is what follows
+   OPTIONS=, such as "fx_bar_style:gloss" or "!fx_bar_border"; 'name' is
+   the bare option name.  An earlier line for it is replaced; the others
+   are kept as they were. */
+void
+cfg_remember_option(const char *name, const char *setting)
+{
+    FILE *fp;
+    char *text = 0, *p, *nl, *out;
+    long len = 0;
+    size_t nlen = strlen(name), olen = 0;
+    boolean crlf = FALSE;
+
+    if (!modern_cfg[0])
+        return;
+    if ((fp = fopen(modern_cfg, "rb")) != 0) {
+        fseek(fp, 0L, SEEK_END);
+        len = ftell(fp);
+        fseek(fp, 0L, SEEK_SET);
+        if (len < 0 || len > 1000000L) {
+            fclose(fp);
+            return;
+        }
+        text = (char *) alloc((unsigned) len + 1);
+        len = (long) fread(text, 1, (size_t) len, fp);
+        text[len] = '\0';
+        fclose(fp);
+        crlf = (strstr(text, "\r\n") != 0);
+    }
+    out = (char *) alloc((unsigned) len + nlen + strlen(setting) + 256);
+    out[0] = '\0';
+    for (p = text; p && *p; p = nl) {
+        const char *q = p;
+        size_t ll;
+
+        nl = strchr(p, '\n');
+        nl = nl ? nl + 1 : p + strlen(p);
+        ll = (size_t) (nl - p);
+        if (!strncmpi(q, "OPTIONS=", 8)) {
+            q += 8;
+            if (*q == '!')
+                q++;
+            else if (!strncmpi(q, "no", 2) && !strncmpi(q + 2, name, (int) nlen))
+                q += 2;
+            if (!strncmpi(q, name, (int) nlen)
+                && (q[nlen] == ':' || q[nlen] == '=' || q[nlen] == '\r'
+                    || q[nlen] == '\n' || q[nlen] == '\0')
+                && !memchr(p, ',', ll))
+                continue; /* our own earlier line: replaced below */
+        }
+        memcpy(out + olen, p, ll);
+        olen += ll;
+    }
+    if (olen > 0 && out[olen - 1] != '\n') {
+        if (crlf)
+            out[olen++] = '\r';
+        out[olen++] = '\n';
+    }
+    if (olen == 0) { /* a new file: say what it is */
+        static const char hdr[] =
+            "# NetHack Modern: settings changed from NetHackW's menus.\n"
+            "# Read after your own config file, so these win.  Delete a\n"
+            "# line (or the file) to go back to your own settings.\n";
+
+        Strcpy(out, hdr);
+        olen = strlen(out);
+    }
+    Sprintf(out + olen, "OPTIONS=%s%s", setting, crlf ? "\r\n" : "\n");
+    olen += strlen(out + olen);
+    if ((fp = fopen(modern_cfg, "wb")) != 0) {
+        (void) fwrite(out, 1, olen, fp);
+        fclose(fp);
+    }
+    if (text)
+        free(text);
+    free(out);
+}
 #endif /* SFCTOOL */
 
 /* remember the name of the file we're accessing;
