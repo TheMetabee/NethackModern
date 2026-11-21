@@ -668,10 +668,16 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     }
 
     /* the six stats, two rows of three */
-    colw = tm.tmAveCharWidth * 7;
+    colw = tm.tmAveCharWidth * 9;
     for (i = 0; i < 6; i++) {
         int sx = x + (i % 3) * colw, sy = (i < 3) ? y1 : y2;
         int v = ACURR(i);
+        /* NetHack Modern: remember each stat, and for 50 turns after it
+           changes show which way it went */
+        static int seen[6];
+        static int dir[6];
+        static long when[6];
+        static boolean have_seen;
 
         th_text(hdc, sx, sy, statnm[i], TH_TEXT_DIM);
         if (i == A_STR && v > 18) {
@@ -685,6 +691,44 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
             Sprintf(buf, "%d", v);
         }
         th_text(hdc, sx + th_width(hdc, "Wi "), sy, buf, TH_TEXT);
+        if (!have_seen && i == 5) {
+            int k;
+
+            for (k = 0; k < 6; k++)
+                seen[k] = ACURR(k); /* a baseline, no arrows at the start */
+            have_seen = TRUE;
+        } else if (have_seen && v != seen[i]) {
+            dir[i] = (v > seen[i]) ? 1 : -1;
+            when[i] = svm.moves;
+            seen[i] = v;
+        }
+        if (have_seen && dir[i] && svm.moves - when[i] < 50) {
+            /* a small triangle after the value */
+            POINT tri[3];
+            int ax = sx + th_width(hdc, "Wi ") + th_width(hdc, buf) + 5;
+            int as = max(7, (tm.tmAscent - tm.tmInternalLeading) * 3 / 4);
+            /* centred on the digits, not the whole line */
+            int ay = sy + tm.tmInternalLeading
+                     + (tm.tmAscent - tm.tmInternalLeading) / 2;
+            HBRUSH br = CreateSolidBrush(dir[i] > 0 ? RGB(104, 210, 98)
+                                                    : RGB(235, 84, 76));
+            HGDIOBJ ob = SelectObject(hdc, br),
+                    op = SelectObject(hdc, GetStockObject(NULL_PEN));
+
+            if (dir[i] > 0) {
+                tri[0].x = ax, tri[0].y = ay + as / 2;
+                tri[1].x = ax + as, tri[1].y = ay + as / 2;
+                tri[2].x = ax + as / 2, tri[2].y = ay - as / 2;
+            } else {
+                tri[0].x = ax, tri[0].y = ay - as / 2;
+                tri[1].x = ax + as, tri[1].y = ay - as / 2;
+                tri[2].x = ax + as / 2, tri[2].y = ay + as / 2;
+            }
+            Polygon(hdc, tri, 3);
+            SelectObject(hdc, op);
+            SelectObject(hdc, ob);
+            DeleteObject(br);
+        }
     }
     x += 3 * colw + 10;
     th_rule(hdc, x - 9, y1, y2 + rowh - 2);
