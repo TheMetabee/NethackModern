@@ -8,6 +8,7 @@
 #include "mhstatus.h"
 #include "mhmsg.h"
 #include "mhfont.h"
+#include "mhtheme.h"
 
 #ifndef STATUS_HILITES
 #error STATUS_HILITES not defined
@@ -277,6 +278,271 @@ StatusWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* NetHack Modern (Phase 4c): the character panel                      */
+
+extern const char *const hu_stat[]; /* eat.c */
+extern const char *const enc_stat[]; /* botl.c */
+
+/* the text the core gave a status field, or "" */
+static const char *
+th_field(PNHStatusWindow data, int idx)
+{
+    int line, i;
+
+    for (line = 0; line < NHSW_LINES; line++) {
+        mswin_status_fields *f = &data->status_lines->lines[line].status_fields;
+
+        for (i = 0; i < f->count; i++)
+            if (f->status_fields[i]->field_index == idx
+                && f->status_fields[i]->enabled)
+                return f->status_fields[i]->string;
+    }
+    return "";
+}
+
+static void
+th_text(HDC hdc, int x, int y, const char *s, COLORREF c)
+{
+    WCHAR w[BUFSZ];
+
+    SetTextColor(hdc, c);
+    winos_ascii_to_wide_str((const unsigned char *) s, w, SIZE(w));
+    TextOutW(hdc, x, y, w, (int) wcslen(w));
+}
+
+static int
+th_width(HDC hdc, const char *s)
+{
+    SIZE sz;
+
+    GetTextExtentPoint32A(hdc, s, (int) strlen(s), &sz);
+    return sz.cx;
+}
+
+static void
+th_round(HDC hdc, int l, int t, int r, int b, int rad, COLORREF fill)
+{
+    HBRUSH br = CreateSolidBrush(fill);
+    HGDIOBJ ob = SelectObject(hdc, br),
+            op = SelectObject(hdc, GetStockObject(NULL_PEN));
+
+    RoundRect(hdc, l, t, r + 1, b + 1, rad, rad);
+    SelectObject(hdc, op);
+    SelectObject(hdc, ob);
+    DeleteObject(br);
+}
+
+/* a labelled bar: "HP 29 / 32" over a fill of 'pct' percent */
+static void
+th_bar(HDC hdc, int x, int y, int w, int h, const char *label, int cur,
+       int max, COLORREF fill)
+{
+    char buf[64];
+    int pct = (max > 0) ? (cur * 100) / max : 0;
+    int fw;
+
+    pct = (pct < 0) ? 0 : (pct > 100) ? 100 : pct;
+    th_round(hdc, x, y, x + w, y + h, h / 2, TH_BG_HEADER);
+    fw = (w * pct) / 100;
+    if (fw > 0)
+        th_round(hdc, x, y, x + max(fw, h / 2), y + h, h / 2, fill);
+    Sprintf(buf, "%s  %d / %d", label, cur, max);
+    SetBkMode(hdc, TRANSPARENT);
+    {
+        TEXTMETRIC tm;
+
+        GetTextMetrics(hdc, &tm);
+        th_text(hdc, x + (w - th_width(hdc, buf)) / 2,
+                y + (h - tm.tmHeight) / 2, buf, RGB(250, 250, 252));
+    }
+}
+
+/* a vertical rule between sections */
+static void
+th_rule(HDC hdc, int x, int t, int b)
+{
+    RECT r;
+    HBRUSH br = CreateSolidBrush(TH_SEPARATOR);
+
+    SetRect(&r, x, t, x + 1, b);
+    FillRect(hdc, &r, br);
+    DeleteObject(br);
+}
+
+/* "Weak" with the trailing blanks the core pads it with removed */
+static void
+th_trim(char *dst, const char *src, size_t n)
+{
+    size_t k;
+
+    (void) strncpy(dst, src, n - 1);
+    dst[n - 1] = '\0';
+    for (k = strlen(dst); k > 0 && dst[k - 1] == ' '; k--)
+        dst[k - 1] = '\0';
+    while (*dst == ' ')
+        memmove(dst, dst + 1, strlen(dst));
+}
+
+static void
+th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
+{
+    static const char *const statnm[6] = { "St", "Dx", "Co", "In", "Wi", "Ch" };
+    cached_font *fn = mswin_get_font(NHW_STATUS, ATR_NONE, hdc, FALSE);
+    cached_font *fb = mswin_get_font(NHW_STATUS, ATR_BOLD, hdc, FALSE);
+    TEXTMETRIC tm;
+    int pad, rowh, y1, y2, x, i, w, colw;
+    char buf[BUFSZ], tmp[BUFSZ];
+    int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
+    int hpct = hpmax > 0 ? (hp * 100) / hpmax : 0;
+    COLORREF hpc = (hpct > 66) ? RGB(92, 190, 92)
+                   : (hpct > 33) ? RGB(214, 170, 52) : RGB(210, 64, 60);
+
+    SelectObject(hdc, fn->hFont);
+    GetTextMetrics(hdc, &tm);
+    rowh = tm.tmHeight + tm.tmHeight / 4;
+    pad = max(6, (height - 2 * rowh) / 2);
+    y1 = pad, y2 = pad + rowh;
+    SetBkMode(hdc, TRANSPARENT);
+    x = 12;
+
+    /* identity: title, then alignment and where */
+    SelectObject(hdc, fb->hFont);
+    th_trim(buf, th_field(data, BL_TITLE), sizeof buf);
+    th_text(hdc, x, y1, buf, TH_ACCENT);
+    w = th_width(hdc, buf);
+    SelectObject(hdc, fn->hFont);
+    th_trim(tmp, th_field(data, BL_LEVELDESC), sizeof tmp);
+    for (i = 0; tmp[i]; i++)
+        if (tmp[i] == ':')
+            tmp[i] = ' ';
+    Sprintf(buf, "%s   -   %s",
+            (u.ualign.type == A_CHAOTIC) ? "Chaotic"
+            : (u.ualign.type == A_NEUTRAL) ? "Neutral" : "Lawful",
+            tmp);
+    th_text(hdc, x, y2, buf, TH_TEXT_DIM);
+    w = max(w, th_width(hdc, buf));
+    x += w + 18;
+    th_rule(hdc, x - 9, y1, y2 + rowh - 2);
+
+    /* HP and Pw bars */
+    {
+        int bw = max(170, tm.tmAveCharWidth * 22), bh = rowh - 6;
+
+        th_bar(hdc, x, y1 + 2, bw, bh, "HP", hp, hpmax, hpc);
+        th_bar(hdc, x, y2 + 2, bw, bh, "Pw", u.uen, u.uenmax,
+               RGB(70, 120, 220));
+        x += bw + 18;
+        th_rule(hdc, x - 9, y1, y2 + rowh - 2);
+    }
+
+    /* the six stats, two rows of three */
+    colw = tm.tmAveCharWidth * 7;
+    for (i = 0; i < 6; i++) {
+        int sx = x + (i % 3) * colw, sy = (i < 3) ? y1 : y2;
+        int v = ACURR(i);
+
+        th_text(hdc, sx, sy, statnm[i], TH_TEXT_DIM);
+        if (i == A_STR && v > 18) {
+            if (v > STR18(100))
+                Sprintf(buf, "%d", v - 100);
+            else if (v < STR18(100))
+                Sprintf(buf, "18/%02d", v - 18);
+            else
+                Strcpy(buf, "18/**");
+        } else {
+            Sprintf(buf, "%d", v);
+        }
+        th_text(hdc, sx + th_width(hdc, "Wi "), sy, buf, TH_TEXT);
+    }
+    x += 3 * colw + 10;
+    th_rule(hdc, x - 9, y1, y2 + rowh - 2);
+
+    /* armour class and level; gold and the turn */
+    Sprintf(buf, "AC %d", u.uac);
+    th_text(hdc, x, y1, buf, TH_TEXT);
+    w = th_width(hdc, buf);
+    if (Upolyd)
+        Sprintf(buf, "HD %d", mons[u.umonnum].mlevel);
+    else if (flags.showexp)
+        Sprintf(buf, "Lvl %d  (%ld xp)", u.ulevel, u.uexp);
+    else
+        Sprintf(buf, "Lvl %d", u.ulevel);
+    th_text(hdc, x + w + 16, y1, buf, TH_TEXT);
+    w += 16 + th_width(hdc, buf);
+    Sprintf(buf, "$ %ld", money_cnt(gi.invent));
+    th_text(hdc, x, y2, buf, RGB(242, 210, 96));
+    i = th_width(hdc, buf);
+    if (flags.time) {
+        Sprintf(buf, "Turn %ld", svm.moves);
+        th_text(hdc, x + max(i, th_width(hdc, "AC 10")) + 16, y2, buf,
+                TH_TEXT_DIM);
+        i = max(i, th_width(hdc, "AC 10")) + 16 + th_width(hdc, buf);
+    }
+    x += max(w, i) + 18;
+    th_rule(hdc, x - 9, y1, y2 + rowh - 2);
+
+    /* conditions as chips, wrapping onto the second row */
+    {
+        struct {
+            const char *name;
+            COLORREF c;
+        } chip[24];
+        int nchip = 0, cx = x, cy = y1, cap = near_capacity();
+
+        if (u.uhs != NOT_HUNGRY) {
+            static char hbuf[20];
+
+            th_trim(hbuf, hu_stat[u.uhs], sizeof hbuf);
+            chip[nchip].name = hbuf;
+            chip[nchip++].c = (u.uhs == SATIATED) ? RGB(214, 190, 80)
+                              : (u.uhs == HUNGRY) ? RGB(242, 152, 62)
+                                                  : RGB(235, 84, 76);
+        }
+        if (cap > UNENCUMBERED) {
+            chip[nchip].name = enc_stat[cap];
+            chip[nchip++].c = (cap == SLT_ENCUMBER) ? RGB(214, 190, 80)
+                              : (cap == MOD_ENCUMBER) ? RGB(242, 152, 62)
+                                                      : RGB(235, 84, 76);
+        }
+#define CHIP(cond, nm, col) \
+    if ((cond) && nchip < SIZE(chip)) {   \
+        chip[nchip].name = (nm);          \
+        chip[nchip++].c = (col);          \
+    }
+        CHIP(Stoned, "Stoning", RGB(235, 84, 76))
+        CHIP(Slimed, "Slimed", RGB(235, 84, 76))
+        CHIP(Strangled, "Strangled", RGB(235, 84, 76))
+        CHIP(Sick && (u.usick_type & SICK_VOMITABLE), "Food poisoned",
+             RGB(235, 84, 76))
+        CHIP(Sick && (u.usick_type & SICK_NONVOMITABLE), "Ill",
+             RGB(235, 84, 76))
+        CHIP(Stunned, "Stunned", RGB(242, 152, 62))
+        CHIP(Confusion, "Confused", RGB(200, 120, 235))
+        CHIP(Hallucination, "Hallucinating", RGB(242, 134, 242))
+        CHIP(Blind, "Blind", RGB(160, 166, 180))
+        CHIP(Deaf, "Deaf", RGB(160, 166, 180))
+        CHIP(u.ustuck && !u.uswallow, "Held", RGB(242, 152, 62))
+        CHIP(u.utrap, "Trapped", RGB(242, 152, 62))
+        CHIP(Wounded_legs, "Wounded legs", RGB(242, 152, 62))
+        CHIP(Levitation, "Levitating", RGB(116, 172, 255))
+        CHIP(Flying && !Levitation, "Flying", RGB(116, 172, 255))
+        CHIP(u.usteed, "Riding", RGB(116, 172, 255))
+#undef CHIP
+        for (i = 0; i < nchip; i++) {
+            int cw = th_width(hdc, chip[i].name) + 16;
+
+            if (cx + cw > width - 8 && cy == y1)
+                cx = x, cy = y2;
+            th_round(hdc, cx, cy + 1, cx + cw, cy + rowh - 3, rowh / 2,
+                     TH_BG_HEADER);
+            th_text(hdc, cx + 8, cy + (rowh - 3 - tm.tmHeight) / 2 + 1,
+                    chip[i].name, chip[i].c);
+            cx += cw + 6;
+        }
+    }
+}
+
 static LRESULT
 onWMPaint(HWND hWnd, WPARAM wParam UNUSED, LPARAM lParam UNUSED)
 {
@@ -311,7 +577,10 @@ onWMPaint(HWND hWnd, WPARAM wParam UNUSED, LPARAM lParam UNUSED)
 
     FillRect(hdc, &clear_rect, status_bg_brush);
 
-    if (data->status_lines != NULL) {
+    if (iflags.fx_theme && data->status_lines != NULL) {
+        /* NetHack Modern: the character panel instead of two text lines */
+        th_paint_status(data, hdc, width, height);
+    } else if (data->status_lines != NULL) {
         
         data->has_blink_fields = FALSE;
 
@@ -500,6 +769,8 @@ mswin_status_window_size(HWND hWnd, LPSIZE sz)
         GetTextMetrics(hdc, &tm);
 
         rt.bottom = rt.top + text_sz.cy * NHSW_LINES;
+        if (iflags.fx_theme) /* the character panel: two roomy rows */
+            rt.bottom = rt.top + 2 * (tm.tmHeight + tm.tmHeight / 4) + 16;
 
         SelectObject(hdc, saveFont);
         ReleaseDC(hWnd, hdc);
