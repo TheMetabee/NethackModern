@@ -42,7 +42,7 @@
 #define FXM_DEATH 3
 #define FXM_SLIDE 4         /* hurtled: glide in from the previous square */
 #define FXM_GHOST 5         /* speed afterimage left behind by a step */
-#define FX_GHOST_MS 340
+#define FX_GHOST_MS 460
 #define FX_SLIDE_MS 70      /* one hurtled step */
 #define FX_STEP_MS 110      /* an ordinary step */
 #define FX_DEATH_MS 360     /* shake ~35%, then fade out */
@@ -1731,7 +1731,7 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
             int k;
             short tile = a->tile;
 
-            for (k = 1; k <= 3; k++) {
+            for (k = 1; k <= 1; k++) { /* one afterimage */
                 a = fx_new_anim(data);
                 a->kind = FXM_GHOST;
                 a->x = ev->x, a->y = ev->y;
@@ -2691,7 +2691,7 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
         p = (double) age / a->dur;
         if (a->kind == FXM_GHOST) {
             unsigned long au = data->map[a->x][a->y].fxauras;
-            int nghost = (au & FXA_VERYFAST) ? 3 : (au & FXA_FAST) ? 2 : 0;
+            int nghost = (au & (FXA_VERYFAST | FXA_FAST)) ? 1 : 0;
 
             /* the hero's intrinsic speed is too common to trail every
                step: only extra speed (boots, potion, spell) shows */
@@ -2706,13 +2706,14 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
                 || !glyph_is_monster(data->map[a->x][a->y].glyph))
                 continue;
             /* where the creature is on its slide right now (the slide
-               runs FX_STEP_MS), and each afterimage further back along
-               the way it came, lagging behind and fading */
-            lag = (nghost == 3) ? 0.3 : 0.42;
+               runs FX_STEP_MS); a single afterimage hangs back along the
+               way it came (further when very fast), then slowly catches
+               up as it fades */
+            lag = (au & FXA_VERYFAST) ? 0.95 : 0.75;
             back = 1.0 - min(1.0, (double) age / FX_STEP_MS);
             back = back * back * (3 - 2 * back);
-            back = min(1.0, back + lag * a->strength * (1.0 - p));
-            alpha = (int) ((150 - 40 * a->strength) * (1.0 - p));
+            back = min(1.0, back + lag * (1.0 - p) * (1.0 - p));
+            alpha = (int) (125 * (1.0 - p));
             cx = ox + a->x * tw - (int) (a->dx * tw * back);
             cy = oy + a->y * th - (int) (a->dy * th * back);
             fx_blend_tile(data, hdc, cx, cy, tw, th,
