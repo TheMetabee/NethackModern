@@ -1251,6 +1251,71 @@ ma_explosion(const struct fx_event *ev, float vol, float pan)
     ma_play_named("se_kaboom", 0.9f * v, pitch, pan);
 }
 
+/* the sound of each beam wand hitting something */
+static void
+ma_beam_hit(int look, float vol, float pan)
+{
+    static const struct {
+        int otyp;
+        const char *name;
+        float volume;
+    } beams[] = {
+        { WAN_CANCELLATION, "wand_cancel", 0.6f },  /* magic drained away */
+        { WAN_SLOW_MONSTER, "wand_slow", 0.45f },   /* heavy falling wobble */
+        { WAN_SPEED_MONSTER, "wand_speed", 0.6f },  /* quick rising zip */
+        { WAN_POLYMORPH, "wand_poly", 0.42f },      /* bending warble */
+        { WAN_PROBING, "wand_probe", 0.38f },       /* scanning blips */
+        /* (opening and locking: doors and boxes give the key-turn sounds
+           se_klick / se_klunk from the core instead) */
+        { WAN_MAKE_INVISIBLE, "wand_invis", 0.5f }, /* shimmer fading out */
+        { WAN_UNDEAD_TURNING, "wand_undead", 0.5f }, /* holy chord */
+    };
+    int i;
+
+    for (i = 0; i < SIZE(beams); i++)
+        if (beams[i].otyp == look) {
+            ma_play_named(beams[i].name, beams[i].volume * vol,
+                          ma_frand(0.95f, 1.05f), pan);
+            return;
+        }
+}
+
+/* a non-directional wand going off around the hero (and the digging
+   beam); an unidentified one ('look' 0) just fizzes */
+static void
+ma_wand_self(int look)
+{
+    const char *name = 0;
+    float v = 0.55f;
+
+    switch (look) {
+    case WAN_LIGHT:
+        name = "wand_light";
+        break;
+    case WAN_SECRET_DOOR_DETECTION:
+        name = "wand_secret";
+        v = 0.5f;
+        break;
+    case WAN_ENLIGHTENMENT:
+        name = "wand_enlight";
+        break;
+    case WAN_STASIS:
+        name = "wand_stasis";
+        break;
+    case WAN_DIGGING:
+        name = "wand_dig";
+        v = 0.8f;
+        break;
+    case 0:
+        name = "wand_fizz";
+        v = 0.4f;
+        break;
+    default:
+        return;
+    }
+    ma_play_named(name, v, ma_frand(0.97f, 1.03f), 0.0f);
+}
+
 static void
 ma_fx_event(const struct fx_event *ev)
 {
@@ -1358,6 +1423,33 @@ ma_fx_event(const struct fx_event *ev)
         break;
     case FXE_EXPLODE:
         ma_explosion(ev, vol, pan);
+        break;
+    case FXE_STATUS:
+        /* a monster dropping off to sleep (sleep ray, spell, gas) */
+        if ((ev->st_gain & FXA_ASLEEP) && !(ev->flags & FXF_HERO_TARGET))
+            ma_play_named("fall_asleep", 0.45f * vol, ma_frand(0.97f, 1.03f),
+                          pan);
+        break;
+    case FXE_WAND:
+        /* a beam striking its target; only once the wand is identified
+           ('otyp' is 0 before), so the sound never gives it away */
+        if (ev->adtyp == FXW_HIT)
+            ma_beam_hit(ev->otyp, vol, pan);
+        else if (ev->adtyp == FXW_SELF)
+            ma_wand_self(ev->otyp);
+        break;
+    case FXE_TELEPORT:
+        /* a shimmering whoosh, where it was seen (or heard) to go */
+        if (ev->flags & FXF_HERO_TARGET) {
+            ma_play_named("teleport", 0.85f, ma_frand(0.96f, 1.04f), 0.0f);
+        } else {
+            float v2, p2;
+
+            ma_spatial(ev->sx, ev->sy, &v2, &p2);
+            if (!(ev->amount & 1) && (ev->amount & 2))
+                v2 = vol, p2 = pan; /* only the arrival was seen */
+            ma_play_named("teleport", 0.7f * v2, ma_frand(1.0f, 1.12f), p2);
+        }
         break;
     case FXE_IMPACT:
         /* striking / force bolt: a force whump; a softer, higher one

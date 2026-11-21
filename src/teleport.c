@@ -539,6 +539,8 @@ teleds(coordxy nux, coordxy nuy, int teleds_flags)
     nomul(0);
     notice_mon_off();
     vision_recalc(0); /* vision before effects */
+    if (is_teleport) /* NetHack Modern */
+        fx_teleport(u.ux0, u.uy0, u.ux, u.uy, TRUE, TRUE, TRUE);
 
     /* this used to take place sooner, but if a --More-- prompt was issued
        then the old map display was shown instead of the new one */
@@ -1896,7 +1898,16 @@ rloc(
     x = backupcc.x, y = backupcc.y;
     /*goto found_xy;*/
  found_xy:
-    rloc_to_core(mtmp, x, y, rlocflags);
+    {
+        /* NetHack Modern: which ends of the hop the hero sees */
+        coordxy ox = mtmp->mx, oy = mtmp->my;
+        boolean from_seen = ox && canspotmon(mtmp);
+
+        rloc_to_core(mtmp, x, y, rlocflags);
+        if (ox && (ox != mtmp->mx || oy != mtmp->my))
+            fx_teleport(ox, oy, mtmp->mx, mtmp->my, FALSE, from_seen,
+                        canspotmon(mtmp));
+    }
     return TRUE;
 }
 

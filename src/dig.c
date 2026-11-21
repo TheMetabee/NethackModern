@@ -1560,6 +1560,8 @@ zap_dig(void)
     int diridx = 8, digdepth;
     boolean shopdoor, shopwall, maze_dig, pitdig = FALSE, pitflow = FALSE;
 
+    fx_wand_self(WAN_DIGGING); /* NetHack Modern: stone grinding away */
+
     /*
      * Original effect (approximately):
      * from CORR: dig until we pierce a wall

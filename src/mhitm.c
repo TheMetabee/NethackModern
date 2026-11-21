@@ -1241,6 +1241,7 @@ sleep_monst(struct monst *mon, int amt, int how)
         if (amt > 0) { /* sleep for N turns */
             mon->mcanmove = 0;
             mon->mfrozen = min(amt, 127);
+            fx_mon_slept(mon); /* NetHack Modern: asleep, not paralyzed */
         } else { /* sleep until awakened */
             mon->msleeping = 1;
         }

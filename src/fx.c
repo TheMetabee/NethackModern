@@ -173,6 +173,10 @@ fx_typename(int type)
         return "MOVE";
     case FXE_IMPACT:
         return "IMPACT";
+    case FXE_WAND:
+        return "WAND";
+    case FXE_TELEPORT:
+        return "TELEPORT";
     }
     return "?";
 }
@@ -303,6 +307,55 @@ fx_hero_auras(void)
     return a;
 }
 
+/* monsters put to sleep by magic (sleep rays, spells, gas): the core
+   holds them with the same "can't move for N turns" as paralysis, so
+   remember which ones are really asleep */
+#define FX_MAXSLEPT 32
+static unsigned fx_slept[FX_MAXSLEPT];
+static int fx_nslept;
+
+void
+fx_mon_slept(struct monst *mtmp)
+{
+    int i;
+
+    if (!mtmp || mtmp == &gy.youmonst)
+        return;
+    for (i = 0; i < fx_nslept; i++)
+        if (fx_slept[i] == mtmp->m_id)
+            return;
+    if (fx_nslept >= FX_MAXSLEPT) {
+        memmove(&fx_slept[0], &fx_slept[1],
+                (FX_MAXSLEPT - 1) * sizeof fx_slept[0]);
+        fx_nslept--;
+    }
+    fx_slept[fx_nslept++] = mtmp->m_id;
+}
+
+staticfn boolean
+fx_is_slept(struct monst *mtmp)
+{
+    int i;
+
+    for (i = 0; i < fx_nslept; i++)
+        if (fx_slept[i] == mtmp->m_id)
+            return TRUE;
+    return FALSE;
+}
+
+/* it can move again (or is gone): forget it */
+staticfn void
+fx_wake(struct monst *mtmp)
+{
+    int i;
+
+    for (i = 0; i < fx_nslept; i++)
+        if (fx_slept[i] == mtmp->m_id) {
+            fx_slept[i] = fx_slept[--fx_nslept];
+            return;
+        }
+}
+
 staticfn unsigned long
 fx_mon_auras(struct monst *mtmp)
 {
@@ -326,7 +379,7 @@ fx_mon_auras(struct monst *mtmp)
         a |= FXA_CANCELLED;
     if (!mtmp->mcansee)
         a |= FXA_BLIND;
-    if (mtmp->msleeping)
+    if (mtmp->msleeping || (!mtmp->mcanmove && fx_is_slept(mtmp)))
         a |= FXA_ASLEEP;
     else if (!mtmp->mcanmove)
         a |= FXA_HELPLESS;
@@ -471,6 +524,8 @@ fx_sync(void)
             continue;
         }
         t->alive = TRUE;
+        if (mtmp->mcanmove || DEADMONSTER(mtmp))
+            fx_wake(mtmp);
         if (!DEADMONSTER(mtmp) && t->inview && canseemon(mtmp)
             && (mtmp->mx != t->mx || mtmp->my != t->my))
             fx_step(t->mx, t->my, mtmp->mx, mtmp->my, FALSE);
@@ -811,6 +866,129 @@ fx_impact(coordxy x, coordxy y, boolean resisted)
         ev.flags |= FXF_HERO_TARGET;
     ev.x = ev.sx = x, ev.y = ev.sy = y;
     ev.adtyp = -1;
+    fx_emit(&ev);
+}
+
+/* what a wand/spell effect should look like: spells look like the wand
+   that does the same thing (the caster knows what they cast); a wand
+   whose type isn't identified yet looks plain, so its colours never
+   give away what it is */
+staticfn int
+fx_wand_look(int otyp)
+{
+    switch (otyp) {
+    case SPE_FORCE_BOLT:
+        return WAN_STRIKING;
+    case SPE_SLOW_MONSTER:
+        return WAN_SLOW_MONSTER;
+    case SPE_TURN_UNDEAD:
+        return WAN_UNDEAD_TURNING;
+    case SPE_POLYMORPH:
+        return WAN_POLYMORPH;
+    case SPE_CANCELLATION:
+        return WAN_CANCELLATION;
+    case SPE_TELEPORT_AWAY:
+        return WAN_TELEPORTATION;
+    case SPE_KNOCK:
+        return WAN_OPENING;
+    case SPE_WIZARD_LOCK:
+        return WAN_LOCKING;
+    case SPE_LIGHT:
+        return WAN_LIGHT;
+    case SPE_DETECT_UNSEEN:
+        return WAN_SECRET_DOOR_DETECTION;
+    case SPE_DIG:
+    case WAN_DIGGING: /* the digging beam is drawn anyway */
+        return WAN_DIGGING;
+    }
+    if (otyp < FIRST_OBJECT || otyp >= NUM_OBJECTS
+        || objects[otyp].oc_class != WAND_CLASS)
+        return 0;
+    return objects[otyp].oc_name_known ? otyp : 0;
+}
+
+/* a wand or spell effect at <x,y> the hero can see; 'kind' is FXW_*,
+   'step' how far along the beam (so it can be drawn travelling) */
+void
+fx_wand(int otyp, coordxy x, coordxy y, int kind, int step)
+{
+    static coordxy lastx, lasty;
+    static long lastmove = -1L;
+    static int lastotyp;
+    struct fx_event ev;
+
+    if (!fx_active() || Blind || !isok(x, y) || !cansee(x, y))
+        return;
+    if (kind == FXW_HIT) {
+        /* a pile struck at once is one hit, not one per object */
+        if (x == lastx && y == lasty && svm.moves == lastmove
+            && otyp == lastotyp)
+            return;
+        lastx = x, lasty = y, lastmove = svm.moves, lastotyp = otyp;
+    }
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_WAND;
+    ev.flags = fx_bulk_flag();
+    if (x == u.ux && y == u.uy)
+        ev.flags |= FXF_HERO_TARGET;
+    ev.x = ev.sx = x, ev.y = ev.sy = y;
+    ev.adtyp = kind;
+    ev.otyp = fx_wand_look(otyp);
+    ev.amount = max(step, 0);
+    fx_emit(&ev);
+}
+
+/* a beam struck a monster: only if the hero can tell something is there
+   (never for an unseen one or a mimic still in disguise) */
+void
+fx_wand_mon(int otyp, struct monst *mtmp)
+{
+    if (!mtmp)
+        return;
+    if (mtmp == &gy.youmonst) {
+        fx_wand(otyp, u.ux, u.uy, FXW_HIT, 0);
+        return;
+    }
+    if (!canspotmon(mtmp) || M_AP_TYPE(mtmp) != M_AP_NOTHING)
+        return;
+    fx_wand(otyp, mtmp->mx, mtmp->my, FXW_HIT, 0);
+}
+
+/* a non-directional wand (or spell) went off and did something the
+   hero noticed; plays around the hero */
+void
+fx_wand_self(int otyp)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || Blind)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_WAND;
+    ev.flags = fx_bulk_flag() | FXF_HERO_TARGET;
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = FXW_SELF;
+    ev.otyp = fx_wand_look(otyp);
+    fx_emit(&ev);
+}
+
+/* the hero or a monster teleported from <fx,fy> to <tx,ty>; 'from_seen'
+   and 'to_seen' say which end the hero saw */
+void
+fx_teleport(coordxy fx, coordxy fy, coordxy tx, coordxy ty, boolean hero,
+            boolean from_seen, boolean to_seen)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || (!hero && !from_seen && !to_seen))
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_TELEPORT;
+    ev.flags = fx_bulk_flag() | (hero ? FXF_HERO_TARGET : 0U);
+    ev.sx = fx, ev.sy = fy;
+    ev.x = tx, ev.y = ty;
+    ev.adtyp = -1;
+    ev.amount = (from_seen && !Blind ? 1 : 0) | (to_seen && !Blind ? 2 : 0);
     fx_emit(&ev);
 }
 

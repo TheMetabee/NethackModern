@@ -1605,6 +1605,8 @@ mbhitm(struct monst *mtmp, struct obj *otmp)
         if (mtmp->m_ap_type)
             seemimic(mtmp);
     }
+    if (otmp->otyp != WAN_STRIKING)
+        fx_wand_mon(otmp->otyp, mtmp); /* NetHack Modern */
     switch (otmp->otyp) {
     case WAN_STRIKING:
         reveal_invis = TRUE;
@@ -1764,6 +1766,8 @@ mbhit(
             gb.bhitpos.y -= ddy;
             break;
         }
+        /* NetHack Modern: the beam, drawn travelling outward */
+        fx_wand(otyp, x, y, FXW_BEAM, max(abs(x - mon->mx), abs(y - mon->my)));
         if (u_at(gb.bhitpos.x, gb.bhitpos.y)) {
             (*fhitm)(&gy.youmonst, obj);
             range -= 3;

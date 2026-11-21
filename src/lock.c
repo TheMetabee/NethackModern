@@ -1072,10 +1072,28 @@ doclose(void)
 
 /* box obj was hit with spell or wand effect otmp;
    returns true if something happened */
+/* NetHack Modern: can the hero hear a lock being worked at <x,y>?
+   (seen, or close enough to hear it in the dark) */
+staticfn boolean
+lock_heard(coordxy x, coordxy y)
+{
+    return (cansee(x, y) || (!Deaf && distu(x, y) <= 16)) ? TRUE : FALSE;
+}
+
+/* the volume for that: quieter when only heard */
+staticfn int
+lock_volume(coordxy x, coordxy y, int vol)
+{
+    return cansee(x, y) ? vol : (vol * 3) / 5;
+}
+
 boolean
 boxlock(struct obj *obj, struct obj *otmp) /* obj *is* a box */
 {
     boolean res = 0;
+    /* NetHack Modern: results that are normally silent get a soft
+       key-turn sound too, even from an unidentified wand */
+    boolean knows = TRUE;
 
     switch (otmp->otyp) {
     case WAN_LOCKING:
@@ -1090,7 +1108,10 @@ boxlock(struct obj *obj, struct obj *otmp) /* obj *is* a box */
             else
                 obj->lknown = 0;
             res = 1;
-        } /* else already closed and locked */
+        } else if (knows && lock_heard(obj->ox, obj->oy)) {
+            /* already locked: the key turns, softly */
+            Soundeffect(se_klunk, lock_volume(obj->ox, obj->oy, 30));
+        }
         break;
     case WAN_OPENING:
     case SPE_KNOCK:
@@ -1103,8 +1124,11 @@ boxlock(struct obj *obj, struct obj *otmp) /* obj *is* a box */
                 obj->lknown = 1;
             else
                 obj->lknown = 0;
-        } else /* silently fix if broken */
+        } else { /* silently fix if broken */
             obj->obroken = 0;
+            if (knows && lock_heard(obj->ox, obj->oy)) /* nothing to unlock */
+                Soundeffect(se_klick, lock_volume(obj->ox, obj->oy, 30));
+        }
         break;
     case WAN_POLYMORPH:
     case SPE_POLYMORPH:
@@ -1129,6 +1153,7 @@ doorlock(struct obj *otmp, coordxy x, coordxy y)
     const char *dustcloud = "A cloud of dust";
     const char *quickly_dissipates = "quickly dissipates";
     boolean mysterywand = (otmp->oclass == WAND_CLASS && !otmp->dknown);
+    boolean knows = TRUE; /* NetHack Modern: see boxlock() */
 
     if (door->typ == SDOOR) {
         switch (otmp->otyp) {
@@ -1206,8 +1231,8 @@ doorlock(struct obj *otmp, coordxy x, coordxy y)
             res = FALSE;
             break;
         }
-        if (res && cansee(x, y))
-            Soundeffect(se_klunk, 50); /* NetHack Modern */
+        if (lock_heard(x, y) && (res || knows)) /* NetHack Modern */
+            Soundeffect(se_klunk, lock_volume(x, y, res ? 50 : 30));
         block_point(x, y);
         door->doormask = D_LOCKED | (door->doormask & D_TRAPPED);
         newsym(x, y);
@@ -1215,12 +1240,17 @@ doorlock(struct obj *otmp, coordxy x, coordxy y)
     case WAN_OPENING:
     case SPE_KNOCK:
         if (door->doormask & D_LOCKED) {
-            if (cansee(x, y))
-                Soundeffect(se_klick, 50); /* NetHack Modern */
+            if (lock_heard(x, y)) /* NetHack Modern */
+                Soundeffect(se_klick, lock_volume(x, y, 50));
             msg = "The door unlocks!";
             door->doormask = D_CLOSED | (door->doormask & D_TRAPPED);
-        } else
+        } else {
+            /* NetHack Modern: a closed door that wasn't locked still
+               gives the key-turn, softly */
+            if (knows && lock_heard(x, y) && (door->doormask & D_CLOSED))
+                Soundeffect(se_klick, lock_volume(x, y, 30));
             res = FALSE;
+        }
         break;
     case WAN_STRIKING:
     case SPE_FORCE_BOLT:

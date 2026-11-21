@@ -173,6 +173,9 @@ static void fx_tick(PNHMapWindow data);
 static void fx_ray_particles(PNHMapWindow, int, int, int, int);
 static void fx_burst_particles(PNHMapWindow, int, int, int, int);
 static void fx_impact_particles(PNHMapWindow, int, int, boolean);
+static void fx_wand_particles(PNHMapWindow, const struct fx_event *);
+static void fx_dig_particles(PNHMapWindow, int, int);
+static void fx_teleport_particles(PNHMapWindow, const struct fx_event *);
 static void fx_paint_particles(PNHMapWindow, HDC);
 static void fx_paint_overlay(PNHMapWindow data, HDC hdc);
 static boolean fx_shake_offset(PNHMapWindow, int *, int *);
@@ -796,6 +799,8 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
         PMSNHMsgPrintGlyph msg_data = (PMSNHMsgPrintGlyph) lParam;
         setGlyph(data, msg_data->x, msg_data->y,
             &msg_data->glyphinfo, &msg_data->bkglyphinfo);
+        if (msg_data->glyphinfo.glyph == cmap_to_glyph(S_digbeam))
+            fx_dig_particles(data, msg_data->x, msg_data->y);
         if (glyph_is_cmap_zap(msg_data->glyphinfo.glyph))
             fx_ray_particles(data, msg_data->x, msg_data->y,
                              (msg_data->glyphinfo.glyph - GLYPH_ZAP_OFF) >> 2,
@@ -1373,6 +1378,10 @@ mswin_fx_event(const struct fx_event *ev)
     fx_shake_event(data, ev);  /* the whole view */
     if (ev->type == FXE_EXPLODE && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
         fx_burst_particles(data, ev->x, ev->y, ev->adtyp, ev->amount);
+    if (ev->type == FXE_WAND && !(ev->flags & FXF_BULK))
+        fx_wand_particles(data, ev);
+    if (ev->type == FXE_TELEPORT && !(ev->flags & FXF_BULK))
+        fx_teleport_particles(data, ev);
     if (ev->type == FXE_IMPACT && !(ev->flags & FXF_BULK))
         fx_impact_particles(data, ev->x, ev->y,
                             (ev->flags & FXF_RESISTED) != 0);
@@ -2067,6 +2076,339 @@ fx_impact_particles(PNHMapWindow data, int x, int y, boolean resisted)
     fx_start_timer(data);
 }
 
+/* ---- wand effects ----------------------------------------------- */
+
+/* a bright colour of random hue (polymorph, wishing) */
+static COLORREF
+fx_rainbow(void)
+{
+    float h = fx_prange(0.0f, 6.0f), f = h - (float) (int) h;
+    int q = (int) (255 * (1.0f - f)), t = (int) (255 * f);
+
+    switch ((int) h) {
+    case 0:
+        return RGB(255, t, 60);
+    case 1:
+        return RGB(q, 255, 60);
+    case 2:
+        return RGB(60, 255, t);
+    case 3:
+        return RGB(60, q, 255);
+    case 4:
+        return RGB(t, 60, 255);
+    default:
+        return RGB(255, 60, q);
+    }
+}
+
+/* the look of each wand; 0 is an unidentified wand (plain) */
+static const struct fx_pstyle *
+fx_wand_style(int look, boolean *rainbow)
+{
+    static const struct fx_pstyle
+        plain = { RGB(225, 228, 238), RGB(175, 185, 205), RGB(20, 22, 30),
+                  0.8f, 0.0f, 0.2f, 0.05f, 250, 450 },
+        striking = { RGB(245, 250, 255), RGB(170, 210, 255), RGB(10, 25, 60),
+                     1.0f, 0.0f, 0.2f, 0.05f, 250, 450 },
+        locking = { RGB(215, 185, 120), RGB(160, 160, 178), RGB(30, 25, 15),
+                    1.0f, 0.8f, 0.25f, 0.055f, 300, 550 },
+        opening = { RGB(255, 225, 130), RGB(255, 190, 70), RGB(60, 35, 0),
+                    1.0f, -0.8f, 0.25f, 0.055f, 300, 600 },
+        invis = { RGB(240, 248, 255), RGB(190, 212, 238), RGB(0, 0, 0),
+                  0.7f, 0.0f, 0.1f, 0.045f, 200, 400 },
+        probing = { RGB(140, 255, 240), RGB(70, 200, 255), RGB(0, 30, 40),
+                    1.6f, 0.0f, 0.15f, 0.045f, 220, 420 },
+        slow = { RGB(110, 140, 255), RGB(70, 90, 210), RGB(5, 10, 40),
+                 0.5f, 0.4f, 0.4f, 0.06f, 600, 1000 },
+        speed = { RGB(230, 255, 130), RGB(255, 255, 185), RGB(40, 50, 0),
+                  2.8f, 0.0f, 0.05f, 0.045f, 180, 340 },
+        undead = { RGB(255, 250, 225), RGB(255, 230, 160), RGB(60, 50, 20),
+                   0.9f, -1.2f, 0.3f, 0.06f, 400, 750 },
+        cancel = { RGB(185, 105, 235), RGB(115, 75, 155), RGB(0, 0, 0),
+                   0.9f, 0.0f, 0.25f, 0.06f, 350, 650 },
+        poly = { RGB(255, 120, 120), RGB(120, 255, 120), RGB(20, 20, 20),
+                 1.2f, 0.0f, 0.2f, 0.055f, 350, 650 },
+        tele = { RGB(255, 120, 235), RGB(180, 100, 255), RGB(30, 0, 50),
+                 1.4f, 0.0f, 0.2f, 0.055f, 300, 600 },
+        dig = { RGB(195, 165, 125), RGB(145, 125, 100), RGB(30, 25, 20),
+                1.0f, 1.2f, 0.3f, 0.06f, 350, 700 },
+        light = { RGB(255, 248, 210), RGB(255, 222, 145), RGB(70, 50, 10),
+                  0.4f, -0.4f, 0.3f, 0.06f, 600, 1100 },
+        secret = { RGB(160, 225, 255), RGB(95, 175, 255), RGB(0, 20, 50),
+                   0.5f, 0.0f, 0.3f, 0.055f, 500, 900 },
+        create = { RGB(175, 145, 195), RGB(115, 105, 135), RGB(15, 10, 20),
+                   1.2f, -0.2f, 0.3f, 0.12f, 600, 1000 },
+        enlight = { RGB(255, 235, 150), RGB(255, 255, 215), RGB(60, 40, 0),
+                    0.4f, -1.6f, 0.5f, 0.055f, 700, 1300 },
+        wish = { RGB(255, 225, 120), RGB(255, 255, 255), RGB(40, 30, 0),
+                 1.0f, 3.0f, 0.5f, 0.06f, 700, 1300 },
+        stasis = { RGB(205, 238, 255), RGB(155, 195, 225), RGB(20, 30, 40),
+                   0.15f, 0.0f, 0.5f, 0.055f, 900, 1500 };
+
+    *rainbow = FALSE;
+    switch (look) {
+    case WAN_STRIKING:
+        return &striking;
+    case WAN_LOCKING:
+        return &locking;
+    case WAN_OPENING:
+        return &opening;
+    case WAN_MAKE_INVISIBLE:
+        return &invis;
+    case WAN_PROBING:
+        return &probing;
+    case WAN_SLOW_MONSTER:
+        return &slow;
+    case WAN_SPEED_MONSTER:
+        return &speed;
+    case WAN_UNDEAD_TURNING:
+        return &undead;
+    case WAN_CANCELLATION:
+        return &cancel;
+    case WAN_POLYMORPH:
+        *rainbow = TRUE;
+        return &poly;
+    case WAN_TELEPORTATION:
+        return &tele;
+    case WAN_DIGGING:
+        return &dig;
+    case WAN_LIGHT:
+        return &light;
+    case WAN_SECRET_DOOR_DETECTION:
+        return &secret;
+    case WAN_CREATE_MONSTER:
+        return &create;
+    case WAN_ENLIGHTENMENT:
+        return &enlight;
+    case WAN_WISHING:
+        *rainbow = TRUE;
+        return &wish;
+    case WAN_STASIS:
+        return &stasis;
+    default:
+        return &plain;
+    }
+}
+
+/* spawn one particle of style 'st', 'delay' ms from now */
+static struct fx_part *
+fx_spawn_at(PNHMapWindow data, const struct fx_pstyle *st, boolean rainbow,
+            float x, float y, float speed, float sizemul, DWORD delay)
+{
+    struct fx_part *p;
+
+    fx_spawn(data, st, x, y, speed, sizemul, 1.0f);
+    p = &data->parts[data->nparts - 1];
+    if (rainbow)
+        p->c0 = fx_rainbow();
+    p->start += delay;
+    return p;
+}
+
+/* a ring of 'n' particles centred on square <x,y>, reaching 'radius'
+   squares; 'drag' sets how sharply it stops (small = snaps out) */
+static void
+fx_ring(PNHMapWindow data, const struct fx_pstyle *st, boolean rainbow,
+        int x, int y, int n, float radius, float drag, DWORD life,
+        DWORD delay)
+{
+    int i;
+    float v = radius * (float) -log(drag);
+
+    for (i = 0; i < n; i++) {
+        float a = (6.2831853f * i) / n + fx_prange(-0.04f, 0.04f);
+        struct fx_part *p = fx_spawn_at(data, st, rainbow, x + 0.5f,
+                                        y + 0.5f, 0.0f, 1.0f, delay);
+
+        p->vx = v * (float) cos(a);
+        p->vy = v * (float) sin(a);
+        p->drag = drag;
+        p->grav = 0.0f;
+        p->life = life;
+    }
+}
+
+/* the digging beam: rock dust kicked up along its path */
+static void
+fx_dig_particles(PNHMapWindow data, int x, int y)
+{
+    boolean rb;
+    const struct fx_pstyle *st = fx_wand_style(WAN_DIGGING, &rb);
+    int i;
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+    for (i = 0; i < 7; i++)
+        (void) fx_spawn_at(data, st, FALSE, x + fx_prange(0.2f, 0.8f),
+                           y + fx_prange(0.2f, 0.8f), st->speed, 1.0f, 0);
+    fx_start_timer(data);
+}
+
+static void
+fx_wand_particles(PNHMapWindow data, const struct fx_event *ev)
+{
+    boolean rb;
+    const struct fx_pstyle *st;
+    int i, x = ev->x, y = ev->y, look = ev->otyp;
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+    if (Hallucination && look)
+        look = WAN_POLYMORPH; /* everything's a rainbow */
+    st = fx_wand_style(look, &rb);
+
+    switch (ev->adtyp) {
+    case FXW_BEAM: {
+        /* a short streak on each square, timed so the beam travels */
+        DWORD delay = (DWORD) (ev->amount * 22);
+
+        for (i = 0; i < (look ? 5 : 3); i++)
+            (void) fx_spawn_at(data, st, rb, x + fx_prange(0.25f, 0.75f),
+                               y + fx_prange(0.25f, 0.75f),
+                               st->speed * 0.35f, 0.9f, delay);
+        break;
+    }
+    case FXW_HIT:
+        /* a burst where it strikes, and a small ring once identified */
+        for (i = 0; i < (look ? 28 : 14); i++)
+            (void) fx_spawn_at(data, st, rb, x + 0.5f, y + 0.5f,
+                               st->speed * 1.4f + 0.6f, 1.0f, 0);
+        if (look)
+            fx_ring(data, st, rb, x, y, 18, 0.8f, 0.01f, 380, 0);
+        break;
+    case FXW_SELF:
+        switch (look) {
+        case WAN_LIGHT:
+            /* a wave of light rolling out, then warm motes hanging */
+            fx_ring(data, st, FALSE, x, y, 90, 5.0f, 0.02f, 750, 0);
+            for (i = 0; i < 70; i++) {
+                float r = fx_prange(0.3f, 4.5f), a = fx_prange(0, 6.283f);
+
+                (void) fx_spawn_at(data, st, FALSE,
+                                   x + 0.5f + r * (float) cos(a),
+                                   y + 0.5f + r * (float) sin(a) * 0.8f,
+                                   st->speed, 1.0f, (DWORD) (r * 70));
+            }
+            break;
+        case WAN_SECRET_DOOR_DETECTION:
+            /* two searching pulses */
+            fx_ring(data, st, FALSE, x, y, 90, 7.0f, 0.03f, 850, 0);
+            fx_ring(data, st, FALSE, x, y, 70, 5.0f, 0.03f, 750, 180);
+            break;
+        case WAN_CREATE_MONSTER:
+            /* dark smoke swirling out from you */
+            for (i = 0; i < 55; i++)
+                (void) fx_spawn_at(data, st, FALSE,
+                                   x + 0.5f + fx_prange(-0.3f, 0.3f),
+                                   y + 0.5f + fx_prange(-0.3f, 0.3f),
+                                   st->speed * 1.6f, 1.0f,
+                                   (DWORD) fx_prange(0, 160));
+            break;
+        case WAN_ENLIGHTENMENT:
+            /* golden motes rising all around you */
+            for (i = 0; i < 70; i++)
+                (void) fx_spawn_at(data, st, FALSE,
+                                   x + 0.5f + fx_prange(-1.2f, 1.2f),
+                                   y + 0.6f + fx_prange(-0.4f, 0.8f),
+                                   st->speed, 1.0f,
+                                   (DWORD) fx_prange(0, 350));
+            fx_ring(data, st, FALSE, x, y, 40, 1.6f, 0.02f, 600, 0);
+            break;
+        case WAN_WISHING: {
+            /* a fountain of coloured sparks and a golden ring */
+            for (i = 0; i < 110; i++) {
+                struct fx_part *p = fx_spawn_at(
+                    data, st, TRUE, x + 0.5f + fx_prange(-0.15f, 0.15f),
+                    y + 0.5f, 0.0f, 1.0f, (DWORD) fx_prange(0, 300));
+
+                p->vx = fx_prange(-1.4f, 1.4f);
+                p->vy = fx_prange(-5.5f, -3.0f);
+            }
+            fx_ring(data, st, FALSE, x, y, 50, 2.0f, 0.02f, 700, 0);
+            break;
+        }
+        case WAN_DIGGING:
+            break; /* its dust is drawn along the beam */
+        case WAN_STASIS:
+            /* time stills: a slow ring, and motes that barely move */
+            fx_ring(data, st, FALSE, x, y, 60, 3.0f, 0.15f, 1300, 0);
+            for (i = 0; i < 50; i++) {
+                float r = fx_prange(0.2f, 2.6f), a = fx_prange(0, 6.283f);
+
+                (void) fx_spawn_at(data, st, FALSE,
+                                   x + 0.5f + r * (float) cos(a),
+                                   y + 0.5f + r * (float) sin(a),
+                                   st->speed, 1.0f, 0);
+            }
+            break;
+        default:
+            /* unidentified: a plain shimmer */
+            fx_ring(data, st, FALSE, x, y, 36, 1.5f, 0.02f, 500, 0);
+            break;
+        }
+        break;
+    }
+    fx_start_timer(data);
+}
+
+/* teleporting: sparks rush in and the creature is gone; at the other
+   end a flash and a burst as it appears */
+static void
+fx_teleport_particles(PNHMapWindow data, const struct fx_event *ev)
+{
+    static const struct fx_pstyle
+        tele = { RGB(255, 140, 240), RGB(190, 120, 255), RGB(40, 0, 60),
+                 1.6f, 0.0f, 0.2f, 0.06f, 300, 500 };
+    int i;
+
+    if (!iflags.fx_particles)
+        return;
+    if ((ev->amount & 1) && isok(ev->sx, ev->sy)) {
+        /* departure: a ring collapsing inward, and a column rising */
+        for (i = 0; i < 36; i++) {
+            float a = (6.2831853f * i) / 36, r = fx_prange(0.75f, 1.0f);
+            struct fx_part *p = fx_spawn_at(
+                data, &tele, FALSE, ev->sx + 0.5f + r * (float) cos(a),
+                ev->sy + 0.5f + r * (float) sin(a), 0.0f, 1.0f, 0);
+
+            p->drag = 0.01f; /* ends just at the middle */
+            p->vx = -r * 4.6f * (float) cos(a);
+            p->vy = -r * 4.6f * (float) sin(a);
+            p->life = 380;
+        }
+        for (i = 0; i < 18; i++) {
+            struct fx_part *p = fx_spawn_at(
+                data, &tele, FALSE, ev->sx + 0.5f + fx_prange(-0.2f, 0.2f),
+                ev->sy + fx_prange(0.4f, 0.9f), 0.0f, 0.8f,
+                (DWORD) fx_prange(80, 260));
+
+            p->vx = 0.0f;
+            p->vy = fx_prange(-2.6f, -1.4f);
+            p->life = 420;
+        }
+    }
+    if ((ev->amount & 2) && isok(ev->x, ev->y)) {
+        /* arrival, a moment later: a flash, a burst and a ring */
+        DWORD at = (ev->amount & 1) ? 260 : 0;
+
+        for (i = 0; i < 3; i++) {
+            struct fx_part *p = fx_spawn_at(data, &tele, FALSE,
+                                            ev->x + 0.5f, ev->y + 0.5f, 0.0f,
+                                            1.0f, at);
+
+            p->vx = p->vy = 0.0f;
+            p->size = 0.3f;
+            p->c0 = RGB(255, 235, 255);
+            p->life = 160;
+        }
+        for (i = 0; i < 30; i++)
+            (void) fx_spawn_at(data, &tele, FALSE, ev->x + 0.5f, ev->y + 0.5f,
+                               tele.speed * 1.6f, 1.0f, at);
+        fx_ring(data, &tele, FALSE, ev->x, ev->y, 26, 0.9f, 0.01f, 400, at);
+    }
+    fx_start_timer(data);
+}
+
 static COLORREF
 fx_lerp_color(COLORREF a, COLORREF b, float t)
 {
@@ -2320,7 +2662,7 @@ fx_tick(PNHMapWindow data)
         && (long) (now - data->shakeStart) >= (long) data->shakeDur)
         data->shakeDur = 0;
     for (i = j = 0; i < data->nparts; i++)
-        if (now - data->parts[i].start < data->parts[i].life)
+        if ((long) (now - data->parts[i].start) < (long) data->parts[i].life)
             data->parts[j++] = data->parts[i];
     data->nparts = j;
     if (!data->nfloaters && !data->nanims && !data->shakeDur && !data->nparts

@@ -185,6 +185,9 @@ bhitm(struct monst *mtmp, struct obj *otmp)
     gn.notonhead = (mtmp->mx != gb.bhitpos.x || mtmp->my != gb.bhitpos.y);
     skilled_spell = (otmp->oclass == SPBOOK_CLASS && otmp->blessed);
 
+    if (otyp != WAN_STRIKING && otyp != SPE_FORCE_BOLT && !disguised_mimic)
+        fx_wand_mon(otyp, mtmp); /* NetHack Modern */
+
     switch (otyp) {
     case WAN_STRIKING:
         zap_type_text = "wand";
@@ -2146,6 +2149,10 @@ bhito(struct obj *obj, struct obj *otmp)
     if (obj == otmp)
         return 0;
 
+    if (otmp->otyp != WAN_STRIKING && otmp->otyp != SPE_FORCE_BOLT
+        && obj->where == OBJ_FLOOR)
+        fx_wand(otmp->otyp, obj->ox, obj->oy, FXW_HIT, 0); /* NetHack Modern */
+
     if (obj->bypass) {
         /* The bypass bit is currently only used as follows:
          *
@@ -2582,6 +2589,9 @@ zapnodir(struct obj *obj)
            for multiple zaps, keep the longest duration rather than latest */
         if (tmp_until > svl.level.flags.stasis_until)
             svl.level.flags.stasis_until = tmp_until;
+        /* NetHack Modern: time stills around the hero (plain-looking
+           until the wand is identified) */
+        fx_wand_self(obj->otyp);
         break;
     }
     case WAN_CREATE_MONSTER:
@@ -2616,6 +2626,9 @@ zapnodir(struct obj *obj)
         /* effect was observable; discover the wand type provided
            that the wand itself has been seen */
         learnwand(obj);
+        /* NetHack Modern: its effect plays around the hero (stasis and
+           nothing never get here: they must not show anything) */
+        fx_wand_self(obj->otyp);
     }
 }
 
@@ -2725,6 +2738,11 @@ zapyourself(struct obj *obj, boolean ordinary)
     boolean learn_it = FALSE;
     int damage = 0;
     int orig_dmg = 0; /* for passing to destroy_items() */
+
+    /* NetHack Modern: a beam turned on yourself (rays draw their own) */
+    if (objects[obj->otyp].oc_dir == IMMEDIATE && obj->otyp != WAN_STRIKING
+        && obj->otyp != SPE_FORCE_BOLT)
+        fx_wand(obj->otyp, u.ux, u.uy, FXW_HIT, 0);
 
     switch (obj->otyp) {
     case WAN_STRIKING:
@@ -3937,6 +3955,9 @@ bhit(
         }
 
         if (weapon == ZAPPED_WAND) {
+            /* NetHack Modern: the beam, drawn travelling outward */
+            fx_wand(obj->otyp, x, y, FXW_BEAM,
+                    max(abs(x - u.ux), abs(y - u.uy)));
             /* cancellation/opening/locking/striking/probing */
             zap_map(x, y, obj);
             /* terrain might have changed (exposed secret door|corridor) */
