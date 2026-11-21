@@ -5,12 +5,20 @@ NetHack 5.0, game rules unchanged.
 
 ## Status
 
-Phases 0 to 4c are done; Phase 5 (polish) is next. The work is in the
+Phases 0 to 4c are done; Phase 5 (polish) is under way: level
+ambience, volume controls, bar styles, map lighting and a separate
+settings file are in. The work is in the
 `fx` event stream (`src/fx.c`, `include/fx.h`), the miniaudio soundlib
 (`sound/miniaudio/`, samples and credits in `sound/modern/`) and the
 NetHackW port (`win/win32/`, mainly `mhmap.c`, `mhstatus.c`,
 `mhmsgwnd.c`, `mhmenu.c`, `mhmain.c`, `mhsplash.c`, `mhtheme.h`). Every
 effect has its own `fx_*` option (see "Options" at the end).
+
+Settings changed from NetHackW's menus (bar style and border, volumes,
+shade) are written to `nethackmodern.rc` beside the player's own config
+file and read after it, so the player's `.nethackrc` is never touched.
+Deleting a line there, or the file, goes back to the player's own
+settings.
 
 ## What 5.0 already gives us
 
@@ -277,10 +285,36 @@ worked out in the port from game state, so no core query was needed. Not
 built: on-screen zoom and tiles/ASCII buttons (the keys and the View menu
 cover them).
 
-**Phase 5 — Polish / possible new front end.** *Next.* Fix rough edges
-found in play. Then: level ambience, a higher-resolution tileset,
+**Phase 5 — Polish / possible new front end.** *Under way.* Fix rough
+edges found in play. Then: level ambience, a higher-resolution tileset,
 lighting/FOV shading. If GDI in `win/win32` becomes the bottleneck,
 consider a new SDL2 or Qt-based port reading the same fx stream.
+
+*Done so far:*
+
+- **Level ambience** (`fx_ambience`): a quiet loop for each kind of
+  level, crossfading on level change, with rare accents. Mines,
+  Minetown, Sokoban, the Oracle, the quest, Fort Ludios, Medusa,
+  the Castle, the Valley, Gehennom (fire, frozen, flooded and barred
+  variants told apart by the level's terrain), Vlad's Tower, the
+  Wizard's Tower, the Planes and more.
+- **Volume** (`fx_volume`, `fx_ambience_volume`): separate levels for
+  effects and ambience, also in the Game menu.
+- **Bar styles** (`fx_bar_style`, `fx_bar_border`): flat, smooth, gloss,
+  striped or bevel HP/Pw bars, with an optional thin outline. Monster
+  health bars stay plain.
+- **Lighting** (`fx_lighting`, `fx_shade`): a smooth shade layer over the
+  map. Squares in sight are bright (lit rooms fully; lamp, candle and
+  glowing-monster light fading toward the edge of its reach, with a
+  warm tint); remembered squares are dimmed and solid rock kept dark.
+  Only what the hero can already see is used. The shade level (light,
+  medium, dark, deep) is also in the View menu.
+- More sounds and effects found in play: bat deaths, vampires rising,
+  the inventory bag, menu letters in a clearer font, a hero frame that
+  slides with the hero.
+
+*Still to do:* a higher-resolution tileset; perhaps flickering lamp
+light; saving the other menu toggles to `nethackmodern.rc`.
 
 ## Open decisions
 
@@ -312,3 +346,10 @@ All are in the full options list (`m O`), under the `fx_` names:
 | `fx_msg_backdrop` | off | a translucent panel behind those messages |
 | `fx_hero_frame` | on | gold corner marks round the hero |
 | `fx_hero_frame_light` | off | a lighter version of the hero frame |
+| `fx_lighting` | on | soft light on the map; out-of-sight squares dimmed |
+| `fx_shade` | medium | how dark out of sight is: light, medium, dark, deep |
+| `fx_bar_style` | flat | HP/Pw bars: flat, smooth, gloss, striped, bevel |
+| `fx_bar_border` | off | a thin dark outline round the HP/Pw bars |
+| `fx_ambience` | on | level ambience loops |
+| `fx_volume` | 100 | sound effects volume, 0 to 100 |
+| `fx_ambience_volume` | 60 | ambience volume, 0 to 100 |
