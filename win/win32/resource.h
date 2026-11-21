@@ -27,6 +27,7 @@
 #define IDB_MENU_SEL_COUNT              144
 #define IDD_NHRIP                       145
 #define IDB_SPLASH                      146
+#define IDB_SPLASH_ART                  160
 #define IDB_RIP                         147
 #define IDD_SPLASH                      148
 #define IDB_PILEMARK                    149

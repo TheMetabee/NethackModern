@@ -9,6 +9,7 @@
 #include "mhmsg.h"
 #include "mhfont.h"
 #include "mhtheme.h"
+#include "mhinput.h"
 
 #ifndef STATUS_HILITES
 #error STATUS_HILITES not defined
@@ -81,6 +82,16 @@ typedef struct mswin_nethack_status_window {
     boolean has_blink_fields; /* true if one or more has blink attribute */
 } NHStatusWindow, *PNHStatusWindow;
 
+
+/* NetHack Modern: the character panel's action bar buttons */
+#define TH_MAXBTN 7
+static struct th_btn {
+    RECT r;
+    const char *label, *hint;
+    int key;
+} th_btns[TH_MAXBTN];
+static int th_nbtn, th_hotbtn = -1;
+static int th_btn_at(int, int);
 
 static TCHAR szStatusWindowClass[] = TEXT("MSNHStatusWndClass");
 LRESULT CALLBACK StatusWndProc(HWND, UINT, WPARAM, LPARAM);
@@ -237,6 +248,40 @@ StatusWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_PAINT:
         return onWMPaint(hWnd, wParam, lParam);
+
+    case WM_LBUTTONDOWN: { /* NetHack Modern: an action bar button */
+        int b = iflags.fx_theme
+                    ? th_btn_at(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))
+                    : -1;
+
+        if (b >= 0)
+            NHEVENT_KBD(th_btns[b].key);
+        SetFocus(GetNHApp()->hMainWnd);
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (iflags.fx_theme) {
+            int b = th_btn_at(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+
+            if (b != th_hotbtn) {
+                TRACKMOUSEEVENT tme;
+
+                th_hotbtn = b;
+                InvalidateRect(hWnd, NULL, FALSE);
+                tme.cbSize = sizeof tme;
+                tme.dwFlags = TME_LEAVE;
+                tme.hwndTrack = hWnd;
+                tme.dwHoverTime = 0;
+                TrackMouseEvent(&tme);
+            }
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        if (th_hotbtn >= 0) {
+            th_hotbtn = -1;
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        return 0;
 
     case WM_SIZE: {
         RECT rt;
@@ -442,6 +487,133 @@ th_paint_doll(HDC hdc, int x0, int y1, int rowh)
     return 6 * cell + 5 * gap;
 }
 
+/* ---- the context action bar: what makes sense to do right here ---- */
+
+
+static void
+th_add_btn(const char *label, const char *hint, int key)
+{
+    if (th_nbtn < TH_MAXBTN) {
+        th_btns[th_nbtn].label = label;
+        th_btns[th_nbtn].hint = hint;
+        th_btns[th_nbtn].key = key;
+        SetRectEmpty(&th_btns[th_nbtn].r);
+        th_nbtn++;
+    }
+}
+
+/* decide which actions apply where the hero stands and next to them */
+static void
+th_find_actions(void)
+{
+    struct obj *o;
+    stairway *st;
+    int typ, dx, dy;
+    boolean food = FALSE, box = FALSE, door_closed = FALSE,
+            door_open = FALSE, trap = FALSE;
+
+    th_nbtn = 0;
+    if (!isok(u.ux, u.uy) || u.uswallow)
+        goto always;
+    typ = levl[u.ux][u.uy].typ;
+    if ((st = stairway_at(u.ux, u.uy)) != 0)
+        th_add_btn(st->up ? "Go up" : "Go down", st->up ? "<" : ">",
+                   st->up ? '<' : '>');
+    if (OBJ_AT(u.ux, u.uy) && !Levitation) {
+        th_add_btn("Pick up", ",", ',');
+        for (o = svl.level.objects[u.ux][u.uy]; o; o = o->nexthere) {
+            if (o->oclass == FOOD_CLASS)
+                food = TRUE;
+            if (Is_container(o))
+                box = TRUE;
+        }
+        if (food)
+            th_add_btn("Eat", "e", 'e');
+        if (box)
+            th_add_btn("Loot", "M-l", M('l'));
+    }
+    if (IS_FOUNTAIN(typ) || IS_SINK(typ))
+        th_add_btn("Quaff", "q", 'q');
+    if (IS_ALTAR(typ))
+        th_add_btn("Offer", "M-o", M('o'));
+    if (IS_THRONE(typ))
+        th_add_btn("Sit", "M-s", M('s'));
+    for (dx = -1; dx <= 1; dx++)
+        for (dy = -1; dy <= 1; dy++) {
+            int x = u.ux + dx, y = u.uy + dy;
+            struct trap *t;
+
+            if ((!dx && !dy) || !isok(x, y))
+                continue;
+            if (IS_DOOR(levl[x][y].typ) && glyph_is_cmap(glyph_at(x, y))) {
+                int dm = levl[x][y].doormask;
+
+                if (dm & (D_CLOSED | D_LOCKED))
+                    door_closed = TRUE;
+                else if ((dm & D_ISOPEN) && !OBJ_AT(x, y) && !m_at(x, y))
+                    door_open = TRUE;
+            }
+            if ((t = t_at(x, y)) != 0 && t->tseen)
+                trap = TRUE;
+        }
+    if (door_closed)
+        th_add_btn("Open", "o", 'o');
+    if (door_open)
+        th_add_btn("Close", "c", 'c');
+    if (trap)
+        th_add_btn("Disarm", "M-u", M('u'));
+ always:
+    th_add_btn("Search", "s", 's');
+    th_add_btn("Rest", ".", '.');
+}
+
+/* lay the buttons out from the right edge, two rows; returns the left
+   edge of what was drawn */
+static int
+th_paint_actions(HDC hdc, int width, int y1, int y2, int rowh)
+{
+    int i, x = width - 20, left = width, row = 0, ty;
+    int ys[2];
+    TEXTMETRIC tm;
+
+    GetTextMetrics(hdc, &tm);
+    ys[0] = y1, ys[1] = y2;
+    th_find_actions();
+    for (i = th_nbtn - 1; i >= 0; i--) {
+        struct th_btn *b = &th_btns[i];
+        int lw = th_width(hdc, b->label), hw = th_width(hdc, b->hint);
+        int bw = lw + hw + 30;
+
+        if (x - bw < width / 2 && row == 0) /* wrap to the second row */
+            row = 1, x = width - 20;
+        if (x - bw < width / 2)
+            break;
+        SetRect(&b->r, x - bw, ys[row] + 1, x, ys[row] + rowh - 3);
+        th_round(hdc, b->r.left, b->r.top, b->r.right, b->r.bottom, 8,
+                 (i == th_hotbtn) ? TH_SEPARATOR : TH_BG_HEADER);
+        ty = b->r.top + (b->r.bottom - b->r.top - tm.tmHeight) / 2;
+        th_text(hdc, b->r.left + 10, ty, b->label, TH_TEXT);
+        th_text(hdc, b->r.right - 10 - hw, ty, b->hint,
+                (i == th_hotbtn) ? TH_ACCENT : TH_TEXT_DIM);
+        x -= bw + 6;
+        left = min(left, b->r.left);
+    }
+    return left;
+}
+
+static int
+th_btn_at(int x, int y)
+{
+    int i;
+    POINT pt;
+
+    pt.x = x, pt.y = y;
+    for (i = 0; i < th_nbtn; i++)
+        if (PtInRect(&th_btns[i].r, pt))
+            return i;
+    return -1;
+}
+
 static void
 th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
 {
@@ -451,7 +623,7 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     TEXTMETRIC tm;
     int pad, rowh, y1, y2, x, i, w, colw;
     char buf[BUFSZ], tmp[BUFSZ];
-    int dollx;
+    int dollx, actx;
     int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
     int hpct = hpmax > 0 ? (hp * 100) / hpmax : 0;
     COLORREF hpc = (hpct > 66) ? RGB(92, 190, 92)
@@ -546,6 +718,9 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     x += dollx + 18;
     th_rule(hdc, x - 9, y1, y2 + rowh - 2);
 
+    /* the action bar at the right end */
+    actx = th_paint_actions(hdc, width, y1, y2, rowh);
+
     /* conditions as chips, wrapping onto the second row */
     {
         struct {
@@ -596,8 +771,10 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
         for (i = 0; i < nchip; i++) {
             int cw = th_width(hdc, chip[i].name) + 16;
 
-            if (cx + cw > width - 8 && cy == y1)
+            if (cx + cw > actx - 12 && cy == y1)
                 cx = x, cy = y2;
+            if (cx + cw > actx - 12)
+                break; /* no room before the action bar */
             th_round(hdc, cx, cy + 1, cx + cw, cy + rowh - 3, rowh / 2,
                      TH_BG_HEADER);
             th_text(hdc, cx + 8, cy + (rowh - 3 - tm.tmHeight) / 2 + 1,

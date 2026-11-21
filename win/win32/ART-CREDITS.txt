@@ -1,0 +1,9 @@
+NetHack Modern artwork
+======================
+
+splash_art.png   The splash screen painting: a wizard riding a red dragon
+                 over a dungeon fortress by moonlight. An AI-generated
+                 image supplied by the project's owner for NetHack Modern.
+splash_art.bmp   The same, scaled to 1024x576 and converted to a 24-bit
+                 bitmap (ffmpeg, Lanczos) so it can be built into
+                 NetHackW.exe as a resource (IDB_SPLASH_ART).

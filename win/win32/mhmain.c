@@ -1930,6 +1930,7 @@ mswin_topbar_init(HWND main)
     if (!iflags.fx_theme || tb_hwnd)
         return;
     tb_dark_titlebar(main);
+    SetWindowTextA(main, "NetHack Modern for Windows");
     ZeroMemory(&wc, sizeof wc);
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = tb_proc;

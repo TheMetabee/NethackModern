@@ -13,6 +13,7 @@
 #include "patchlevel.h"
 #endif
 #include "dlb.h"
+#include "mhtheme.h"
 
 #define LLEN 128
 
@@ -74,6 +75,11 @@ mswin_set_splash_data(HWND hWnd, SplashData * sd, double scale)
 
     sd->width = (int)(scale * SPLASH_WIDTH_96DPI);
     sd->height = (int)(scale * SPLASH_HEIGHT_96DPI);
+    if (iflags.fx_theme) {
+        /* NetHack Modern: the painted art (16:9) and a title band */
+        sd->width = (int) (scale * 640);
+        sd->height = (int) (scale * (360 + 86));
+    }
     sd->offset_x = (int)(scale * SPLASH_OFFSET_X_96DPI);
     sd->offset_y = (int)(scale * SPLASH_OFFSET_Y_96DPI);
     sd->version_x = (int)(scale * SPLASH_VERSION_X_96DPI);
@@ -204,9 +210,128 @@ mswin_display_splash_window(BOOL show_ver)
     DeleteObject(splashData.hFont);
 }
 
+/* NetHack Modern: the themed splash.  A gold serif title over the
+   game's own red dragon tile, blown up as pixel art; the dialog, its
+   text box and button in the dark theme. */
+extern glyph_map glyphmap[MAX_GLYPH];
+
+static void
+th_splash_dark_titlebar(HWND hWnd)
+{
+    typedef HRESULT(WINAPI * dwmset_fn)(HWND, DWORD, LPCVOID, DWORD);
+    HMODULE dwm = LoadLibraryA("dwmapi.dll");
+    dwmset_fn fn;
+    BOOL on = TRUE;
+
+    if (!dwm)
+        return;
+    fn = (dwmset_fn) (void *) GetProcAddress(dwm, "DwmSetWindowAttribute");
+    if (fn && FAILED(fn(hWnd, 20, &on, sizeof on)))
+        (void) fn(hWnd, 19, &on, sizeof on);
+}
+
+static void
+th_splash_paint(HWND hWnd, HDC hdc, SplashData *sd)
+{
+    RECT area, r;
+    HFONT title, sub, old;
+    char buf[BUFSZ];
+    int th, tile, tx, ty, ds;
+    HDC tdc;
+    HGDIOBJ ob;
+
+    static HBITMAP art;
+    static boolean art_tried;
+    int arth = 0;
+
+    UNREFERENCED_PARAMETER(hWnd);
+    SetRect(&area, sd->offset_x, sd->offset_y, sd->offset_x + sd->width,
+            sd->offset_y + sd->height);
+    if (!art_tried) {
+        art_tried = TRUE;
+        art = (HBITMAP) LoadImage(GetNHApp()->hApp,
+                                  MAKEINTRESOURCE(IDB_SPLASH_ART),
+                                  IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+    }
+    if (art) {
+        /* the painting across the top, smoothly scaled */
+        BITMAP bm;
+        HDC adc = CreateCompatibleDC(hdc);
+        HGDIOBJ oa = SelectObject(adc, art);
+        POINT org;
+
+        GetObject(art, sizeof bm, &bm);
+        arth = sd->width * bm.bmHeight / max(1, bm.bmWidth);
+        SetStretchBltMode(hdc, HALFTONE);
+        SetBrushOrgEx(hdc, 0, 0, &org);
+        StretchBlt(hdc, area.left, area.top, sd->width, arth, adc, 0, 0,
+                   bm.bmWidth, bm.bmHeight, SRCCOPY);
+        SelectObject(adc, oa);
+        DeleteDC(adc);
+        area.top += arth;
+    }
+    th = art ? (area.bottom - area.top) * 9 / 20 : sd->height / 5;
+    title = CreateFontA(-th, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                        VARIABLE_PITCH | FF_ROMAN, "Palatino Linotype");
+    sub = CreateFontA(-(th / 3), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                      CLEARTYPE_QUALITY, VARIABLE_PITCH | FF_SWISS,
+                      TH_FONT_UI);
+    SetBkMode(hdc, TRANSPARENT);
+
+    /* the title, with a soft dark shadow */
+    old = SelectObject(hdc, title);
+    r = area;
+    r.top += art ? (area.bottom - area.top) / 12 : sd->height / 20;
+    r.bottom = r.top + th + th / 4;
+    OffsetRect(&r, 2, 3);
+    SetTextColor(hdc, RGB(0, 0, 0));
+    DrawTextA(hdc, "NetHack", -1, &r, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+    OffsetRect(&r, -2, -3);
+    SetTextColor(hdc, TH_ACCENT);
+    DrawTextA(hdc, "NetHack", -1, &r, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    /* "MODERN  5.0.1" under it */
+    SelectObject(hdc, sub);
+    r.top = r.bottom;
+    r.bottom = r.top + th / 2;
+    Sprintf(buf, "M O D E R N     %d.%d.%d", VERSION_MAJOR, VERSION_MINOR,
+            PATCHLEVEL);
+    SetTextColor(hdc, TH_TEXT_DIM);
+    DrawTextA(hdc, buf, -1, &r, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    /* without the painting: the red dragon, as big crisp pixel art */
+    if (art)
+        goto done;
+    tile = glyphmap[monnum_to_glyph(PM_RED_DRAGON, MALE)].tileidx;
+    ds = min(sd->height - (r.bottom - area.top) - sd->height / 12,
+             sd->width / 2);
+    ds -= ds % GetNHApp()->mapTile_Y; /* whole multiples stay crisp */
+    if (ds > 0 && GetNHApp()->bmpMapTiles) {
+        tx = (tile % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X;
+        ty = (tile / GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_Y;
+        tdc = CreateCompatibleDC(hdc);
+        ob = SelectObject(tdc, GetNHApp()->bmpMapTiles);
+        SetStretchBltMode(hdc, COLORONCOLOR);
+        (*GetNHApp()->lpfnTransparentBlt)(
+            hdc, area.left + (sd->width - ds) / 2,
+            r.bottom + (area.bottom - r.bottom - ds) / 2, ds, ds, tdc, tx, ty,
+            GetNHApp()->mapTile_X, GetNHApp()->mapTile_Y, TILE_BK_COLOR);
+        SelectObject(tdc, ob);
+        DeleteDC(tdc);
+    }
+ done:
+    SelectObject(hdc, old);
+    DeleteObject(title);
+    DeleteObject(sub);
+}
+
 INT_PTR CALLBACK
 NHSplashWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    static HBRUSH th_panel, th_box;
     UNREFERENCED_PARAMETER(lParam);
 
     switch (message) {
@@ -218,7 +343,71 @@ NHSplashWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         ReleaseDC(hWnd, hdc);
 
         SetFocus(GetDlgItem(hWnd, IDOK));
+        if (iflags.fx_theme) {
+            /* NetHack Modern: dark, with a flat button */
+            HWND ok = GetDlgItem(hWnd, IDOK);
+
+            th_splash_dark_titlebar(hWnd);
+            SetWindowTextA(hWnd, "Welcome to NetHack Modern");
+            SetWindowLongPtr(ok, GWL_STYLE,
+                             (GetWindowLongPtr(ok, GWL_STYLE) & ~BS_TYPEMASK)
+                                 | BS_OWNERDRAW);
+            if (!th_panel)
+                th_panel = CreateSolidBrush(TH_BG_PANEL);
+            if (!th_box)
+                th_box = CreateSolidBrush(TH_BG_APP);
+        }
     } break;
+
+    case WM_CTLCOLORDLG:
+        if (iflags.fx_theme && th_panel)
+            return (INT_PTR) th_panel;
+        break;
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORSTATIC:
+        if (iflags.fx_theme && th_box) {
+            SetTextColor((HDC) wParam, TH_TEXT_DIM);
+            SetBkColor((HDC) wParam, TH_BG_APP);
+            return (INT_PTR) th_box;
+        }
+        break;
+
+    case WM_DRAWITEM: {
+        LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT) lParam;
+
+        if (iflags.fx_theme && dis->CtlID == IDOK) {
+            boolean down = (dis->itemState & ODS_SELECTED) != 0;
+            HBRUSH bg = CreateSolidBrush(TH_BG_PANEL),
+                   fill = CreateSolidBrush(down ? TH_SEPARATOR : TH_BG_HEADER),
+                   edge = CreateSolidBrush(TH_ACCENT);
+            HGDIOBJ ob, op;
+            RECT r = dis->rcItem;
+
+            FillRect(dis->hDC, &r, bg);
+            ob = SelectObject(dis->hDC, fill);
+            op = SelectObject(dis->hDC, GetStockObject(NULL_PEN));
+            RoundRect(dis->hDC, r.left, r.top, r.right + 1, r.bottom + 1, 10,
+                      10);
+            SelectObject(dis->hDC, op);
+            SelectObject(dis->hDC, ob);
+            if (dis->itemState & ODS_FOCUS) { /* a gold line underneath */
+                RECT u = r;
+
+                u.left += 6, u.right -= 6, u.top = u.bottom - 2;
+                FillRect(dis->hDC, &u, edge);
+            }
+            SetBkMode(dis->hDC, TRANSPARENT);
+            SetTextColor(dis->hDC, TH_TEXT);
+            DrawTextA(dis->hDC, "Continue", -1, &r,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            DeleteObject(bg);
+            DeleteObject(fill);
+            DeleteObject(edge);
+            return TRUE;
+        }
+        break;
+    }
 
     case WM_PAINT: {
         char VersionString[BUFSZ];
@@ -231,6 +420,11 @@ NHSplashWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         SplashData *splashData = (SplashData *) GetWindowLongPtr(hWnd, GWLP_USERDATA);
 
         HDC hdc = BeginPaint(hWnd, &ps);
+        if (iflags.fx_theme) { /* NetHack Modern */
+            th_splash_paint(hWnd, hdc, splashData);
+            EndPaint(hWnd, &ps);
+            break;
+        }
         /* Show splash graphic */
 
         hdcBitmap = CreateCompatibleDC(hdc);

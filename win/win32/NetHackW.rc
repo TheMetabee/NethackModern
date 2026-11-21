@@ -270,6 +270,7 @@ IDB_MENU_SEL_COUNT      BITMAP                  "mnselcnt.bmp"
 IDB_RIP                 BITMAP                  "rip.bmp"
 
 IDB_SPLASH              BITMAP                  "splash.bmp"
+IDB_SPLASH_ART          BITMAP                  "splash_art.bmp"
 
 
 /////////////////////////////////////////////////////////////////////////////

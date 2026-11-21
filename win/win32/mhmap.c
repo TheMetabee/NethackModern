@@ -1474,6 +1474,10 @@ mswin_fx_event(const struct fx_event *ev)
     if (!data)
         return;
     fx_motion_event(data, ev); /* lunges and shakes */
+    if (ev->type == FXE_MOVE && (ev->flags & FXF_HERO_TARGET)
+        && iflags.fx_theme && IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
+        /* the character panel's action bar depends on where we stand */
+        InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
     fx_shake_event(data, ev);  /* the whole view */
     if (ev->type == FXE_EXPLODE && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
         fx_burst_particles(data, ev->x, ev->y, ev->adtyp, ev->amount);
