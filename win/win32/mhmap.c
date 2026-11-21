@@ -31,11 +31,14 @@
 #define FX_FLOAT_MS 900     /* lifetime of one number */
 #define FX_TEXT_MS 1400     /* lifetime of a status name */
 #define FX_LEVEL_MS 2600    /* lifetime of "Level N!" */
+#define FX_KILL_MS 1100     /* lifetime of "Killed" */
 #define FX_STACK_MS 400     /* a new number on a square this young stacks */
 #define FX_MAXFLOAT 64
 #define FX_MAXANIM 32
 #define FXM_LUNGE 1
 #define FXM_SHAKE 2
+#define FXM_DEATH 3
+#define FX_DEATH_MS 360     /* shake ~35%, then fade out */
 #define FX_LUNGE_MS 150     /* out ~40%, back ~60% */
 #define FX_LUNGE_GAP 110    /* successive lunges in one turn queue up */
 #define FX_SHAKE_MS 220
@@ -97,6 +100,7 @@ typedef struct mswin_nethack_map_window {
         DWORD life;             /* how long it floats, ms */
         int stack;              /* raised this many slots to avoid overlap */
         int xoff;               /* sideways jitter, percent of a tile */
+        boolean low;            /* starts at the health bar, rises less */
         boolean big;            /* large hit: drawn bigger */
         COLORREF color;
         DWORD start;            /* GetTickCount() when (re)started */
@@ -115,6 +119,9 @@ typedef struct mswin_nethack_map_window {
     } anims[FX_MAXANIM];
     int nanims;
     DWORD animSeq;              /* when the queued lunges finish */
+    HDC fadeDC;                 /* scratch tile for fading sprites */
+    HBITMAP fadeBmp, fadeBmpOld;
+    int fadeW, fadeH;
     boolean fxTimerOn;
     HFONT hFxFont, hFxFontBig;  /* fonts for the numbers */
     HFONT hFxFontSmall;         /* font for status names */
@@ -700,6 +707,11 @@ MapWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DeleteObject(data->hFxFontBig);
         if (data->hFxFontSmall)
             DeleteObject(data->hFxFontSmall);
+        if (data->fadeDC) {
+            SelectObject(data->fadeDC, data->fadeBmpOld);
+            DeleteObject(data->fadeBmp);
+            DeleteDC(data->fadeDC);
+        }
         if (data->compDC) {
             SelectObject(data->compDC, data->compBmpOld);
             DeleteObject(data->compBmp);
@@ -1302,6 +1314,7 @@ static void fx_status_floaters(PNHMapWindow, const struct fx_event *);
 static void fx_motion_event(PNHMapWindow, const struct fx_event *);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_start_timer(PNHMapWindow);
+static void fx_blend_tile(PNHMapWindow, HDC, int, int, int, int, short, int);
 
 /* called by the core (fx.c) */
 static void
@@ -1338,6 +1351,18 @@ mswin_fx_event(const struct fx_event *ev)
     }
     if (!iflags.fx_damage_numbers)
         return;
+    if (ev->type == FXE_DEATH) {
+        /* "Killed" where the health bar was (pets: a grey "Died") */
+        boolean pet = (ev->flags & FXF_TARGET_PET) != 0;
+
+        f = fx_add_floater(data, ev, 0, pet ? "Died" : "Killed",
+                           pet ? RGB(170, 170, 170) : RGB(235, 60, 50));
+        f->life = FX_KILL_MS;
+        f->low = TRUE;
+        f->xoff = 0;
+        f->stack = 0;
+        return;
+    }
     if (ev->type == FXE_MISS) {
         /* "Miss" floats up off whoever dodged */
         (void) fx_add_floater(data, ev, 0, "Miss", RGB(190, 190, 190));
@@ -1405,6 +1430,7 @@ fx_add_floater(PNHMapWindow data, const struct fx_event *ev, int amount,
     if (text)
         Strcpy(f->text, text);
     f->life = text ? FX_TEXT_MS : FX_FLOAT_MS;
+    f->low = FALSE;
     f->stack = min(stack, 4);
     {
         /* jitter sideways so repeated numbers don't sit exactly on top of
@@ -1576,7 +1602,69 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
         a->start = start;
         a->dur = FX_SHAKE_MS;
         fx_start_timer(data);
+    } else if (ev->type == FXE_DEATH) {
+        DWORD start = now;
+
+        if (!isok(ev->x, ev->y)
+            || !glyph_is_monster(data->map[ev->x][ev->y].glyph))
+            return; /* nothing of it drawn there to fade */
+        /* follow the killing blow's shake on this square */
+        for (i = data->nanims - 1; i >= 0; i--) {
+            struct fx_anim *l = &data->anims[i];
+
+            if (l->kind == FXM_SHAKE && l->x == ev->x && l->y == ev->y
+                && (long) (l->start + l->dur - now) > 0) {
+                start = l->start + l->dur / 2;
+                l->dur = l->dur / 2; /* the death shake takes over */
+                break;
+            }
+        }
+        a = fx_new_anim(data);
+        a->kind = FXM_DEATH;
+        a->x = ev->x, a->y = ev->y;
+        a->dx = a->dy = 0;
+        a->tile = data->map[ev->x][ev->y].gm.tileidx;
+        a->hit = TRUE;
+        a->strength = 60;
+        a->start = start;
+        a->dur = FX_DEATH_MS;
+        fx_start_timer(data);
     }
+}
+
+/* draw tile 'tile' at <x,y> on hdc, blended at 'alpha' (0..255) over
+   whatever is already there (used to fade dying creatures out) */
+static void
+fx_blend_tile(PNHMapWindow data, HDC hdc, int x, int y, int w, int h,
+              short tile, int alpha)
+{
+    BLENDFUNCTION bf;
+
+    if (alpha <= 0)
+        return;
+    if (!data->fadeDC || data->fadeW != w || data->fadeH != h) {
+        if (data->fadeDC) {
+            SelectObject(data->fadeDC, data->fadeBmpOld);
+            DeleteObject(data->fadeBmp);
+            DeleteDC(data->fadeDC);
+        }
+        data->fadeDC = CreateCompatibleDC(hdc);
+        data->fadeBmp = CreateCompatibleBitmap(hdc, w, h);
+        data->fadeBmpOld = SelectObject(data->fadeDC, data->fadeBmp);
+        data->fadeW = w, data->fadeH = h;
+    }
+    /* scratch = what's on the map now, with the sprite on top */
+    BitBlt(data->fadeDC, 0, 0, w, h, hdc, x, y, SRCCOPY);
+    (*GetNHApp()->lpfnTransparentBlt)(
+        data->fadeDC, 0, 0, w, h, data->tileDC, TILEBMP_X(tile),
+        TILEBMP_Y(tile), GetNHApp()->mapTile_X, GetNHApp()->mapTile_Y,
+        TILE_BK_COLOR);
+    /* ...then lay the scratch back down, only partly opaque */
+    bf.BlendOp = AC_SRC_OVER;
+    bf.BlendFlags = 0;
+    bf.SourceConstantAlpha = (BYTE) min(alpha, 255);
+    bf.AlphaFormat = 0;
+    (void) GdiAlphaBlend(hdc, x, y, w, h, data->fadeDC, 0, 0, w, h, bf);
 }
 
 /* a keypress snaps every sprite back to its square (design rule 2) */
@@ -1616,6 +1704,19 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
         if (age < 0 || age >= (long) a->dur)
             continue;
         p = (double) age / a->dur;
+        if (a->kind == FXM_DEATH) {
+            /* a small shake, then fade out over what's left there (its
+               corpse, items or bare floor) */
+            double fadefrom = 0.35;
+            int alpha = (p < fadefrom) ? 255
+                        : (int) (255 * (1.0 - (p - fadefrom) / (1 - fadefrom)));
+            double amp = tw * 0.06 * (p < fadefrom ? 1.0 - p / fadefrom : 0.0);
+
+            offx = (int) (amp * sin(p * 2 * 3.14159265358979 * 9.0));
+            cx = ox + a->x * tw, cy = oy + a->y * th;
+            fx_blend_tile(data, hdc, cx + offx, cy, tw, th, a->tile, alpha);
+            continue;
+        }
         if (a->kind == FXM_LUNGE) {
             /* quick push out, softer ease back */
             double reach = (a->hit ? 0.28 : 0.2) * tw;
@@ -1745,7 +1846,12 @@ fx_paint_overlay(PNHMapWindow data, HDC hdc)
 
         if (age >= f->life)
             continue;
-        if (f->life == FX_LEVEL_MS) {
+        if (f->low) {
+            /* "Killed": starts at the health bar, drifts up a little */
+            rise = (int) (data->yFrontTile * 0.35 * (1.0 - (1.0 - t) * (1.0 - t)))
+                   - (data->yFrontTile * 3) / 5;
+            fadefrom = 0.6;
+        } else if (f->life == FX_LEVEL_MS) {
             /* level messages rise in the first third, hang above the
                hero, then fade only over the last quarter */
             double tr = min(1.0, t / 0.33);
