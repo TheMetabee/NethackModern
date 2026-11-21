@@ -1493,6 +1493,7 @@ nh_compose_unicode_screenshot(void)
 #define TB_BARSTYLE 7 /* arg: the fx_bar_style to use */
 #define TB_BARBORDER 8 /* turn the HP/Pw bar outline on or off */
 #define TB_SHADE 9    /* arg: fx_shade 0..3, or 4 for lighting off */
+#define TB_MSGPOS 10  /* arg: fx_msg_pos 0..5 */
 
 extern void ma_apply_volumes(void);  /* masound.c */
 extern void ma_volume_preview(void);
@@ -1541,6 +1542,13 @@ static const struct tb_item tb_view[] = {
     { "Shade: dark", "", TB_SHADE, NULL, 2 },
     { "Shade: deep", "", TB_SHADE, NULL, 3 },
     { "Lighting off", "", TB_SHADE, NULL, 4 },
+    TBSEP,
+    { "Messages: top left", "", TB_MSGPOS, NULL, 0 },
+    { "Messages: top centre", "", TB_MSGPOS, NULL, 1 },
+    { "Messages: top right", "", TB_MSGPOS, NULL, 2 },
+    { "Messages: bottom left", "", TB_MSGPOS, NULL, 3 },
+    { "Messages: bottom centre", "", TB_MSGPOS, NULL, 4 },
+    { "Messages: bottom right", "", TB_MSGPOS, NULL, 5 },
     TBSEP,
     TBC("Tiles", "", IDM_MAP_TILES),
     TBC("ASCII", "", IDM_MAP_ASCII12X16),
@@ -1747,6 +1755,23 @@ tb_run(const struct tb_item *it)
             Sprintf(opt, "fx_bar_style:%s", nm[it->arg % 5]);
             cfg_remember_option("fx_bar_style", opt);
         }
+        SetTimer(tb_hwnd, 1, 1800, NULL);
+        InvalidateRect(tb_hwnd, NULL, FALSE);
+        break;
+    }
+    case TB_MSGPOS: {
+        static const char *const nm[] = { "top-left", "top-centre",
+                                          "top-right", "bottom-left",
+                                          "bottom-centre", "bottom-right" };
+        HWND mw = mswin_hwnd_from_winid(WIN_MAP);
+        char opt[64];
+
+        iflags.fx_msg_pos = it->arg % 6;
+        Sprintf(tb_toast, "Messages: %s", nm[iflags.fx_msg_pos]);
+        Sprintf(opt, "fx_msg_pos:%s", nm[iflags.fx_msg_pos]);
+        cfg_remember_option("fx_msg_pos", opt);
+        if (mw && IsWindow(mw))
+            InvalidateRect(mw, NULL, FALSE);
         SetTimer(tb_hwnd, 1, 1800, NULL);
         InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
@@ -2056,6 +2081,9 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DrawTextA(dis->hDC,
                       (it->kind == TB_BARSTYLE
                        && it->arg == iflags.fx_bar_style) ? "in use"
+                      : (it->kind == TB_MSGPOS
+                         && it->arg == iflags.fx_msg_pos)
+                          ? "in use"
                       : (it->kind == TB_SHADE
                          && ((it->arg == 4 && !iflags.fx_lighting)
                              || (it->arg < 4 && iflags.fx_lighting

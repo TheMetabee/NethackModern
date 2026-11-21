@@ -3768,6 +3768,50 @@ optfn_scores(
     return optn_ok;
 }
 
+/* NetHack Modern: where NetHackW's messages sit on the map */
+static const char *const fx_msg_poses[] = {
+    "top-left", "top-centre", "top-right",
+    "bottom-left", "bottom-centre", "bottom-right"
+};
+
+staticfn int
+optfn_fx_msg_pos(int optidx, int req, boolean negated, char *opts, char *op)
+{
+    int i;
+
+    if (req == do_init) {
+        iflags.fx_msg_pos = 3; /* bottom-left */
+        return optn_ok;
+    }
+    if (req == do_set) {
+        op = string_for_opt(opts, negated);
+        if (negated || op == empty_optstr)
+            return optn_err;
+        for (i = 0; i < SIZE(fx_msg_poses); i++) {
+            const char *nm = fx_msg_poses[i];
+
+            /* "center" (US spelling) for "centre", "top" for top-left */
+            if (!strcmpi(op, nm)
+                || (strstri(nm, "centre") && !strncmpi(op, nm, 4)
+                    && strstri(op, "cent"))
+                || (!strcmpi(op, "top") && i == 0)
+                || (!strcmpi(op, "bottom") && i == 3)) {
+                iflags.fx_msg_pos = i;
+                return optn_ok;
+            }
+        }
+        config_error_add("%s: top-left, top-centre, top-right, bottom-left,"
+                         " bottom-centre or bottom-right",
+                         allopt[optidx].name);
+        return optn_err;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Strcpy(opts, fx_msg_poses[iflags.fx_msg_pos % SIZE(fx_msg_poses)]);
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
 /* NetHack Modern: how dark out-of-sight squares are in NetHackW */
 static const char *const fx_shades[] = { "light", "medium", "dark", "deep" };
 

@@ -381,6 +381,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_hero_frame, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_hero_frame, Term_False,
            "NetHackW: gold corner marks around the hero's square")
+    NHOPTC(fx_msg_pos, Advanced, 20, opt_in, set_in_game,
+                No, Yes, No, No, NoAlias,
+                "NetHackW: where messages sit on the map: top-left, top-centre, top-right, bottom-left, bottom-centre or bottom-right")
     NHOPTC(fx_shade, Advanced, 10, opt_in, set_in_game,
                 No, Yes, No, No, NoAlias,
                 "NetHackW: how dark out-of-sight squares are: light, medium, dark or deep")
