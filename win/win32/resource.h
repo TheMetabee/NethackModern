@@ -141,6 +141,9 @@
 #define IDM_MAP_ASCII12X16              32790
 #define IDM_MAP_ASCII10X18              32791
 #define IDM_MAP_FIT_TO_SCREEN           32792
+#define IDM_MAP_ZOOM_IN                 32801
+#define IDM_MAP_ZOOM_OUT                32802
+#define IDM_MAP_ZOOM_AUTO               32803
 #define IDM_NHMODE                      32794
 #define IDM_CLEARSETTINGS               32795
 #define IDM_SETTING_AUTOLAYOUT          32796
@@ -155,7 +158,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        146
-#define _APS_NEXT_COMMAND_VALUE         32801
+#define _APS_NEXT_COMMAND_VALUE         32804
 #define _APS_NEXT_CONTROL_VALUE         1341
 #define _APS_NEXT_SYMED_VALUE           110
 #endif

@@ -235,6 +235,22 @@ MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_KEYDOWN: {
 
+        /* NetHack Modern: Ctrl+= / Ctrl+- zoom the map, Ctrl+0 resets */
+        if (STATEON(VK_CONTROL) && iflags.fx_theme) {
+            if (wParam == VK_OEM_PLUS || wParam == VK_ADD) {
+                mswin_map_zoom(1);
+                return 0;
+            }
+            if (wParam == VK_OEM_MINUS || wParam == VK_SUBTRACT) {
+                mswin_map_zoom(-1);
+                return 0;
+            }
+            if (wParam == '0' || wParam == VK_NUMPAD0) {
+                mswin_map_zoom(0);
+                return 0;
+            }
+        }
+
         /* translate arrow keys into nethack commands */
         switch (wParam) {
         case VK_LEFT:
@@ -399,6 +415,14 @@ MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         } /* end switch */
     } break;
+
+    case WM_MOUSEWHEEL:
+        /* NetHack Modern: Ctrl+wheel zooms the map */
+        if ((GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) && iflags.fx_theme) {
+            mswin_map_zoom(GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 1 : -1);
+            return 0;
+        }
+        return DefWindowProc(hWnd, message, wParam, lParam);
 
     case WM_SYSCHAR: /* Alt-char pressed */
     {
@@ -868,6 +892,16 @@ onWMCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
     case IDM_MAP_ASCII16X12:
     case IDM_MAP_ASCII10X18:
         mswin_select_map_mode(menuid2mapmode(wmId));
+        break;
+
+    case IDM_MAP_ZOOM_IN:
+        mswin_map_zoom(1);
+        break;
+    case IDM_MAP_ZOOM_OUT:
+        mswin_map_zoom(-1);
+        break;
+    case IDM_MAP_ZOOM_AUTO:
+        mswin_map_zoom(0);
         break;
 
     case IDM_MAP_FIT_TO_SCREEN:

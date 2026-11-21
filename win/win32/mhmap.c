@@ -29,6 +29,9 @@
 #define CURSOR_TIMER_ID 0
 #define FX_TIMER_ID 2
 #define FX_AURA_TIMER_ID 3
+/* NetHack Modern: map zoom steps (times the normal tile size) */
+static const double fx_zooms[] = { 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0 };
+#define FX_NZOOM ((int) (sizeof fx_zooms / sizeof fx_zooms[0]))
 #define FX_AURA_MS 50       /* lasting effects (sleeping z's) redraw rate */
 /* the statuses that get a lasting effect */
 #define FX_AURA_MASK (FXA_ASLEEP | FXA_CONFUSED | FXA_STUNNED | FXA_SLOW \
@@ -153,6 +156,9 @@ typedef struct mswin_nethack_map_window {
     } parts[FX_MAXPART];
     int nparts;
     boolean auraTimerOn;        /* lasting effects are being animated */
+    boolean zoomSet;            /* the player chose zoomLevel (else auto) */
+    int zoomLevel;              /* index into fx_zooms[] */
+    int zoomAuto;               /* what auto picked last layout */
     HDC partDC;                 /* black layer the particles are drawn on */
     HBITMAP partBmp, partBmpOld;
     int partW, partH;
@@ -166,6 +172,19 @@ typedef struct mswin_nethack_map_window {
 } NHMapWindow, *PNHMapWindow;
 
 static TCHAR szNHMapWindowClass[] = TEXT("MSNethackMapWndClass");
+
+/* NetHack Modern: with the theme the map follows the hero by itself and
+   Ctrl+arrows still scroll it, so its grey scroll bars stay hidden */
+static void
+fx_set_scroll(HWND hWnd, int bar, SCROLLINFO *si, BOOL redraw)
+{
+    if (iflags.fx_theme) {
+        SetScrollInfo(hWnd, bar, si, FALSE);
+        ShowScrollBar(hWnd, bar, FALSE);
+    } else {
+        SetScrollInfo(hWnd, bar, si, redraw);
+    }
+}
 LRESULT CALLBACK MapWndProc(HWND, UINT, WPARAM, LPARAM);
 static void register_map_window_class(void);
 static void onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam);
@@ -428,6 +447,24 @@ mswin_map_layout(HWND hWnd, LPSIZE map_size)
         } else {
             data->frontScale = data->monitorScale;
         }
+        if (!bText && iflags.fx_theme && wnd_size.cy > 0) {
+            /* NetHack Modern: zoom. Automatic picks the largest step that
+               still shows the level's full height (it scrolls sideways,
+               following the hero); the player can step it with Ctrl+=/-
+               and Ctrl+wheel, Ctrl+0 goes back to automatic */
+            int z;
+
+            data->zoomAuto = 1; /* 1.0x */
+            for (z = FX_NZOOM - 1; z >= 1; z--)
+                if (data->yBackTile * data->monitorScale * fx_zooms[z]
+                        * ROWNO
+                    <= wnd_size.cy) {
+                    data->zoomAuto = z;
+                    break;
+                }
+            z = data->zoomSet ? data->zoomLevel : data->zoomAuto;
+            data->frontScale = data->monitorScale * fx_zooms[z];
+        }
 
     }
 
@@ -474,7 +511,7 @@ mswin_map_layout(HWND hWnd, LPSIZE map_size)
     si.nMax = data->xMax;
     si.nPage = 1;
     si.nPos = data->xPos;
-    SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
+    fx_set_scroll(hWnd, SB_HORZ, &si, TRUE);
 
     data->yPageSize = min(ROWNO, wnd_size.cy / data->yFrontTile);
 
@@ -490,7 +527,7 @@ mswin_map_layout(HWND hWnd, LPSIZE map_size)
     si.nMax = data->yMax;
     si.nPage = 1;
     si.nPos = data->yPos;
-    SetScrollInfo(hWnd, SB_VERT, &si, TRUE);
+    fx_set_scroll(hWnd, SB_VERT, &si, TRUE);
 
     mswin_cliparound(data->xCur, data->yCur);
 
@@ -1346,6 +1383,19 @@ onPaint(HWND hWnd)
             data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth,
             frontHeight, data->backBufferDC, 0, 0, data->backWidth,
             data->backHeight, SRCCOPY);
+        if (iflags.fx_theme) {
+            /* column 0 is never part of the level: backdrop, not black */
+            static HBRUSH col0;
+            RECT r;
+
+            if (!col0)
+                col0 = CreateSolidBrush(TH_BG_APP);
+            r.left = data->map_orig.x - data->xPos * data->xFrontTile;
+            r.top = data->map_orig.y - data->yPos * data->yFrontTile;
+            r.right = r.left + data->xFrontTile;
+            r.bottom = r.top + frontHeight;
+            FillRect(hdc, &r, col0);
+        }
         fx_paint_translucent(data, hdc);
         fx_paint_sprites(data, hdc);
         if (!fx_paint_auras(data, hdc))
@@ -3258,6 +3308,37 @@ fx_paint_auras(PNHMapWindow data, HDC hdc)
 #undef TAU
 }
 
+/* NetHack Modern: zoom the map; dir +1 in, -1 out, 0 back to auto */
+void
+mswin_map_zoom(int dir)
+{
+    HWND hWnd = mswin_hwnd_from_winid(WIN_MAP);
+    PNHMapWindow data;
+    SIZE sz;
+    int z;
+
+    if (!hWnd || !iflags.fx_theme)
+        return;
+    data = (PNHMapWindow) GetWindowLongPtr(hWnd, GWLP_USERDATA);
+    if (!data || data->bAsciiMode || data->bFitToScreenMode)
+        return;
+    if (dir == 0) {
+        data->zoomSet = FALSE;
+    } else {
+        z = data->zoomSet ? data->zoomLevel : data->zoomAuto;
+        z += dir;
+        if (z < 0)
+            z = 0;
+        if (z >= FX_NZOOM)
+            z = FX_NZOOM - 1;
+        data->zoomLevel = z;
+        data->zoomSet = TRUE;
+    }
+    sz.cx = data->tileWidth * COLNO;
+    sz.cy = data->tileHeight * ROWNO;
+    mswin_map_layout(hWnd, &sz);
+}
+
 /* a keypress snaps every sprite back to its square (design rule 2) */
 void
 mswin_map_fx_snap(void)
@@ -3701,7 +3782,7 @@ onMSNH_VScroll(HWND hWnd, WPARAM wParam, LPARAM lParam)
     si.cbSize = sizeof(si);
     si.fMask = SIF_POS;
     si.nPos = data->yPos;
-    SetScrollInfo(hWnd, SB_VERT, &si, TRUE);
+    fx_set_scroll(hWnd, SB_VERT, &si, TRUE);
 }
 
 /* on WM_HSCROLL */
@@ -3762,7 +3843,7 @@ onMSNH_HScroll(HWND hWnd, WPARAM wParam, LPARAM lParam)
     si.cbSize = sizeof(si);
     si.fMask = SIF_POS;
     si.nPos = data->xPos;
-    SetScrollInfo(hWnd, SB_HORZ, &si, TRUE);
+    fx_set_scroll(hWnd, SB_HORZ, &si, TRUE);
 }
 
 /* map nethack map coordinates to the screen location */
