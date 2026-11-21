@@ -47,7 +47,8 @@ enum fx_event_type {
     FXE_SHAKE,      /* shake the view; 'amount' = strength 1..100 */
     FXE_EXPLODE,    /* explosion at x,y: 'adtyp' element, 'amount' damage;
                      * FXF_UNSEEN if only heard */
-    FXE_KNOCKBACK   /* a creature was hurtled one step, sx,sy -> x,y */
+    FXE_KNOCKBACK,  /* a creature was hurtled one step, sx,sy -> x,y */
+    FXE_MOVE        /* a seen creature moved sx,sy -> x,y (1-2 squares) */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */

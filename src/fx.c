@@ -33,6 +33,7 @@ struct fx_track {
     boolean inview;       /* hero could see it at the last sync */
     boolean sinit;        /* sbase is valid */
     unsigned long sbase;  /* statuses last announced (FXE_STATUS) */
+    coordxy mx, my;       /* where it was at the last sync */
 };
 
 static struct {
@@ -52,6 +53,7 @@ static struct {
     uchar hero_health;
     boolean hero_sinit;
     unsigned long hero_sbase;
+    coordxy hero_x, hero_y; /* hero's square at the last sync (0: unknown) */
     /* monsters on the current level */
     struct fx_track tab[FX_MAXTRACK];
     int ntab;
@@ -68,6 +70,7 @@ staticfn unsigned fx_bulk_flag(void);
 staticfn void fx_hpchange(struct monst *, int, int, int *);
 staticfn const char *fx_typename(int);
 staticfn void fx_appear(struct monst *);
+staticfn void fx_step(coordxy, coordxy, coordxy, coordxy, boolean);
 staticfn void fx_status(struct monst *, unsigned long, unsigned long);
 
 void
@@ -166,6 +169,8 @@ fx_typename(int type)
         return "EXPLODE";
     case FXE_KNOCKBACK:
         return "KNOCKBACK";
+    case FXE_MOVE:
+        return "MOVE";
     }
     return "?";
 }
@@ -212,6 +217,7 @@ fx_reset_level(void)
     fx.ntab = 0;
     fx.lev = u.uz;
     fx.have_lev = TRUE;
+    fx.hero_x = fx.hero_y = 0; /* arriving isn't a step */
 }
 
 /* find (or optionally start tracking) a monster */
@@ -238,6 +244,7 @@ fx_find(struct monst *mtmp, boolean create)
     t->sbase = 0UL;
     t->health = 0;
     t->alive = TRUE;
+    t->mx = mtmp->mx, t->my = mtmp->my;
     return t;
 }
 
@@ -416,6 +423,9 @@ fx_sync(void)
         fx_hpchange(&gy.youmonst, fx.hero_hp, cur, &fx.hero_pendkind);
     }
     fx.hero_hp = cur, fx.hero_hpmax = max;
+    if (fx.hero_x && (u.ux != fx.hero_x || u.uy != fx.hero_y))
+        fx_step(fx.hero_x, fx.hero_y, u.ux, u.uy, TRUE);
+    fx.hero_x = u.ux, fx.hero_y = u.uy;
     auras = fx_hero_auras();
     health = fx_health(cur, max);
     {
@@ -459,6 +469,10 @@ fx_sync(void)
             continue;
         }
         t->alive = TRUE;
+        if (!DEADMONSTER(mtmp) && t->inview && canseemon(mtmp)
+            && (mtmp->mx != t->mx || mtmp->my != t->my))
+            fx_step(t->mx, t->my, mtmp->mx, mtmp->my, FALSE);
+        t->mx = mtmp->mx, t->my = mtmp->my;
         if (!DEADMONSTER(mtmp)) {
             boolean inview = canseemon(mtmp) ? TRUE : FALSE;
 
@@ -750,6 +764,26 @@ fx_explosion(coordxy x, coordxy y, int adtyp, int dam, boolean seen)
     ev.x = ev.sx = x, ev.y = ev.sy = y;
     ev.adtyp = adtyp;
     ev.amount = max(dam, 0);
+    fx_emit(&ev);
+}
+
+/* a seen creature (or the hero) moved from <fx,fy> to <tx,ty> since the
+   last sync; only plain steps (one or two squares) are reported, not
+   teleports or level changes */
+staticfn void
+fx_step(coordxy fx, coordxy fy, coordxy tx, coordxy ty, boolean hero)
+{
+    struct fx_event ev;
+    int d = max(abs(tx - fx), abs(ty - fy));
+
+    if (d < 1 || d > 2 || !isok(fx, fy) || !isok(tx, ty))
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_MOVE;
+    ev.flags = fx_bulk_flag() | (hero ? FXF_HERO_TARGET : 0U);
+    ev.sx = fx, ev.sy = fy;
+    ev.x = tx, ev.y = ty;
+    ev.adtyp = -1;
     fx_emit(&ev);
 }
 

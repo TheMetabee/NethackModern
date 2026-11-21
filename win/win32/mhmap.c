@@ -39,7 +39,8 @@
 #define FXM_SHAKE 2
 #define FXM_DEATH 3
 #define FXM_SLIDE 4         /* hurtled: glide in from the previous square */
-#define FX_SLIDE_MS 70
+#define FX_SLIDE_MS 70      /* one hurtled step */
+#define FX_STEP_MS 110      /* an ordinary step */
 #define FX_DEATH_MS 360     /* shake ~35%, then fade out */
 #define FX_LUNGE_MS 150     /* out ~40%, back ~60% */
 #define FX_LUNGE_GAP 110    /* successive lunges in one turn queue up */
@@ -1237,7 +1238,11 @@ onPaint(HWND hWnd)
     int shx = 0, shy = 0;
     boolean shaking = fx_shake_offset(data, &shx, &shy);
 
-    if (data->nfloaters > 0 || data->nanims > 0 || shaking) {
+    /* always compose off screen, then copy: switching between this and a
+       direct stretch whenever an animation starts or stops made the whole
+       map twitch by a pixel (the two stretches round differently) */
+    (void) shaking;
+    {
         /* compose map + floating numbers off screen, then copy, so the
            numbers don't flicker */
         RECT client;
@@ -1274,11 +1279,6 @@ onPaint(HWND hWnd)
                ps.rcPaint.right - ps.rcPaint.left,
                ps.rcPaint.bottom - ps.rcPaint.top, hdc, ps.rcPaint.left,
                ps.rcPaint.top, SRCCOPY);
-    } else {
-        StretchBlt(hFrontBufferDC,
-            data->map_orig.x - (data->xPos * data->xFrontTile),
-            data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth, frontHeight,
-                    data->backBufferDC, 0, 0, data->backWidth, data->backHeight, SRCCOPY);
     }
 
     EndPaint(hWnd, &ps);
@@ -1630,15 +1630,24 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
         a->start = start;
         a->dur = FX_SHAKE_MS;
         fx_start_timer(data);
-    } else if (ev->type == FXE_KNOCKBACK) {
+    } else if (ev->type == FXE_KNOCKBACK || ev->type == FXE_MOVE) {
+        boolean step = (ev->type == FXE_MOVE);
+        int lim = step ? 2 : 1;
+
         dx = ev->x - ev->sx, dy = ev->y - ev->sy;
-        if (!isok(ev->x, ev->y) || dx < -1 || dx > 1 || dy < -1 || dy > 1
-            || !glyph_is_monster(data->map[ev->x][ev->y].glyph))
+        if (!isok(ev->x, ev->y) || dx < -lim || dx > lim || dy < -lim
+            || dy > lim)
+            return;
+        /* (a step is reported before the map is redrawn, so whether
+           something is drawn there is checked when painting) */
+        if (!step && !glyph_is_monster(data->map[ev->x][ev->y].glyph))
             return;
         /* the previous step's slide is over: this one takes over */
         for (i = 0; i < data->nanims; i++)
             if (data->anims[i].kind == FXM_SLIDE
-                && data->anims[i].x == ev->sx && data->anims[i].y == ev->sy)
+                && ((data->anims[i].x == ev->sx && data->anims[i].y == ev->sy)
+                    || (data->anims[i].x == ev->x
+                        && data->anims[i].y == ev->y)))
                 data->anims[i].dur = 0;
         /* shakes and recoils of the knocked creature are left behind */
         for (i = 0; i < data->nanims; i++)
@@ -1649,11 +1658,13 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
         a->kind = FXM_SLIDE;
         a->x = ev->x, a->y = ev->y;
         a->dx = dx, a->dy = dy;
-        a->tile = data->map[ev->x][ev->y].gm.tileidx;
-        a->hit = TRUE;
+        a->tile = data->map[ev->x][ev->y].gm.tileidx; /* refreshed in paint */
+        a->hit = !step;
         a->strength = 0;
         a->start = now;
-        a->dur = FX_SLIDE_MS;
+        a->dur = step ? (max(abs(dx), abs(dy)) > 1 ? FX_STEP_MS + 40
+                                                   : FX_STEP_MS)
+                      : FX_SLIDE_MS;
         fx_start_timer(data);
     } else if (ev->type == FXE_DEATH) {
         DWORD start = now;
@@ -1838,6 +1849,13 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
         if (age < 0 || age >= (long) a->dur)
             continue;
         p = (double) age / a->dur;
+        if (a->kind == FXM_SLIDE) {
+            /* whatever is drawn there now (the step was reported before
+               the map caught up); nothing to slide if it's gone */
+            if (!glyph_is_monster(data->map[a->x][a->y].glyph))
+                continue;
+            a->tile = data->map[a->x][a->y].gm.tileidx;
+        }
         if (a->kind == FXM_DEATH) {
             /* a small shake, then fade out over what's left there (its
                corpse, items or bare floor) */
@@ -1860,9 +1878,9 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
             offx = (int) (a->dx * reach * e);
             offy = (int) (a->dy * reach * e);
         } else if (a->kind == FXM_SLIDE) {
-            /* from the square it left, easing in */
+            /* from the square it left, easing in (steps a bit softer) */
             e = 1.0 - p;
-            e = e * e;
+            e = a->hit ? e * e : e * e * (3 - 2 * e);
             offx = (int) (-a->dx * tw * e);
             offy = (int) (-a->dy * th * e);
         } else { /* FXM_SHAKE: decaying side-to-side jitter */
