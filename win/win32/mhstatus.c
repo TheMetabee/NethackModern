@@ -388,10 +388,10 @@ th_bar(HDC hdc, int x, int y, int w, int h, const char *label, int cur,
     int fw;
 
     pct = (pct < 0) ? 0 : (pct > 100) ? 100 : pct;
-    th_round(hdc, x, y, x + w, y + h, h / 2, TH_BG_HEADER);
+    th_round(hdc, x, y, x + w, y + h, 5, TH_BG_HEADER); /* softly squared */
     fw = (w * pct) / 100;
     if (fw > 0)
-        th_round(hdc, x, y, x + max(fw, h / 2), y + h, h / 2, fill);
+        th_round(hdc, x, y, x + max(fw, 3), y + h, 5, fill);
     Sprintf(buf, "%s  %d / %d", label, cur, max);
     SetBkMode(hdc, TRANSPARENT);
     {
