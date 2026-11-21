@@ -419,6 +419,12 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
         /* reset V-scroll position to display new text */
         data->yPos = data->yMax;
 
+        /* NetHack Modern: a restored game's old messages are only
+           stored; they're shown once, when they're all in, instead of
+           flipping past one by one */
+        if (mswin_msg_restoring)
+            break;
+
         ZeroMemory(&si, sizeof(si));
         si.cbSize = sizeof(si);
         si.fMask = SIF_POS;
@@ -1030,7 +1036,8 @@ mswin_msg_overlay_line(int back, char *buf, size_t n, COLORREF *c,
     *c = data->window_text[i].has_hl ? data->window_text[i].hl
                                      : message_fg_color;
     *turn = data->window_text[i].turn;
-    *recent = (i >= MSG_LINES - data->lines_last_turn);
+    *recent = (i >= MSG_LINES - data->lines_last_turn
+               && data->window_text[i].turn != -1000000L);
     *scrolled = (data->yPos < MSG_LINES - 1);
     return TRUE;
 }

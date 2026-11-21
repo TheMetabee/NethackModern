@@ -2200,8 +2200,16 @@ mswin_putmsghistory(const char *msg, boolean restoring)
 
     UNREFERENCED_PARAMETER(restoring);
 
-    if (!msg)
-        return; /* end of message history restore */
+    if (!msg) { /* end of message history restore */
+        /* NetHack Modern: show it once, now it's all in */
+        HWND mw = mswin_hwnd_from_winid(WIN_MESSAGE);
+
+        if (mw && IsWindow(mw))
+            InvalidateRect(mw, NULL, TRUE);
+        if (mswin_hwnd_from_winid(WIN_MAP))
+            InvalidateRect(mswin_hwnd_from_winid(WIN_MAP), NULL, FALSE);
+        return;
+    }
     save_sound_opt = GetNHApp()->bNoSounds;
     GetNHApp()->bNoSounds =
         TRUE; /* disable sounds while restoring message history */
