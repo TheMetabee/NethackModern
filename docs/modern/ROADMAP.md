@@ -45,6 +45,79 @@ hits hero, where `showdamage` lives), `mhitm.c` (monster vs monster),
 `zap.c` / `explode.c` (wands, spells, breath), `losehp()` and the monster
 death path in `mon.c`.
 
+## Persistent status effects ("auras")
+
+ToME keeps a particle effect running on a creature for as long as a status
+lasts, even while it stands idle: quaff speed and you get an afterimage trail,
+go invisible and you shimmer. We want the same thing. One-shot fx events
+can't do this, because a status is *state*, not an event. It has to survive
+redraws, level changes, save/restore and the monster moving out of sight and
+back again.
+
+**Mechanism.** Every map cell already reaches the window port as a
+`glyph_info` (`include/wintype.h`) through `print_glyph()`. We add one field,
+`uint32 fxauras`, which is a bitmask computed in `display.c` at the moment the
+glyph is mapped:
+
+- For the hero, it comes from `u.uprops` through the existing macros
+  (`Very_fast`/`Fast`, `Invis`, `Levitation`, `Reflecting`, `Confusion`,
+  `Stunned`, `Stoned`, `Sick`, `Slimed`, `Hallucination`, protection
+  spell, ...).
+- For a monster the hero can see, it comes from `struct monst` bitfields
+  (`mspeed == MFAST`, `minvis` when it's seen anyway, `mconf`, `mstun`,
+  `mflee`, `mcan`, ...).
+
+The core decides **which** statuses are active and the port decides **how**
+they look. Nothing new is saved, because the mask is recomputed from real game
+state on every redraw. Ports that ignore the field draw exactly what they draw
+today. The usual visibility rules apply: we never show an aura the hero
+couldn't perceive, so a monster's speed doesn't show unless you can see it.
+
+When a status turns on or off, the game calls `newsym()` on that square, so
+the port gets the new mask right away.
+
+**Starter set (hero first, then monsters):**
+
+| Status | Look |
+|---|---|
+| Very fast / fast | Fading afterimage copies of the sprite trailing the last move; faint speed lines when idle |
+| Invisible (but seen) | Translucent sprite with a slow shimmer |
+| Levitation / flying | Sprite bobs a few pixels with a soft shadow under it |
+| Reflection | Occasional glint sweeping across the sprite |
+| Protection spell / AC buff | Pulsing translucent ring |
+| Confused / stunned | Small orbiting stars or spirals over the head |
+| Stoning / slimed / sick | Colour tint creeping over the sprite (grey / green / sickly yellow) |
+| Fleeing (monster) | Small sweat-drop marker |
+
+**Budget.** Auras are the one effect that keeps running while nothing is
+happening, so they bend design rule 5 below. To stay cheap, auras use a slow,
+separate timer (about 10–15 fps). The timer runs only while some visible cell
+has a non-zero mask, and it redraws only those cells. Turning the
+`fx_auras` option off stops the timer completely.
+
+## Design rules: animation must never slow the player
+
+Applies to every visual and audio effect, in every phase.
+
+1. **Never block input.** Effects play asynchronously. The game never waits
+   for an animation to finish before accepting the next command.
+2. **A keypress fast-forwards.** Any input instantly snaps running animations
+   to their end state (numbers at final position/faded, sprites back on
+   their square) before the command is processed.
+3. **Multi-turn actions summarise instead of animate.** While the hero is
+   running (Shift+dir, `G`), travelling (`_`), using a count prefix
+   (`n20s`), resting or otherwise in `multi`/occupation mode: skip per-step
+   animations and merge damage per target into one number (e.g. a single
+   "-8" over the monster that interrupted you). Full animation resumes when
+   control returns to the player.
+4. **Everything is optional.** Each effect family (damage numbers, health
+   bars, shake/lunge, screen shake, particles, sound) has its own option,
+   plus an animation-speed setting.
+5. **Cheap when idle.** The map's frame/timer loop runs only while an effect
+   is active; otherwise the window redraws exactly as stock NetHack does.
+   Persistent auras are the one exception. They run on their own low-rate
+   timer and redraw only the cells that have one (see above).
+
 ## Phases
 
 **Phase 0 — Baseline build.** Build stock `NetHackW.exe` from this repo with
@@ -54,7 +127,8 @@ Visual Studio; confirm tiles and the existing `windsound` work. Tag it
 **Phase 1 — Event stream.** Add `fx.c`/`fx.h` and the new window-proc; wire
 the hook sites above. Verify with a debug port that logs events to a file.
 No visuals yet. This is the most important phase: every later feature reads
-from it.
+from it. This phase also adds the `glyph_info.fxauras` field and fills it in
+for the hero and visible monsters, and the debug port logs mask changes.
 
 **Phase 2 — Damage numbers & health bars (win32).** In `win/win32/mhmap.c`
 add an overlay layer redrawn on a timer: floating numbers that rise and fade
@@ -69,10 +143,18 @@ footsteps, doors) plus level ambience. Ship CC0/CC-BY assets with
 attributions.
 
 **Phase 4 — Animation.** Attack "lunge" (sprite nudges toward target and
-back), hit flash/shake on the victim, smooth movement interpolation between
-squares, particle effects for spells and explosions built on `tmp_at` paths.
-Needs a frame-driven render loop in the map window; keep turn input
-responsive (animations skip when you press a key, like ToME).
+back), hit flash/shake on the victim (150–250 ms, strength scaled by damage
+relative to max HP), knockback recoil, screen shake for big events
+(explosions, earthquakes, crits), death shake-then-fade, smooth movement
+interpolation between squares, particle effects for spells and explosions
+built on `tmp_at` paths. Needs a frame-driven render loop in the map window
+and drawing monster sprites separately from the floor beneath them. All of
+it follows the design rules above.
+
+**Phase 4b — Persistent auras (win32).** Render the starter set from the
+`fxauras` mask on the low-rate aura timer. Start with hero speed (the
+afterimage trail), because it's the most visible and tests the whole
+pipeline. Add the others one at a time. Option: `fx_auras`.
 
 **Phase 5 — Polish / possible new front end.** Higher-resolution tileset,
 lighting/FOV shading, UI skin. If GDI in `win/win32` becomes the bottleneck,
