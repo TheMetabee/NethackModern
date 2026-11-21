@@ -45,6 +45,7 @@
 #define FX_LUNGE_MS 150     /* out ~40%, back ~60% */
 #define FX_LUNGE_GAP 110    /* successive lunges in one turn queue up */
 #define FX_SHAKE_MS 220
+#define FX_MAXPART 600      /* particles alive at once */
 
 #define TILEBMP_X(ntile) \
     ((ntile % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X)
@@ -128,6 +129,21 @@ typedef struct mswin_nethack_map_window {
     boolean fxTimerOn;
     DWORD shakeStart, shakeDur; /* screen shake (0 dur = none) */
     int shakeStrength;          /* 1..100 */
+    /* NetHack Modern: particles for rays and explosions, in map squares
+       (so scrolling carries them along) */
+    struct fx_part {
+        float x, y;             /* position, squares (centre = +0.5) */
+        float vx, vy;           /* squares per second */
+        float grav;             /* added to vy per second (< 0 rises) */
+        float drag;             /* fraction of speed kept per second */
+        float size;             /* radius, fraction of a tile */
+        COLORREF c0, c1;        /* colour when born, when it dies */
+        DWORD start, life;
+    } parts[FX_MAXPART];
+    int nparts;
+    HDC partDC;                 /* black layer the particles are drawn on */
+    HBITMAP partBmp, partBmpOld;
+    int partW, partH;
     HFONT hFxFont, hFxFontBig;  /* fonts for the numbers */
     HFONT hFxFontSmall;         /* font for status names */
     int fxFontTileH;            /* yFrontTile the fonts were made for */
@@ -154,6 +170,10 @@ static void setGlyph(PNHMapWindow data, int i, int j,
 static void clearAll(PNHMapWindow data);
 static void mswin_fx_event(const struct fx_event *ev);
 static void fx_tick(PNHMapWindow data);
+static void fx_ray_particles(PNHMapWindow, int, int, int, int);
+static void fx_burst_particles(PNHMapWindow, int, int, int, int);
+static void fx_impact_particles(PNHMapWindow, int, int, boolean);
+static void fx_paint_particles(PNHMapWindow, HDC);
 static void fx_paint_overlay(PNHMapWindow data, HDC hdc);
 static boolean fx_shake_offset(PNHMapWindow, int *, int *);
 static void fx_paint_sprites(PNHMapWindow, HDC);
@@ -718,6 +738,11 @@ MapWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DeleteObject(data->fadeBmp);
             DeleteDC(data->fadeDC);
         }
+        if (data->partDC) {
+            SelectObject(data->partDC, data->partBmpOld);
+            DeleteObject(data->partBmp);
+            DeleteDC(data->partDC);
+        }
         if (data->compDC) {
             SelectObject(data->compDC, data->compBmpOld);
             DeleteObject(data->compBmp);
@@ -771,6 +796,10 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
         PMSNHMsgPrintGlyph msg_data = (PMSNHMsgPrintGlyph) lParam;
         setGlyph(data, msg_data->x, msg_data->y,
             &msg_data->glyphinfo, &msg_data->bkglyphinfo);
+        if (glyph_is_cmap_zap(msg_data->glyphinfo.glyph))
+            fx_ray_particles(data, msg_data->x, msg_data->y,
+                             (msg_data->glyphinfo.glyph - GLYPH_ZAP_OFF) >> 2,
+                             (msg_data->glyphinfo.glyph - GLYPH_ZAP_OFF) & 3);
     } break;
 
     case MSNH_MSG_CLIPAROUND: {
@@ -1273,6 +1302,7 @@ onPaint(HWND hWnd)
             frontHeight, data->backBufferDC, 0, 0, data->backWidth,
             data->backHeight, SRCCOPY);
         fx_paint_sprites(data, hdc);
+        fx_paint_particles(data, hdc);
         fx_paint_overlay(data, hdc);
         data->map_orig.x -= shx, data->map_orig.y -= shy;
         BitBlt(hFrontBufferDC, ps.rcPaint.left, ps.rcPaint.top,
@@ -1341,6 +1371,11 @@ mswin_fx_event(const struct fx_event *ev)
         return;
     fx_motion_event(data, ev); /* lunges and shakes */
     fx_shake_event(data, ev);  /* the whole view */
+    if (ev->type == FXE_EXPLODE && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
+        fx_burst_particles(data, ev->x, ev->y, ev->adtyp, ev->amount);
+    if (ev->type == FXE_IMPACT && !(ev->flags & FXF_BULK))
+        fx_impact_particles(data, ev->x, ev->y,
+                            (ev->flags & FXF_RESISTED) != 0);
     if (ev->type == FXE_STATUS) {
         if (iflags.fx_status_text)
             fx_status_floaters(data, ev);
@@ -1796,7 +1831,8 @@ mswin_map_fx_pump(int ms)
     PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
     DWORD start = GetTickCount();
 
-    if (!data || (!data->nanims && !data->nfloaters && !data->shakeDur)) {
+    if (!data || (!data->nanims && !data->nfloaters && !data->shakeDur
+                  && !data->nparts)) {
         Sleep(ms);
         return;
     }
@@ -1809,6 +1845,344 @@ mswin_map_fx_pump(int ms)
         UpdateWindow(data->hWnd);
         Sleep(min(left, 10L));
     }
+}
+
+/* ---- particles ---------------------------------------------------- */
+
+/* private generator: the game's RNG is never touched */
+static float
+fx_prand(void)
+{
+    static unsigned long seed = 0;
+
+    if (!seed)
+        seed = (unsigned long) GetTickCount() | 1UL;
+    seed = seed * 1103515245UL + 12345UL;
+    return (float) ((seed >> 8) & 0xFFFF) / 65535.0f;
+}
+
+static float
+fx_prange(float lo, float hi)
+{
+    return lo + (hi - lo) * fx_prand();
+}
+
+/* the look of one element's particles */
+struct fx_pstyle {
+    COLORREF c0, c1, c2;   /* two birth colours to pick between, death */
+    float speed;           /* squares/second */
+    float grav;            /* < 0 rises (embers), > 0 falls (frost, acid) */
+    float drag;
+    float size;
+    int life_lo, life_hi;  /* ms */
+};
+
+static const struct fx_pstyle *
+fx_part_style(int kind)
+{
+    static const struct fx_pstyle
+        fire = { RGB(255, 200, 70), RGB(255, 120, 20), RGB(90, 10, 0),
+                 1.3f, -1.6f, 0.25f, 0.075f, 380, 800 },
+        cold = { RGB(235, 250, 255), RGB(130, 200, 255), RGB(0, 30, 80),
+                 1.0f, 0.7f, 0.3f, 0.06f, 420, 850 },
+        elec = { RGB(255, 255, 210), RGB(255, 235, 60), RGB(60, 50, 0),
+                 3.2f, 0.0f, 0.05f, 0.045f, 160, 340 },
+        sleep = { RGB(210, 190, 255), RGB(150, 120, 255), RGB(30, 10, 70),
+                  0.6f, -0.3f, 0.4f, 0.065f, 500, 900 },
+        death = { RGB(150, 60, 170), RGB(90, 90, 90), RGB(10, 0, 15),
+                  0.9f, 0.0f, 0.3f, 0.07f, 400, 800 },
+        poison = { RGB(160, 230, 70), RGB(90, 170, 40), RGB(10, 35, 0),
+                   0.5f, -0.25f, 0.45f, 0.11f, 600, 1100 },
+        acid = { RGB(220, 255, 70), RGB(170, 230, 30), RGB(30, 45, 0),
+                 0.9f, 1.8f, 0.4f, 0.06f, 400, 800 },
+        magic = { RGB(255, 170, 255), RGB(190, 110, 255), RGB(40, 0, 60),
+                  1.4f, 0.0f, 0.2f, 0.055f, 300, 650 };
+
+    switch (kind) {
+    case AD_FIRE:
+        return &fire;
+    case AD_COLD:
+        return &cold;
+    case AD_ELEC:
+        return &elec;
+    case AD_SLEE:
+        return &sleep;
+    case AD_DISN:
+    case AD_DRLI:
+        return &death;
+    case AD_DRST:
+        return &poison;
+    case AD_ACID:
+        return &acid;
+    default:
+        return &magic;
+    }
+}
+
+static struct fx_part *
+fx_new_part(PNHMapWindow data)
+{
+    if (data->nparts >= FX_MAXPART) {
+        /* full: recycle the oldest */
+        memmove(&data->parts[0], &data->parts[1],
+                (FX_MAXPART - 1) * sizeof data->parts[0]);
+        data->nparts--;
+    }
+    return &data->parts[data->nparts++];
+}
+
+static void
+fx_spawn(PNHMapWindow data, const struct fx_pstyle *st, float x, float y,
+         float speed, float sizemul, float lifemul)
+{
+    struct fx_part *p = fx_new_part(data);
+    float ang = fx_prange(0.0f, 6.2831853f), v = speed * fx_prange(0.25f, 1.0f);
+
+    p->x = x, p->y = y;
+    p->vx = v * (float) cos(ang);
+    p->vy = v * (float) sin(ang);
+    p->grav = st->grav;
+    p->drag = st->drag;
+    p->size = st->size * sizemul * fx_prange(0.7f, 1.3f);
+    p->c0 = (fx_prand() < 0.5f) ? st->c0 : st->c1;
+    p->c1 = st->c2;
+    p->start = GetTickCount();
+    p->life = (DWORD) (lifemul * fx_prange((float) st->life_lo,
+                                           (float) st->life_hi));
+}
+
+/* zap glyph type -> damage kind (ZT_* order in zap.c) */
+static int
+fx_zap_kind(int zt)
+{
+    static const int kinds[NUM_ZAP] = { AD_MAGM, AD_FIRE, AD_COLD, AD_SLEE,
+                                        AD_DISN, AD_ELEC, AD_DRST, AD_ACID };
+
+    return (zt >= 0 && zt < NUM_ZAP) ? kinds[zt] : AD_MAGM;
+}
+
+/* a ray (wand, spell or breath) is being drawn through <x,y>; 'dir' is
+   the beam's shape: 0 |, 1 -, 2 \, 3 / */
+static void
+fx_ray_particles(PNHMapWindow data, int x, int y, int zt, int dir)
+{
+    /* unit vector across the beam, for each shape */
+    static const float across[4][2] = { { 1.0f, 0.0f }, { 0.0f, 1.0f },
+                                        { 0.7071f, -0.7071f },
+                                        { 0.7071f, 0.7071f } };
+    const struct fx_pstyle *st;
+    int i, n;
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+    st = fx_part_style(fx_zap_kind(zt));
+    n = (st == fx_part_style(AD_ELEC)) ? 8 : 6;
+    for (i = 0; i < n; i++) {
+        float along = fx_prange(-0.5f, 0.5f);
+        float side = (fx_prand() < 0.5f) ? -1.0f : 1.0f;
+        float sp = fx_prange(1.1f, 2.4f) * (0.6f + 0.4f * st->speed);
+        struct fx_part *p;
+
+        /* born on the beam's line, anywhere along this square */
+        fx_spawn(data, st,
+                 x + 0.5f + along * across[dir & 3][1],
+                 y + 0.5f - along * across[dir & 3][0], 0.0f, 1.0f, 1.2f);
+        p = &data->parts[data->nparts - 1];
+        /* thrown out to one side, with a little scatter */
+        p->vx = side * across[dir & 3][0] * sp + fx_prange(-0.3f, 0.3f);
+        p->vy = side * across[dir & 3][1] * sp + fx_prange(-0.3f, 0.3f);
+    }
+    fx_start_timer(data);
+}
+
+/* an explosion centred on <x,y>: a burst over its 3x3 area, more for
+   bigger blasts */
+static void
+fx_burst_particles(PNHMapWindow data, int x, int y, int kind, int dam)
+{
+    const struct fx_pstyle *st;
+    int i, n;
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+    st = fx_part_style(kind);
+    n = 70 + min(dam, 60) * 2;
+    for (i = 0; i < n; i++) {
+        /* most from the middle flying outward, some from the edges */
+        float r = fx_prange(0.0f, 0.6f), a = fx_prange(0.0f, 6.2831853f);
+
+        fx_spawn(data, st, x + 0.5f + r * (float) cos(a),
+                 y + 0.5f + r * (float) sin(a), st->speed * 1.9f, 1.15f,
+                 1.1f);
+    }
+    fx_start_timer(data);
+}
+
+/* a force strike (wand of striking, force bolt): a quick puff of pale
+   specks and a ring snapping outward; smaller and greyer when it bounced
+   off ("Boing!") */
+static void
+fx_impact_particles(PNHMapWindow data, int x, int y, boolean resisted)
+{
+    static const struct fx_pstyle
+        force = { RGB(245, 250, 255), RGB(170, 210, 255), RGB(10, 25, 60),
+                  5.5f, 0.0f, 0.02f, 0.075f, 260, 480 },
+        bounce = { RGB(210, 215, 225), RGB(150, 165, 190), RGB(15, 18, 25),
+                   3.2f, 0.0f, 0.02f, 0.06f, 200, 340 };
+    const struct fx_pstyle *st = resisted ? &bounce : &force;
+    int i, nspeck = resisted ? 18 : 48, nring = resisted ? 24 : 40;
+    float ringv = resisted ? 4.0f : 7.0f; /* reaches ~0.7 / ~1.3 squares */
+
+    if (!iflags.fx_particles || !isok(x, y))
+        return;
+    /* a bright flash at the point of impact */
+    for (i = 0; i < (resisted ? 2 : 4); i++) {
+        struct fx_part *p;
+
+        fx_spawn(data, st, x + 0.5f, y + 0.5f, 0.0f, 1.0f, 1.0f);
+        p = &data->parts[data->nparts - 1];
+        p->vx = p->vy = 0.0f;
+        p->size = resisted ? 0.2f : 0.32f;
+        p->c0 = RGB(255, 255, 255);
+        p->life = resisted ? 110 : 150;
+    }
+    /* scattered specks */
+    for (i = 0; i < nspeck; i++)
+        fx_spawn(data, st, x + 0.5f + fx_prange(-0.15f, 0.15f),
+                 y + 0.5f + fx_prange(-0.15f, 0.15f), st->speed, 1.0f, 1.0f);
+    /* the ring: evenly spaced, all at the same speed, stopping short */
+    for (i = 0; i < nring; i++) {
+        struct fx_part *p;
+        float a = (6.2831853f * i) / nring + fx_prange(-0.05f, 0.05f);
+
+        fx_spawn(data, st, x + 0.5f, y + 0.5f, 0.0f, 0.8f, 1.0f);
+        p = &data->parts[data->nparts - 1];
+        p->vx = ringv * (float) cos(a);
+        p->vy = ringv * (float) sin(a);
+        p->drag = 0.004f; /* snaps out, then hangs */
+        p->c0 = st->c0;
+        p->size = st->size * 1.1f;
+        p->life = resisted ? 300 : 420;
+    }
+    fx_start_timer(data);
+}
+
+static COLORREF
+fx_lerp_color(COLORREF a, COLORREF b, float t)
+{
+    return RGB((int) (GetRValue(a) + (GetRValue(b) - GetRValue(a)) * t),
+               (int) (GetGValue(a) + (GetGValue(b) - GetGValue(a)) * t),
+               (int) (GetBValue(a) + (GetBValue(b) - GetBValue(a)) * t));
+}
+
+/* particles are drawn as soft dots on a black layer, which is then OR-ed
+   onto the map: light adds, so they glow over whatever is underneath */
+static void
+fx_paint_particles(PNHMapWindow data, HDC hdc)
+{
+    DWORD now = GetTickCount();
+    int i, ox, oy, tw, th;
+    int l = 1 << 30, t = 1 << 30, r = -(1 << 30), b = -(1 << 30);
+    HGDIOBJ oldBrush, oldPen;
+    RECT box;
+
+    if (!data->nparts)
+        return;
+    ox = data->map_orig.x - data->xPos * data->xFrontTile;
+    oy = data->map_orig.y - data->yPos * data->yFrontTile;
+    tw = data->xFrontTile, th = data->yFrontTile;
+    if (!data->partDC || data->partW != data->compW
+        || data->partH != data->compH) {
+        if (data->partDC) {
+            SelectObject(data->partDC, data->partBmpOld);
+            DeleteObject(data->partBmp);
+            DeleteDC(data->partDC);
+        }
+        data->partDC = CreateCompatibleDC(hdc);
+        data->partW = data->compW, data->partH = data->compH;
+        data->partBmp = CreateCompatibleBitmap(hdc, data->partW, data->partH);
+        data->partBmpOld = SelectObject(data->partDC, data->partBmp);
+    }
+    /* where they are this frame */
+    for (i = 0; i < data->nparts; i++) {
+        struct fx_part *p = &data->parts[i];
+        float s = (float) (long) (now - p->start) / 1000.0f;
+        float keep = (float) pow(p->drag, s), dist;
+        double px, py, rad;
+
+        if (s < 0)
+            s = 0;
+        /* integrate v*drag^t: distance = v*(drag^t - 1)/ln(drag) */
+        dist = (p->drag > 0.0f && p->drag < 1.0f)
+                   ? (float) ((keep - 1.0f) / log(p->drag)) : s;
+        px = ox + (p->x + p->vx * dist) * tw;
+        py = oy + (p->y + p->vy * dist + 0.5f * p->grav * s * s) * th;
+        rad = p->size * tw;
+        l = min(l, (int) (px - rad * 2.2) - 1);
+        t = min(t, (int) (py - rad * 2.2) - 1);
+        r = max(r, (int) (px + rad * 2.2) + 2);
+        b = max(b, (int) (py + rad * 2.2) + 2);
+    }
+    SetRect(&box, max(l, 0), max(t, 0), min(r, data->partW),
+            min(b, data->partH));
+    if (box.right <= box.left || box.bottom <= box.top)
+        return;
+    FillRect(data->partDC, &box, (HBRUSH) GetStockObject(BLACK_BRUSH));
+    oldBrush = SelectObject(data->partDC, GetStockObject(DC_BRUSH));
+    oldPen = SelectObject(data->partDC, GetStockObject(NULL_PEN));
+    for (i = 0; i < data->nparts; i++) {
+        struct fx_part *p = &data->parts[i];
+        float s = (float) (long) (now - p->start) / 1000.0f;
+        float k = (float) (long) (now - p->start) / (float) p->life;
+        float keep = (float) pow(p->drag, s), dist;
+        double px, py, rad;
+        COLORREF c;
+        int ir;
+
+        if (k < 0 || k >= 1)
+            continue;
+        dist = (p->drag > 0.0f && p->drag < 1.0f)
+                   ? (float) ((keep - 1.0f) / log(p->drag)) : s;
+        px = ox + (p->x + p->vx * dist) * tw;
+        py = oy + (p->y + p->vy * dist + 0.5f * p->grav * s * s) * th;
+        rad = p->size * tw * (1.0 - 0.55 * k);
+        c = fx_lerp_color(p->c0, p->c1, k);
+        /* faint glow around it (added on as light) */
+        ir = (int) (rad * 2.2 + 0.5);
+        SetDCBrushColor(data->partDC, fx_lerp_color(RGB(0, 0, 0), c, 0.35f));
+        Ellipse(data->partDC, (int) px - ir, (int) py - ir, (int) px + ir + 1,
+                (int) py + ir + 1);
+    }
+    SelectObject(data->partDC, oldPen);
+    SelectObject(data->partDC, oldBrush);
+    BitBlt(hdc, box.left, box.top, box.right - box.left,
+           box.bottom - box.top, data->partDC, box.left, box.top, SRCPAINT);
+
+    /* ...and a solid core on top, so it shows even over a bright ray */
+    oldBrush = SelectObject(hdc, GetStockObject(DC_BRUSH));
+    oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
+    for (i = 0; i < data->nparts; i++) {
+        struct fx_part *p = &data->parts[i];
+        float s = (float) (long) (now - p->start) / 1000.0f;
+        float k = (float) (long) (now - p->start) / (float) p->life;
+        float keep = (float) pow(p->drag, s), dist;
+        double px, py, rad;
+        int ir;
+
+        if (k < 0 || k >= 1)
+            continue;
+        dist = (p->drag > 0.0f && p->drag < 1.0f)
+                   ? (float) ((keep - 1.0f) / log(p->drag)) : s;
+        px = ox + (p->x + p->vx * dist) * tw;
+        py = oy + (p->y + p->vy * dist + 0.5f * p->grav * s * s) * th;
+        rad = p->size * tw * (1.0 - 0.55 * k);
+        ir = max(1, (int) (rad + 0.5));
+        SetDCBrushColor(hdc, fx_lerp_color(p->c0, p->c1, k));
+        Ellipse(hdc, (int) px - ir, (int) py - ir, (int) px + ir + 1,
+                (int) py + ir + 1);
+    }
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
 }
 
 /* a keypress snaps every sprite back to its square (design rule 2) */
@@ -1945,7 +2319,11 @@ fx_tick(PNHMapWindow data)
     if (data->shakeDur
         && (long) (now - data->shakeStart) >= (long) data->shakeDur)
         data->shakeDur = 0;
-    if (!data->nfloaters && !data->nanims && !data->shakeDur
+    for (i = j = 0; i < data->nparts; i++)
+        if (now - data->parts[i].start < data->parts[i].life)
+            data->parts[j++] = data->parts[i];
+    data->nparts = j;
+    if (!data->nfloaters && !data->nanims && !data->shakeDur && !data->nparts
         && data->fxTimerOn) {
         KillTimer(data->hWnd, FX_TIMER_ID);
         data->fxTimerOn = FALSE;

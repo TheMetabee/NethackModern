@@ -197,6 +197,7 @@ bhitm(struct monst *mtmp, struct obj *otmp)
             if (disguised_mimic && !disguised_as_mon(mtmp))
                 seemimic(mtmp);
             shieldeff(mtmp->mx, mtmp->my);
+            fx_impact(mtmp->mx, mtmp->my, TRUE); /* NetHack Modern */
             pline("Boing!");
             /* 5.0: used to 'break' to avoid setting learn_it here */
         } else if (u.uswallow || rnd(20) < 10 + find_mac(mtmp)) {
@@ -207,6 +208,7 @@ bhitm(struct monst *mtmp, struct obj *otmp)
                 dmg *= 2;
             if (otyp == SPE_FORCE_BOLT)
                 dmg = spell_damage_bonus(dmg);
+            fx_impact(mtmp->mx, mtmp->my, FALSE); /* NetHack Modern */
             hit(zap_type_text, mtmp, exclam(dmg));
             (void) resist(mtmp, otmp->oclass, dmg, TELL);
         } else {
@@ -2291,6 +2293,7 @@ bhito(struct obj *obj, struct obj *otmp)
             /* learn the type if you see or hear something break
                (the sound could be implicit) */
             maybelearnit = cansee(obj->ox, obj->oy) || !Deaf;
+            fx_impact(obj->ox, obj->oy, FALSE); /* NetHack Modern */
             if (obj->otyp == BOULDER) {
                 Soundeffect(se_crumbling_sound, 75);
                 if (cansee(obj->ox, obj->oy))
@@ -2300,6 +2303,7 @@ bhito(struct obj *obj, struct obj *otmp)
                 fracture_rock(obj);
             } else if (obj->otyp == STATUE) {
                 if (break_statue(obj)) {
+                    Soundeffect(se_crumbling_sound, 60); /* NetHack Modern */
                     if (cansee(obj->ox, obj->oy)) {
                         if (Hallucination)
                             pline_The("%s shatters.", rndmonnam(NULL));
@@ -2728,9 +2732,11 @@ zapyourself(struct obj *obj, boolean ordinary)
         learn_it = TRUE;
         if (Antimagic) {
             shieldeff(u.ux, u.uy);
+            fx_impact(u.ux, u.uy, TRUE); /* NetHack Modern */
             pline("Boing!");
             monstseesu(M_SEEN_MAGR);
         } else {
+            fx_impact(u.ux, u.uy, FALSE); /* NetHack Modern */
             if (ordinary) {
                 You("bash yourself!");
                 damage = d(2, 12);
@@ -4076,6 +4082,9 @@ bhit(
             case SPE_WIZARD_LOCK:
             case SPE_FORCE_BOLT:
                 if (doorlock(obj, x, y)) {
+                    if (obj->otyp == WAN_STRIKING
+                        || obj->otyp == SPE_FORCE_BOLT)
+                        fx_impact(x, y, FALSE); /* NetHack Modern */
                     if (cansee(x, y) || (obj->otyp == WAN_STRIKING && !Deaf))
                         learnwand(obj);
                     if (levl[x][y].doormask == D_BROKEN

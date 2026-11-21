@@ -422,3 +422,12 @@ Giant, ogre and troll deaths, built from the packs above:
   death_giant_1..3.wav   <- se_orc_grunt_6 (AHTu20), _1, _3 (rubberduck)
                             pitched down to 0.68 with a short echo, plus a
                             low-passed trap_fall_1..3 (Kenney Impact) body thud
+
+Wand of striking / force bolt impacts and crumbling stone, built from the
+packs above:
+  strike_hit_1..3.wav    <- hit_magic_1..3 (TomMusic Spell Impact, pitched down)
+                            + low-passed trap_fall_3..5 (Kenney Impact) thump
+  se_crumbling_sound_1..3.wav <- wpn_stone_hit_1..3 (Kenney Impact) crack +
+                            trap_rock (TomMusic Rock Meteor Throw) rubble +
+                            low-passed se_kaboom (TomMusic Rock Meteor Swarm)
+                            rumble + se_dig_rock (TomMusic mine) tumbling stone

@@ -171,6 +171,8 @@ fx_typename(int type)
         return "KNOCKBACK";
     case FXE_MOVE:
         return "MOVE";
+    case FXE_IMPACT:
+        return "IMPACT";
     }
     return "?";
 }
@@ -783,6 +785,31 @@ fx_step(coordxy fx, coordxy fy, coordxy tx, coordxy ty, boolean hero)
     ev.flags = fx_bulk_flag() | (hero ? FXF_HERO_TARGET : 0U);
     ev.sx = fx, ev.sy = fy;
     ev.x = tx, ev.y = ty;
+    ev.adtyp = -1;
+    fx_emit(&ev);
+}
+
+/* a force (wand of striking, force bolt) struck <x,y>, which the hero
+   can see; 'resisted' if it bounced off ("Boing!") */
+void
+fx_impact(coordxy x, coordxy y, boolean resisted)
+{
+    static coordxy lastx, lasty;
+    static long lastmove = -1L;
+    struct fx_event ev;
+
+    if (!fx_active() || !isok(x, y) || !cansee(x, y))
+        return;
+    /* a pile struck at once is one impact, not one per object */
+    if (x == lastx && y == lasty && svm.moves == lastmove)
+        return;
+    lastx = x, lasty = y, lastmove = svm.moves;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_IMPACT;
+    ev.flags = fx_bulk_flag() | (resisted ? FXF_RESISTED : 0U);
+    if (x == u.ux && y == u.uy)
+        ev.flags |= FXF_HERO_TARGET;
+    ev.x = ev.sx = x, ev.y = ev.sy = y;
     ev.adtyp = -1;
     fx_emit(&ev);
 }

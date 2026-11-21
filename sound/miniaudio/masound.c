@@ -1359,6 +1359,16 @@ ma_fx_event(const struct fx_event *ev)
     case FXE_EXPLODE:
         ma_explosion(ev, vol, pan);
         break;
+    case FXE_IMPACT:
+        /* striking / force bolt: a force whump; a softer, higher one
+           under the "Boing!" when it bounces off */
+        if (ev->flags & FXF_RESISTED)
+            ma_play_named("strike_hit", 0.4f * vol, ma_frand(1.2f, 1.3f),
+                          pan);
+        else
+            ma_play_named("strike_hit", 0.9f * vol, ma_frand(0.92f, 1.08f),
+                          pan);
+        break;
     default:
         break;
     }

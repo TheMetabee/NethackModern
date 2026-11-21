@@ -360,6 +360,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_motion, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_motion, Term_False,
            "sprites lunge and shake in combat")
+    NHOPTB(fx_particles, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_particles, Term_False,
+           "sparks, embers and frost for rays and explosions")
     NHOPTB(fx_screen_shake, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_screen_shake, Term_False,
            "shake the map view for explosions and big hits")

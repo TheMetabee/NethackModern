@@ -48,7 +48,9 @@ enum fx_event_type {
     FXE_EXPLODE,    /* explosion at x,y: 'adtyp' element, 'amount' damage;
                      * FXF_UNSEEN if only heard */
     FXE_KNOCKBACK,  /* a creature was hurtled one step, sx,sy -> x,y */
-    FXE_MOVE        /* a seen creature moved sx,sy -> x,y (1-2 squares) */
+    FXE_MOVE,       /* a seen creature moved sx,sy -> x,y (1-2 squares) */
+    FXE_IMPACT      /* a force (striking, force bolt) hit x,y;
+                     * FXF_RESISTED if it bounced off */
 };
 
 /* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
@@ -73,6 +75,7 @@ enum fx_texture {
 #define FXF_TARGET_PET  0x0020U /* target is tame */
 #define FXF_RANGED      0x0040U /* ATTACK/MISS by a thrown/fired missile */
 #define FXF_UNSEEN      0x0080U /* EXPLODE: heard, not seen */
+#define FXF_RESISTED    0x0100U /* IMPACT: it bounced off ("Boing!") */
 
 struct fx_event {
     int type;            /* enum fx_event_type */
@@ -146,6 +149,7 @@ extern void fx_exp_gain(int);
 extern void fx_screen_shake(int);
 extern void fx_explosion(coordxy, coordxy, int, int, boolean);
 extern void fx_knockback(coordxy, coordxy, coordxy, coordxy);
+extern void fx_impact(coordxy, coordxy, boolean);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);

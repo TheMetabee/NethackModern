@@ -1612,12 +1612,14 @@ mbhitm(struct monst *mtmp, struct obj *otmp)
             if (Antimagic) {
                 monstseesu(M_SEEN_MAGR); /* monsters notice hero resisting */
                 shieldeff(u.ux, u.uy);
+                fx_impact(u.ux, u.uy, TRUE); /* NetHack Modern */
                 Soundeffect(se_boing, 40);
                 pline("Boing!");
                 learnit = TRUE;
             } else if (rnd(20) < 10 + u.uac &&
                        !(gb.buzzer && !gb.buzzer->mwandexp)) {
                 monstunseesu(M_SEEN_MAGR); /* mons see hero not resisting */
+                fx_impact(u.ux, u.uy, FALSE); /* NetHack Modern */
                 pline_The("wand hits you!");
                 tmp = d(2, 12);
                 if (Half_spell_damage)
@@ -1631,11 +1633,13 @@ mbhitm(struct monst *mtmp, struct obj *otmp)
             nomul(0);
         } else if (resists_magm(mtmp)) {
             shieldeff(mtmp->mx, mtmp->my);
+            fx_impact(mtmp->mx, mtmp->my, TRUE); /* NetHack Modern */
             Soundeffect(se_boing, 40);
             pline("Boing!");
             learnit = TRUE;
         } else if (rnd(20) < 10 + find_mac(mtmp)) {
             tmp = d(2, 12);
+            fx_impact(mtmp->mx, mtmp->my, FALSE); /* NetHack Modern */
             hit("wand", mtmp, exclam(tmp));
             (void) resist(mtmp, otmp->oclass, tmp, TELL);
             learnit = TRUE;
