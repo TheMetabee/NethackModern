@@ -1550,6 +1550,10 @@ H2Opotion_dip(
            the effect; now hero has to see the glow, and bknown
            is cleared instead of set if perception is distorted */
         if (useeit) {
+            /* NetHack Modern: shimmer up for holy, down for unholy */
+            Soundeffect((func == bless || func == uncurse) ? se_holy_glow
+                                                           : se_unholy_glow,
+                        60);
             glowcolor = hcolor(glowcolor);
             if (altfmt)
                 pline("%s with %s aura.", objphrase, an(glowcolor));
@@ -2457,6 +2461,7 @@ potion_dip(struct obj *obj, struct obj *potion)
 
     obj->pickup_prev = 0; /* no longer 'recently picked up' */
     potion->in_use = TRUE; /* assume it will be used up */
+    Soundeffect(se_dip_potion, 50); /* NetHack Modern: little plop */
     if (potion->otyp == POT_WATER) {
         boolean useeit = !Blind || (obj == ublindf && Blindfolded_only);
         const char *obj_glows = Yobjnam2(obj, "glow");
@@ -2568,6 +2573,7 @@ potion_dip(struct obj *obj, struct obj *potion)
                 break;
             default:
                 useupall(obj);
+                Soundeffect(se_potion_mix, 60); /* NetHack Modern */
                 pline_The("mixture %sevaporates.",
                           !Blind ? "glows brightly and " : "");
                 return ECMD_TIME;
@@ -2575,6 +2581,7 @@ potion_dip(struct obj *obj, struct obj *potion)
         }
         obj->odiluted = (obj->otyp != POT_WATER);
 
+        Soundeffect(se_potion_mix, 60); /* NetHack Modern: bubbling */
         if (obj->otyp == POT_WATER && !Hallucination) {
             pline_The("mixture bubbles%s.", Blind ? "" : ", then clears");
         } else if (!Blind) {
@@ -2761,6 +2768,7 @@ potion_dip(struct obj *obj, struct obj *potion)
             else if (!Blind)
                 Sprintf(newbuf, "turns %s",
                         hcolor(OBJ_DESCR(objects[mixture])));
+            Soundeffect(se_potion_mix, 60); /* NetHack Modern */
             if (*newbuf)
                 pline_The("%spotion%s %s.", oldbuf,
                           more_than_one ? " that you dipped into" : "",

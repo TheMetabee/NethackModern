@@ -1897,6 +1897,7 @@ pickup_object(
         obj = splitobj(obj, count);
 
     obj = pick_obj(obj);
+    fx_pickup(obj->oclass, obj->otyp); /* NetHack Modern: pickup sound */
 
     if (uwep && uwep == obj)
         gm.mrg_to_wielded = TRUE;
@@ -2123,6 +2124,7 @@ do_loot_cont(
                   cobj->lknown ? "It is" : "Hmmm, it turns out to be");
         else
 #endif
+        Soundeffect(se_container_locked, 50); /* NetHack Modern */
         if (cobj->lknown)
             pline("%s is locked.", The(xname(cobj)));
         else
@@ -3017,11 +3019,15 @@ use_container(
             update_inventory();
     }
     if (obj->olocked) {
+        Soundeffect(se_container_locked, 50); /* NetHack Modern */
         pline("%s locked.", Tobjnam(obj, "are"));
         if (held)
             You("must put it down to unlock.");
         return ECMD_OK;
-    } else if (obj->otrapped) {
+    }
+    /* NetHack Modern: lid creak for boxes, rustle for bags */
+    Soundeffect(Is_box(obj) ? se_chest_open : se_bag_open, 50);
+    if (obj->otrapped) {
         if (held)
             You("open %s...", the(xname(obj)));
         (void) chest_trap(obj, HAND, FALSE);

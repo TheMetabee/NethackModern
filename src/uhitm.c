@@ -318,6 +318,7 @@ attack_checks(
             Sprintf(qbuf, "Really attack %s?", mon_nam(mtmp));
             if (!paranoid_query(ParanoidHit, qbuf)) {
                 svc.context.move = 0;
+                fx_bump(mtmp, mtmp->mx, mtmp->my);
                 return TRUE;
             }
         }
@@ -618,7 +619,8 @@ known_hitum(
 
         /* we hit the monster; be careful: it might die or
            be knocked into a different location */
-        fx_attack(&gy.youmonst, mon, uattk ? uattk->adtyp : AD_PHYS, TRUE);
+        fx_attack_wep(&gy.youmonst, mon, uattk ? uattk->adtyp : AD_PHYS, TRUE,
+                      weapon, FALSE);
         gn.notonhead = (mon->mx != gb.bhitpos.x || mon->my != gb.bhitpos.y);
         malive = hmon(mon, weapon, HMON_MELEE, dieroll);
         if (malive) {
@@ -826,6 +828,8 @@ hmon(struct monst *mon,
 
     anger_guards = (mon->mpeaceful
                     && (mon->ispriest || mon->isshk || is_watch(mon->data)));
+    if (thrown == HMON_THROWN) /* NetHack Modern: missile impact */
+        fx_attack_wep(&gy.youmonst, mon, AD_PHYS, TRUE, obj, TRUE);
     result = hmon_hitmon(mon, obj, thrown, dieroll);
     if (mon->ispriest && !rn2(2))
         ghod_hitsu(mon);
@@ -5218,7 +5222,8 @@ missum(
     struct attack *mattk,
     boolean wouldhavehit)
 {
-    fx_attack(&gy.youmonst, mdef, mattk ? mattk->adtyp : AD_PHYS, FALSE);
+    fx_attack_wep(&gy.youmonst, mdef, mattk ? mattk->adtyp : AD_PHYS, FALSE,
+                  (mattk && mattk->aatyp == AT_WEAP) ? uwep : 0, FALSE);
     if (wouldhavehit) /* monk is missing due to penalty for wearing suit */
         Your("armor is rather cumbersome...");
 

@@ -1488,6 +1488,8 @@ artifact_hit(
                                 ? "vaporizes part of"
                                 : "burns",
                       hittee, !gs.spec_dbon_applies ? '.' : '!');
+        if (gs.spec_dbon_applies) /* NetHack Modern: it wasn't resisted */
+            fx_weapon_effect(mdef, AD_FIRE);
         if (!rn2(4)) {
             int itemdmg = destroy_items(mdef, AD_FIRE, *dmgptr);
             if (!youdefend)
@@ -1503,6 +1505,8 @@ artifact_hit(
             pline_The("ice-cold blade %s %s%c",
                       !gs.spec_dbon_applies ? "hits" : "freezes", hittee,
                       !gs.spec_dbon_applies ? '.' : '!');
+        if (gs.spec_dbon_applies) /* NetHack Modern: it wasn't resisted */
+            fx_weapon_effect(mdef, AD_COLD);
         if (!rn2(4)) {
             int itemdmg = destroy_items(mdef, AD_COLD, *dmgptr);
             if (!youdefend)
@@ -1515,8 +1519,10 @@ artifact_hit(
             pline_The("massive hammer hits%s %s%c",
                       !gs.spec_dbon_applies ? "" : "!  Lightning strikes",
                       hittee, !gs.spec_dbon_applies ? '.' : '!');
-        if (gs.spec_dbon_applies)
+        if (gs.spec_dbon_applies) {
+            fx_weapon_effect(mdef, AD_ELEC); /* NetHack Modern */
             wake_nearto(mdef->mx, mdef->my, 4 * 4);
+        }
         if (!rn2(5)) {
             int itemdmg = destroy_items(mdef, AD_ELEC, *dmgptr);
             if (!youdefend)
@@ -1531,6 +1537,8 @@ artifact_hit(
                           ? ""
                           : "!  A hail of magic missiles strikes",
                       hittee, !gs.spec_dbon_applies ? '.' : '!');
+        if (gs.spec_dbon_applies) /* NetHack Modern */
+            fx_weapon_effect(mdef, AD_MAGM);
         return realizes_damage;
     }
 
@@ -1646,6 +1654,8 @@ artifact_hit(
         /* some non-living creatures (golems, vortices) are vulnerable to
            life drain effects so can get "<Arti> draws the <life>" feedback */
         const char *life = nonliving(mdef->data) ? "animating force" : "life";
+
+        fx_weapon_effect(mdef, AD_DRLI); /* NetHack Modern: not resisted */
 
         if (!youdefend) {
             int m_lev = (int) mdef->m_lev, /* will be 0 for 1d4 mon */

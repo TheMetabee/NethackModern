@@ -250,6 +250,7 @@ drinkfountain(void)
         floating_above("fountain");
         return;
     }
+    Soundeffect(se_quaff_fountain, 60); /* NetHack Modern */
 
     if (mgkftn && u.uluck >= 0 && fate >= 10) {
         int i, ii, littleluck = (u.uluck < 4);
@@ -400,6 +401,7 @@ dipfountain(struct obj *obj)
         floating_above("fountain");
         return;
     }
+    Soundeffect(se_dip_water, 50); /* NetHack Modern */
 
     if (obj->otyp == LONG_SWORD && u.ulevel >= 5
         && !rn2(Role_if(PM_KNIGHT) ? 6 : 30)
@@ -601,6 +603,7 @@ drinksink(void)
         floating_above("sink");
         return;
     }
+    Soundeffect(se_quaff_sink, 60); /* NetHack Modern */
     switch (rn2(20)) {
     case 0:
         You("take a sip of very cold %s.", hliquid("water"));
@@ -718,6 +721,8 @@ dipsink(struct obj *obj)
     boolean try_call = FALSE,
             not_looted_yet = (levl[u.ux][u.uy].looted & S_LRING) == 0,
             is_hands = (obj == &hands_obj || (uarmg && obj == uarmg));
+
+    Soundeffect(se_dip_water, 50); /* NetHack Modern */
 
     if (!rn2(not_looted_yet ? 25 : 15)) {
         /* can't rely on using sink for unlimited scroll blanking; however,

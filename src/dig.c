@@ -364,6 +364,10 @@ dig(void)
 
     svc.context.digging.effort +=
         10 + rn2(5) + abon() + uwep->spe - greatest_erosion(uwep) + u.udaminc;
+    /* NetHack Modern: one strike per turn of digging */
+    Soundeffect(svc.context.digging.down ? se_dig_down
+                : (IS_TREE(lev->typ) || !ispick) ? se_chop_tree
+                  : se_dig_rock, 60);
     if (Race_if(PM_DWARF))
         svc.context.digging.effort *= 2;
     if (svc.context.digging.down) {

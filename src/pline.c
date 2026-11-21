@@ -440,6 +440,8 @@ You_hear(const char *line, ...)
 
     if ((Deaf && !Unaware) || !flags.acoustics)
         return;
+    if (!Unaware)
+        fx_hear(); /* NetHack Modern: audible cue for off-screen noises */
     va_start(the_args, line);
     if (Underwater)
         YouPrefix(tmp, "You barely hear ", line);

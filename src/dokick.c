@@ -938,12 +938,12 @@ kick_door(coordxy x, coordxy y, int avrg_attrib)
             gm.maploc->doormask = D_NODOOR;
             b_trapped("door", FOOT);
         } else if (ACURR(A_STR) > 18 && !rn2(5) && !shopdoor) {
-            Soundeffect(se_kick_door_it_shatters, 50);
+            Soundeffect(se_kick_door_it_shatters, 100);
             pline("As you kick the door, it shatters to pieces!");
             exercise(A_STR, TRUE);
             gm.maploc->doormask = D_NODOOR;
         } else {
-            Soundeffect(se_kick_door_it_crashes_open, 50);
+            Soundeffect(se_kick_door_it_crashes_open, 100);
             pline("As you kick the door, it crashes open!");
             exercise(A_STR, TRUE);
             gm.maploc->doormask = D_BROKEN;
@@ -963,6 +963,7 @@ kick_door(coordxy x, coordxy y, int avrg_attrib)
         /* note: this used to be unconditional "WHAMMM!!!" but that has a
            fairly strong connotation of noise that a deaf hero shouldn't
            hear; we've kept the extra 'm's and one of the extra '!'s */
+        Soundeffect(se_kick_door_thwack, 60);
         pline("%s!!", (Deaf || !rn2(3)) ? "Thwack" : "Whammm");
         if (in_town(x, y))
             (void) get_iter_mons_xy(watchman_door_damage, x, y);

@@ -345,7 +345,9 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
     }
 #endif
 
-#if defined(SND_LIB_FMOD)
+#if defined(SND_LIB_MINIAUDIO)
+    assign_soundlib(soundlib_miniaudio);
+#elif defined(SND_LIB_FMOD)
     assign_soundlib(soundlib_fmod);
 #elif defined(SND_LIB_WINDSOUND)
     assign_soundlib(soundlib_windsound);

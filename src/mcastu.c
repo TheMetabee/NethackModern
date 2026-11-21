@@ -411,6 +411,7 @@ staticfn void
 mcast_clone_wiz(struct monst *mtmp)
 {
     if (mtmp->iswiz && svc.context.no_of_wizards == 1) {
+        fx_wizard_laugh(mtmp); /* NetHack Modern */
         pline("Double Trouble...");
         clonewiz();
     } else

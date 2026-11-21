@@ -708,6 +708,7 @@ angrygods(aligntyp resp_god)
     if (Inhell)
         resp_god = A_NONE;
     u.ublessed = 0; /* lose divine protection */
+    Soundeffect(se_god_angry, 90); /* NetHack Modern */
 
     /* changed from tmp = u.ugangr + abs (u.uluck) -- rph */
     /* added test for alignment diff -dlc */
@@ -1074,6 +1075,7 @@ pleased(aligntyp g_align)
     int trouble = in_trouble(); /* what's your worst difficulty? */
     int pat_on_head = 0, kick_on_butt;
 
+    Soundeffect(se_prayer_success, 90); /* NetHack Modern */
     You_feel("that %s is %s.", align_gname(g_align),
              (u.ualign.record >= DEVOUT)
                  ? Hallucination ? "pleased as punch" : "well-pleased"
@@ -1574,6 +1576,7 @@ offer_real_amulet(struct obj *otmp, aligntyp altaralign)
         /* You've won the game!  Feedback-wise, it's a bit of a let down. */
         u.uevent.ascended = 1;
         adjalign(10);
+        Soundeffect(se_ascension, 100); /* NetHack Modern: holy moment */
         pline("An invisible choir sings, and you are bathed in radiance...");
         godvoice(altaralign, "Mortal, thou hast done well!");
         display_nhwindow(WIN_MESSAGE, FALSE);

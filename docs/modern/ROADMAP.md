@@ -167,6 +167,44 @@ it follows the design rules above.
 afterimage trail), because it's the most visible and tests the whole
 pipeline. Add the others one at a time. Option: `fx_auras`.
 
+**Phase 4c — Clean, modern interface.** Restyle the NetHackW window
+chrome around the map, so it looks like a modern client and not a set of
+Win32 dialogs. Everything stays keyboard-driven, and every panel can be
+hidden. Target layout, from a reference screenshot:
+
+- **Dark theme:** flat dark-grey panels, one readable UI font, and soft
+  separators instead of sunken borders.
+- **Menu bar by topic:** Game, View, Move, Items, Gear, Act, Magic, Info,
+  Help. Each entry lists the command and its key, so the menus also teach
+  the keys.
+- **Character panel (top left):**
+  - name, rank, alignment, race, role and dungeon level;
+  - HP and Pw as coloured bars with the numbers on top;
+  - stats in a compact grid, with small up/down arrows when a stat
+    changes.
+- **Equipment doll (beside it):** a 3×4 grid of slots that shows the
+  tiles of worn and wielded items.
+- **Message log (top centre):** scrollback with a separator between
+  turns. Important messages are coloured: traps, "You see here", and
+  anything that matches `MSGTYPE`/`menucolors`.
+- **Inventory sidebar (right):**
+  - grouped by class (Weapons, Armor, Comestibles, Potions, Gems, ...)
+    with headers;
+  - each line shows the item's tile, its letter and its name;
+  - a Hide button, and updates live like `perm_invent`.
+- **Context action bar (bottom):** buttons for likely actions right now
+  (Pick up `,`, Eat `e`, Disarm, Search `s`, Rest `.`), each with its key
+  hint. Buttons depend on what's underfoot and nearby.
+- **View controls (bottom right):** an ASCII/tiles toggle and map zoom −/+.
+- **Hero highlight:** a thin coloured frame around the hero's tile.
+
+Most of this is window-port work in `win/win32` (status, message, menu
+and inventory windows, plus a new action bar). It reads existing core
+data: status fields from `status_update`, inventory from
+`update_inventory`/`perm_invent`, and messages with their attributes.
+The only core addition is likely a small "suggested actions here" query
+for the action bar.
+
 **Phase 5 — Polish / possible new front end.** Higher-resolution tileset,
 lighting/FOV shading, UI skin. If GDI in `win/win32` becomes the bottleneck,
 consider a new SDL2 or Qt-based port reading the same fx stream.

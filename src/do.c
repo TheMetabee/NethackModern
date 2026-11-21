@@ -1287,6 +1287,10 @@ dodown(void)
         goto_level(&tdst, FALSE, FALSE, FALSE);
     } else {
         ga.at_ladder = (boolean) (levl[u.ux][u.uy].typ == LADDER);
+        /* NetHack Modern: footsteps (or wings) on the way down */
+        if (!trap)
+            Soundeffect((Flying || Levitation) ? se_stairs_fly
+                        : ga.at_ladder ? se_ladder_down : se_stairs_down, 60);
         next_level(!trap);
         ga.at_ladder = FALSE;
     }
@@ -1338,6 +1342,9 @@ doup(void)
         return ECMD_OK;
     }
     ga.at_ladder = (boolean) (levl[u.ux][u.uy].typ == LADDER);
+    /* NetHack Modern: footsteps (or wings) on the way up */
+    Soundeffect((Flying || Levitation) ? se_stairs_fly
+                : ga.at_ladder ? se_ladder_up : se_stairs_up, 60);
     prev_level(TRUE);
     ga.at_ladder = FALSE;
     return ECMD_TIME;

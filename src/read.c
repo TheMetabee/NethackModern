@@ -633,6 +633,7 @@ doread(void)
                       silently ? "misunderstand" : "mispronounce");
         }
     }
+    fx_read_scroll(otyp, confused); /* NetHack Modern: paper + effect */
     if (!seffects(scroll)) {
         if (!objects[otyp].oc_name_known) {
             if (gk.known)

@@ -1,0 +1,360 @@
+NetHack Modern sound effects
+============================
+
+These files are played by the miniaudio sound library (sound/miniaudio)
+in response to presentation events (src/fx.c) and the core's own sound
+effects. At run time the game looks for them in a "sounds" folder next
+to the executable; the Windows package step copies this folder there.
+
+Naming:
+  <name>_N.wav      variations of one sound; one is picked at random
+  se_<name>_N.wav   plays when the game triggers sound effect <name>
+                    from include/seffects.h (for example se_canine_howl)
+  death_<kind>_N    a death cry layered over the body-fall thud, chosen
+                    by monster class (see ma_death_cry() in masound.c)
+
+All files were converted to 16-bit mono 44.1 kHz WAV and renamed; unless
+noted, the audio is otherwise unchanged. Some source clips are used under
+more than one name.
+
+Licensing summary: the Kenney and rubberduck packs are CC0 (public
+domain). The AHTu20 and TomMusic packs are royalty-free for use in games
+but must not be resold or redistributed as standalone sound packs; they
+are included here only as part of this game.
+
+-------------------------------------------------------------------------
+RPG Audio by Kenney Vleugels (www.kenney.nl)
+  License: CC0 1.0 (public domain dedication)
+           https://creativecommons.org/publicdomain/zero/1.0/
+  Source:  https://opengameart.org/content/50-rpg-sound-effects
+           (RPGsounds_Kenney.zip)
+
+  hit_1.wav              <- chop.ogg
+  hit_2..3.wav           <- knifeSlice.ogg, knifeSlice2.ogg
+  miss_1..3.wav          <- drawKnife1..3.ogg
+  door_open_1..2.wav     <- doorOpen_1..2.ogg
+  door_close_1..4.wav    <- doorClose_1..4.ogg
+  swap_1..4.wav          <- cloth1..4.ogg
+  pickup_coin_1..2.wav   <- handleCoins.ogg, handleCoins2.ogg
+  pickup_scroll_1..3.wav <- bookFlip1..3.ogg
+  pickup_book_1..3.wav   <- bookPlace1..3.ogg
+  pickup_weapon_1..2.wav <- beltHandle1..2.ogg
+  pickup_armor_1..2.wav  <- clothBelt.ogg, clothBelt2.ogg
+  pickup_food_1..2.wav   <- handleSmallLeather.ogg, handleSmallLeather2.ogg
+  pickup_tool_1..3.wav   <- metalPot1..3.ogg
+  pickup_bag_1..4.wav    <- cloth1..4.ogg (low-passed; bags, sacks,
+                            towels, blindfolds)
+  pickup_1.wav           <- dropLeather.ogg
+  se_door_locked_1..2.wav <- metalLatch.ogg, metalClick.ogg
+  se_container_locked_1..2.wav <- metalLatch.ogg, metalClick.ogg
+  se_bag_open_1..4.wav   <- cloth1..4.ogg
+  se_unlock_2.wav, se_klick_2.wav <- metalClick.ogg
+  se_lock_1.wav, se_klunk_1.wav   <- metalLatch.ogg
+  trap_click_1..2.wav    <- metalClick.ogg, metalLatch.ogg
+
+-------------------------------------------------------------------------
+Impact Sounds (1.0) by Kenney (www.kenney.nl), 2019
+  License: CC0 1.0 (public domain dedication)
+           https://creativecommons.org/publicdomain/zero/1.0/
+  Source:  https://kenney.nl/assets/impact-sounds
+           (kenney_impact-sounds.zip)
+
+  hurt_1..5.wav          <- impactPunch_heavy_000..004.ogg
+  death_1..5.wav         <- impactSoft_heavy_000..004.ogg
+  bump_1..5.wav          <- impactGeneric_light_000..004.ogg
+  hear_1..5.wav          <- impactSoft_medium_000..004.ogg
+                            (played pitched down and quiet as a distant
+                            cue for "You hear ..." messages)
+  pickup_potion_1..5.wav <- impactGlass_medium_000..004.ogg
+  pickup_wand_1..5.wav   <- impactWood_light_000..004.ogg
+  pickup_ring_1..5.wav   <- impactMetal_light_000..004.ogg
+  pickup_gem_1..5.wav    <- impactGlass_light_000..004.ogg
+  se_door_resists_1..5.wav   <- impactWood_heavy_000..004.ogg
+  se_kick_door_thwack_1..5.wav <- impactWood_heavy_000..004.ogg
+  trap_bear_1..5.wav     <- impactMetal_heavy_000..004.ogg
+  trap_fall_1..5.wav     <- impactSoft_heavy_000..004.ogg
+  trap_magic_1..5.wav    <- impactBell_heavy_000..004.ogg
+  trap_statue_1..5.wav   <- impactMining_000..004.ogg
+  se_lock_2.wav, se_klunk_2.wav   <- impactMetal_light_002.ogg
+
+-------------------------------------------------------------------------
+80 CC0 creature SFX by rubberduck, 2018
+  License: CC0 1.0 (public domain dedication)
+           https://creativecommons.org/publicdomain/zero/1.0/
+  Source:  https://opengameart.org/content/80-cc0-creature-sfx
+           (80-CC0-creature-SFX.zip)
+
+  se_growl_1..3.wav           <- monster_02.ogg, monster_05.ogg, monster_06.ogg
+  se_snarl_1..2.wav           <- monster_01.ogg, monster_03.ogg
+  se_grunt_1..5.wav           <- grunt_01..05.ogg
+  se_orc_grunt_1..5.wav       <- grunt_01..05.ogg
+  se_scream_1..2.wav          <- scream_01..02.ogg
+  se_angry_drone_1..4.wav     <- bug_01..04.ogg
+  se_low_buzzing_1..4.wav     <- bug_01..04.ogg
+  death_bug_1..4.wav          <- bug_01..04.ogg            (trimmed 1.5 s)
+  death_humanoid_1..5.wav     <- hurt_01..05.ogg           (trimmed 1.5 s)
+  death_beast_1..2.wav        <- monster_04.ogg, monster_07.ogg (trimmed 1.5 s)
+  se_food_bad_1..4.wav        <- spit_01.ogg, spit_03.ogg, cough_01..02.ogg
+
+Eating sounds (eat_*.wav) are mixes built with ffmpeg from rubberduck's
+eat_01..04.ogg chomps, layered with other clips from the packs in this
+file; every source is CC0 or royalty-free as listed per pack:
+  eat_1..4            chomp
+  eat_crunchy_1..4    chomp + Kenney Impact impactWood_light (high-passed)
+  eat_juicy_1..3      chomp + AHTu20 slime_move_01 (0.5 s)
+  eat_soft_1..4       chomp (low-passed)
+  eat_leafy_1..4      chomp + Kenney RPG cloth1..4 (high-passed)
+  eat_meaty_1..4      two low-passed chomps
+  eat_candy_1..2      Kenney RPG cloth1..2 (wrapper) + chomp
+  eat_egg_1..2        Kenney Impact impactGlass_light (pitched up) + chomp
+  eat_glob_1..2       AHTu20 slime_move_01 + rubberduck burble_01..02
+  eat_stringy_1..3    slowed chomp + Kenney RPG cloth (low-passed)
+  eat_gamey_1..3      rubberduck nose.ogg (sniff) + chomp
+  eat_fatty_1..3      chomp + AHTu20 slime_move_01
+  eat_tough_1..3      two chomps + Kenney Impact impactSoft_medium
+  eat_delicious_1..2  chomp + rubberduck burp_01..02
+  eat_terrible_1..2   chomp + rubberduck cough_01..02
+
+-------------------------------------------------------------------------
+Animals & Creatures - Free 40-Sound Sampler (v1) by AHTu20
+  License: royalty free. Copyright AHTu20. May be used in personal and
+           commercial games, videos and apps; credit appreciated but not
+           required. Must not be resold or redistributed as a standalone
+           sound pack -- these files ship only as part of this game.
+  Source:  https://ahtu20.itch.io/animals-creatures-sfx
+           (Animals_Creatures_Free_40_v1.zip, wav folder)
+  se_* files: trimmed to at most 2.5 s with a 0.2 s fade-out.
+  death_* files: trimmed to at most 1.5 s with a 0.2 s fade-out.
+
+  se_canine_howl_1.wav        <- wolf_howl_01.wav
+  se_canine_bark_1..2.wav     <- dog_bark_01.wav, puppy_bark_01.wav
+  se_canine_growl_1.wav       <- dog_growl_01.wav
+  se_canine_whine_1.wav       <- dog_whine_01.wav
+  se_feline_meow_1.wav        <- cat_meow_01.wav
+  se_feline_mew_1.wav         <- kitten_meow_01.wav
+  se_feline_purr_1.wav        <- cat_purr_01.wav
+  se_hiss_1..2.wav            <- snake_hiss_01.wav, cat_hiss_01.wav
+  se_snakes_hissing_1.wav     <- snake_hiss_01.wav
+  se_angry_snakes_1.wav       <- snake_hiss_01.wav
+  se_cockatrice_hiss_1.wav    <- snake_hiss_01.wav
+  se_equine_neigh_1.wav       <- horse_neigh_01.wav
+  se_equine_whinny_1.wav      <- horse_neigh_01.wav
+  se_bovine_moo_1.wav         <- cow_moo_01.wav
+  se_squawk_1.wav             <- crow_caw_01.wav
+  se_avian_screak_1.wav       <- eagle_screech_01.wav
+  se_chirp_1.wav              <- songbird_chirp_01.wav
+  se_roar_1..2.wav            <- bear_roar_01.wav, lion_roar_01.wav
+  se_deafening_roar_atmospheric_1.wav <- dragon_roar_01.wav
+  se_laughter_1.wav           <- goblin_laugh_01.wav
+  se_sinister_laughter_1.wav  <- goblin_laugh_01.wav
+  se_maniacal_laughter_1.wav  <- goblin_laugh_01.wav
+  se_bees_1.wav               <- bee_buzz_01.wav
+  se_buzz_1.wav               <- bee_buzz_01.wav
+  se_orc_grunt_6.wav          <- orc_grunt_01.wav
+  death_canine_1.wav          <- dog_whine_01.wav
+  death_feline_1.wav          <- cat_hiss_01.wav
+  death_snake_1.wav           <- snake_hiss_01.wav
+  death_bird_1..2.wav         <- crow_caw_01.wav, eagle_screech_01.wav
+  death_slime_1.wav           <- slime_move_01.wav
+  death_undead_1.wav          <- zombie_groan_01.wav
+  death_dragon_1.wav          <- dragon_roar_01.wav
+  death_monster_1..2.wav      <- monster_death_01.wav, monster_hurt_01.wav
+  trap_web_1.wav              <- slime_move_01.wav (trimmed 1.0 s)
+
+-------------------------------------------------------------------------
+Free Fantasy SFX Pack by TomMusic
+  License: royalty free; may be used in projects, commercial or
+           otherwise; credit not mandatory but appreciated. Not to be
+           put up for resale or redistribution as an asset -- these
+           files ship only as part of this game.
+  Source:  https://tommusic.itch.io/free-fantasy-200-sfx-pack
+           (Free Fantasy SFX Pack By TomMusic.zip, OGG Files/SFX)
+
+  hit_fire_1..3.wav      <- Spells/Fireball 1..3.ogg     (trimmed 1.1 s)
+  hit_cold_1..2.wav      <- Spells/Ice Freeze 1..2.ogg   (trimmed 1.0 s)
+  hit_cold_3..4.wav      <- Spells/Ice Throw 1..2.ogg    (trimmed 1.0 s)
+  hit_magic_1..3.wav     <- Spells/Spell Impact 1..3.ogg
+  hit_4..6.wav           <- Attacks/Sword Attacks Hits and Blocks/
+                            Sword Impact Hit 1..3.ogg
+  miss_4..6.wav          <- Attacks/Sword Attacks Hits and Blocks/
+                            Sword Attack 1..3.ogg
+  trap_arrow_1..2.wav    <- Attacks/Bow Attacks Hits and Blocks/
+                            Bow Attack 1..2.ogg
+  trap_rock_1..2.wav     <- Spells/Rock Meteor Throw 1..2.ogg
+  trap_gas_1..2.wav      <- Spells/Waterspray 1..2.ogg   (trimmed 1.2 s)
+  trap_water_1..2.wav    <- Spells/Waterspray 1..2.ogg   (trimmed 1.2 s)
+  trap_fire_1..2.wav     <- Spells/Firespray 1..2.ogg    (trimmed 1.5 s)
+  se_boulder_roll_1..2.wav <- Spells/Rock Wall 1..2.ogg  (trimmed 1.8 s)
+  se_rumbling_1..2.wav   <- Spells/Rock Wall 1..2.ogg (low-passed, quieter,
+                            trimmed 1.8 s; distant unseen boulder)
+  se_kaablamm_of_mine_1..2.wav
+                         <- Spells/Rock Meteor Swarm 1..2.ogg (trimmed 1.6 s)
+  trap_trapdoor_1..2.wav <- Kenney RPG metalLatch.ogg + Doors Gates and
+                            Chests/Door Open 1..2.ogg (0.7 s, pitched down)
+                            + Sword Attack 1..2.ogg (slowed, the rush of
+                            air) + Kenney Impact impactSoft_heavy_001..002
+                            (landing), mixed, 2.2 s
+  trap_hole_1..3.wav     <- Kenney RPG creak1..3.ogg (0.5 s) + Sword
+                            Attack 1..3.ogg (slowed) + Kenney Impact
+                            impactSoft_heavy_001..003 (landing), mixed, 1.9 s
+  se_trap_found_1..2.wav <- Attacks/Sword Attacks Hits and Blocks/
+                            Sword Unsheath 1..2.ogg
+  se_chest_open_1..2.wav <- Doors Gates and Chests/Chest Open 1..2.ogg
+  se_container_trap_1.wav <- Doors Gates and Chests/Lock Unlock.ogg
+  se_unlock_1.wav, se_klick_1.wav <- Doors Gates and Chests/Lock Unlock.ogg
+  se_water_walk_1..5.wav <- Footsteps/Water/Water Walk 1..5.ogg (trimmed 1.0 s)
+  se_dip_water_1..3.wav  <- Footsteps/Water/Water Run 1..3.ogg  (trimmed 1.0 s)
+  se_water_splash_in_1..2.wav
+                         <- Footsteps/Water/Water Land.ogg, Water Chain Land.ogg
+                            mixed with Spells/Waterspray 1..2.ogg (1.6 s)
+  se_quaff_fountain_1..3.wav
+                         <- Footsteps/Water/Water Walk 1..3.ogg (scoop)
+                            mixed with rubberduck burble_01..02.ogg (gulp)
+  se_quaff_sink_1..2.wav <- Kenney RPG metalClick.ogg (tap) + Spells/
+                            Waterspray 1..2.ogg (0.6 s) + rubberduck
+                            burble_01..02.ogg (gulp)
+  se_kaboom_1..2.wav     <- Spells/Rock Meteor Swarm 1..2.ogg (trimmed 1.6 s)
+
+-------------------------------------------------------------------------
+Swords & Blades Sound Pack and Archery Sound Pack
+  Author:  Leonardo Calvo (Soundrack)
+  Source:  https://thesoundrack.itch.io/swords-blades-sound-pack
+           https://thesoundrack.itch.io/archery-sound-pack
+  License: CC BY 4.0 (attribution required)
+           https://creativecommons.org/licenses/by/4.0/
+  Changes: leading silence removed, trimmed, some pitched or mixed with
+           other clips as noted; converted to mono WAV.
+
+-------------------------------------------------------------------------
+Free Medieval Weapons Sounds by moneywithjj
+  License: royalty free for commercial and non-commercial work, no
+           attribution required; may be committed to a public source
+           repository as part of a project; not to be resold or
+           redistributed on their own.
+  Source:  https://moneywithjjcom.itch.io/free-medieval-weapons-sounds
+
+-------------------------------------------------------------------------
+Success, Level Up and Reward Sounds by Qvantor, made in Chisper
+  License: CC0 1.0 (public domain dedication)
+  Source:  https://chisper.qvantor.org
+
+  lvl_up_1..2.wav        <- level-up-epic-brass.ogg, rank-up-fanfare.ogg
+                            (horn fanfares, trimmed 3.6 s)
+  lvl_down_1..2.wav      <- level-up-bells.ogg, level-up-magic-harp.ogg
+                            (reversed, pitched down, low-passed) mixed with
+                            TomMusic Spell Impact 1..2 (pitched down)
+  se_stat_gain_1..2.wav  <- xp-gain.ogg, success-chime.ogg
+  se_stat_loss_1..2.wav  <- xp-gain.ogg, success-chime.ogg (reversed,
+                            pitched down, low-passed)
+
+-------------------------------------------------------------------------
+Weapon sounds (wpn_*.wav): built from the packs above and earlier in
+this file. "Archery" and "Swords & Blades" are the CC BY 4.0 packs,
+"medieval" is moneywithjj's pack.
+
+  wpn_blade_hit_1..8.wav <- Swords & Blades Sword Hit 01,03,05,08,11,14,18,22
+  wpn_blade_swing_1..8.wav <- Swords & Blades Sword Whoosh 01..08
+  wpn_heavy_swing_1..4.wav <- Swords & Blades Sword Whoosh 09,10,12,13 (pitched down)
+  wpn_axe_hit_1..5.wav <- medieval axe-hit-wood-1.wav; TomMusic Chopping and Mining/chop 1..4
+  wpn_pick_hit_1..5.wav <- TomMusic Chopping and Mining/mine 1..5
+  wpn_blunt_wood_hit_1..5.wav <- Kenney Impact impactWood_medium + impactPunch_medium 000..004 (mixed)
+  wpn_blunt_metal_hit_1..6.wav <- Kenney Impact impactPlate_heavy + impactPunch_heavy 000..004 (mixed); medieval sword-hit-armour-2.wav + impactPunch_heavy_000
+  wpn_pierce_hit_1..6.wav <- Archery Arrow Impact 11,13,15,17,19,21 (pitched down)
+  wpn_arrow_hit_1..8.wav <- Archery Arrow Impact 01..08
+  wpn_arrow_miss_1..6.wav <- Archery Arrow Whoosh 01..05; medieval arrow-flyby-3.wav
+  wpn_stone_hit_1..4.wav <- Kenney Impact impactPunch_medium + impactMining 000..003 (mixed)
+  wpn_whip_swing_1..3.wav <- Swords & Blades Sword Whoosh 02,04,06 (pitched up)
+  wpn_whip_hit_1..3.wav <- Sword Whoosh 03,05,07 (pitched up) + Kenney Impact impactGeneric_light 000..002 (snap), mixed
+  wpn_fist_hit_1..5.wav <- Kenney Impact impactPunch_medium_000..004
+  wpn_fist_swing_1..3.wav <- Archery Arrow Whoosh 02,04,06 (pitched down, quiet)
+  wpn_launch_bow_1..4.wav <- TomMusic Bow Attack 1..2 + Archery Arrow Whoosh 06..09 (mixed)
+  wpn_launch_crossbow_1..2.wav <- Kenney RPG metalClick + Archery Arrow Whoosh 07,09 (pitched down)
+  wpn_launch_sling_1..3.wav <- Swords & Blades Sword Whoosh 01,05,08 (pitched up)
+  wpn_launch_throw_1..5.wav <- Archery Arrow Whoosh 06..10
+  wpn_layer_shock_1..3.wav <- TomMusic Spell Impact 1..3 + Kenney Impact impactMetal_light (pitched up, high-passed), mixed: electric crackle
+  wpn_layer_drain_1..2.wav <- TomMusic Spell Impact 1..2 (pitched down, low-passed) + rubberduck breath.ogg (pitched down), mixed: dark drain
+
+-------------------------------------------------------------------------
+Tool and digging sounds (use_*.wav, se_dig_*.wav, se_chop_tree_*.wav):
+built from the packs above.
+
+  use_camera_1..2.wav <- Kenney RPG metalClick (shutter) + Archery Arrow Whoosh 03,08 (pitched up) + Chisper gem-sparkle (0.6 s): camera flash
+  use_light_1..2.wav <- TomMusic Torch/Light Torch 1..2
+  use_snuff_1..2.wav <- Archery Arrow Whoosh 01,05 (pitched down, low-passed): a puff
+  use_lantern_1..2.wav <- Kenney RPG metalLatch/metalClick + TomMusic Light Torch 1..2 (quiet)
+  use_tinning_1..2.wav <- Kenney RPG metalPot1..2 + TomMusic chop 1..2
+  use_grease_1..2.wav <- AHTu20 slime_move_01.wav (two 0.6 s slices)
+  use_lockpick_1..2.wav <- Kenney RPG metalClick, metalLatch (pitched up, quiet)
+  use_mirror_1..1.wav <- Chisper gem-sparkle
+  use_crystal_1..1.wav <- Chisper secret-found (low-passed)
+  use_unihorn_1..1.wav <- Chisper heal-restore
+  use_figurine_1..3.wav <- Kenney Impact impactMining_000..002 (pitched up)
+  use_plenty_1..1.wav <- Chisper item-get
+  use_rubstone_1..3.wav <- Kenney Impact impactMining_002..004 (pitched up, high-passed): scrape
+  se_dig_rock_1..5.wav <- TomMusic Chopping and Mining/mine 1..5
+  se_dig_down_1..4.wav <- Kenney Impact impactSoft_medium_000..003 + TomMusic mine 1..4 (low-passed): into earth
+  se_chop_tree_1..5.wav <- medieval axe-hit-wood-1.wav; TomMusic chop 1..4
+
+Potion dipping sounds, built from the packs above:
+  se_dip_potion_1..3.wav <- TomMusic Water Walk 1..3 (pitched up) + Kenney Impact impactGlass_light_001..003 (quiet): plop in a bottle
+  se_potion_mix_1..2.wav <- rubberduck burble_01..02 (pitched up): bubbling
+  se_holy_glow_1..1.wav <- Chisper success-vibraphone-triad
+  se_unholy_glow_1..1.wav <- Chisper success-vibraphone-triad (reversed, pitched down, low-passed)
+
+Stairs, ladders and scroll reading, built from the packs above
+(scroll effects start about 0.25 s in, after the paper):
+  se_stairs_up_1..2.wav <- TomMusic Footsteps/Stone/Stone Walk 1..5, four steps in sequence with rising pitch
+  se_stairs_down_1..2.wav <- TomMusic Footsteps/Stone/Stone Walk 1..5, four steps in sequence with falling pitch
+  se_ladder_up_1..1.wav <- TomMusic Footsteps/Wood/Wood Walk 1..4, rising
+  se_ladder_down_1..1.wav <- TomMusic Footsteps/Wood/Wood Walk 1..4, falling
+  se_stairs_fly_1..2.wav <- Archery Arrow Whoosh 02..03, 06..07 (pitched down, low-passed): airy rush
+  read_paper_1..3.wav <- Kenney RPG bookFlip1..3
+  scroll_enchant_1..1.wav <- Chisper power-up-charge
+  scroll_holy_1..1.wav <- Chisper success-vibraphone-triad
+  scroll_teleport_1..1.wav <- Kenney Impact impactBell_heavy_001 (pitched up) + Archery Arrow Whoosh 04
+  scroll_gold_1..1.wav <- Chisper coin-shower
+  scroll_detect_1..1.wav <- Chisper correct-answer-ding
+  scroll_identify_1..1.wav <- Chisper rare-item-found
+  scroll_mapping_1..1.wav <- Chisper secret-found
+  scroll_light_1..1.wav <- TomMusic Light Torch 1 + Chisper gem-sparkle
+  scroll_fire_1..2.wav <- TomMusic Spells/Fireball 1..2
+  scroll_earth_1..2.wav <- TomMusic Spells/Rock Meteor Swarm 1..2
+  scroll_amnesia_1..1.wav <- Chisper secret-found (reversed, pitched down, low-passed)
+  scroll_summon_1..1.wav <- Kenney Impact impactBell_heavy_002 + rubberduck monster_02.ogg
+  scroll_punish_1..1.wav <- medieval chainmail-shuffle-1.wav + Kenney Impact impactMetal_heavy_002: ball and chain
+  scroll_confuse_1..1.wav <- Chisper gem-sparkle (reversed, with vibrato)
+  scroll_destroy_armor_1..1.wav <- medieval shield-break-1.wav
+  scroll_genocide_1..1.wav <- Chisper level-up-bells (reversed, deep, low-passed) + TomMusic Spell Impact 1 (deep)
+  scroll_charging_1..1.wav <- Chisper power-up-charge (pitched up)
+  scroll_stink_1..2.wav <- TomMusic Spells/Waterspray 1..2 (pitched down): gas hiss
+  scroll_taming_1..1.wav <- Chisper task-complete-pop
+
+Lava, ascension and the Wizard of Yendor, built from the packs above:
+  se_lava_fall_1..2.wav <- TomMusic Firespray 1..2 + Water Land (deep) + rubberduck burble_01..02 (deep): fall into lava
+  se_lava_sizzle_1..2.wav <- TomMusic Firespray 1..2 (high-passed): sizzle
+  se_lava_bubble_1..2.wav <- rubberduck burble_01..02 (pitched way down): molten glops
+  se_ascension_1..1.wav <- Chisper level-up-magic-harp + level-up-epic-brass + success-vibraphone-triad (pitched up), mixed with hall reverb
+  wizard_laugh_1..2.wav <- AHTu20 goblin_laugh_01.wav (pitched up into a cackle) with echo
+
+Forcing locks (#force), built from the packs above:
+  se_force_pry_1..3.wav <- Swords & Blades Sword Slide 02,05,09 + Kenney RPG creak1..3 (quiet): blade prying
+  se_force_bash_1..3.wav <- Kenney Impact impactWood_heavy + impactPlank_medium 000..002: bashing the box
+  se_blade_snaps_1..2.wav <- Swords & Blades Sword Impact 02,05 (pitched up) + Kenney Impact impactMetal_light (pitched up): a blade snapping
+  se_lock_forced_1..2.wav <- Kenney Impact impactWood_heavy + Kenney RPG metalLatch + creak: the lock gives
+  se_box_destroyed_1..2.wav <- Kenney Impact impactWood_heavy + impactPlank_medium: splintering
+
+Prayer, secret doors and door kicks, built from the packs above:
+  se_prayer_success_1..2.wav <- Chisper level-up-magic-harp + success-vibraphone-triad (pitched up); quest-complete; with hall reverb
+  se_god_angry_1..2.wav <- TomMusic Rock Wall 1..2 (deep, low-passed: thunder) + Chisper level-up-bells (reversed, deep) + TomMusic Spell Impact 1..2 (deep)
+  se_secret_found_1..2.wav <- Chisper secret-found, treasure-chest-reveal
+
+Door kick crashes (rebuilt for a real crash):
+  se_kick_door_it_crashes_open_1..3.wav <- Kenney Impact impactWood_heavy (kick; door hitting the wall) + medieval shield-break-1.wav (the frame cracking) + impactMetal_light (hinge) + impactWood_light x5 (falling splinters), mixed and limited
+  se_kick_door_it_shatters_1..3.wav <- Kenney Impact impactWood_heavy + medieval shield-break-1.wav x2 (pitched) + impactPlank_medium + impactWood_light x10 (debris), mixed and limited
+
+Whistles: synthesized for this project with ffmpeg (sine tones, pitch
+slides, vibrato and noise), released under the same terms as NetHack.
+  se_shrill_whistle_1..2.wav   tin whistle, "high" and "shrill"
+  se_magic_whistle_1..2.wav    soft flute-like phrases + quiet Chisper
+                               level-up-magic-harp (CC0), with reverb
+  se_whistle_hum_1.wav         cursed magic whistle: warbling hum

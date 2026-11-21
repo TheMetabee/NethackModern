@@ -2950,6 +2950,7 @@ trapeffect_selector(
     struct trap *trap,
     unsigned int trflags)
 {
+    fx_trap(mtmp, trap->ttyp, trap->tx, trap->ty); /* NetHack Modern */
     switch (trap->ttyp) {
     case ARROW_TRAP:
         return trapeffect_arrow_trap(mtmp, trap, trflags);
@@ -3330,6 +3331,7 @@ launch_obj(
     case ROLL | LAUNCH_UNSEEN:
         if (otyp == BOULDER) {
             if (cansee(x1, y1)) {
+                Soundeffect(se_boulder_roll, 90); /* NetHack Modern */
                 You_see("%s start to roll.", an(xname(singleobj)));
             } else if (Hallucination) {
                 Soundeffect(se_someone_bowling, 60);
@@ -3349,6 +3351,10 @@ launch_obj(
         FALLTHROUGH;
     /*FALLTHRU*/
     case ROLL:
+        /* NetHack Modern: the boulder rumbling away (the unseen case
+           above already played distant rumbling) */
+        if (otyp == BOULDER)
+            Soundeffect(se_boulder_roll, 90);
  roll:
         delaycnt = 2;
         FALLTHROUGH;
@@ -5087,6 +5093,7 @@ drown(void)
     }
 
     if (!u.uinwater) {
+        Soundeffect(se_water_splash_in, 80); /* NetHack Modern */
         You("%s into the %s%c", is_solid ? "plunge" : "fall",
             waterbody_name(u.ux, u.uy),
             (Amphibious || Swimming || Breathless) ? '.' : '!');
@@ -5843,8 +5850,10 @@ untrap_box(
          && (force || (!confused && rn2(MAXULEV + 1 - u.ulevel) < 10)))
         || (box->tknown && box->otrapped)
         || (!force && confused && !rn2(3))) {
-        if (!(box->tknown && box->dknown))
+        if (!(box->tknown && box->dknown)) {
+            Soundeffect(se_trap_found, 60); /* NetHack Modern */
             You("find a trap on %s!", the(xname(box)));
+        }
         else
             pline("There's a trap on %s.", the(xname(box)));
         box->tknown = 1;
@@ -6325,6 +6334,7 @@ chest_trap(
     otmp->tknown = 0;   /* for xname(); will be set to 1 below */
     otmp->otrapped = 0; /* trap is one-shot; clear flag first in case
                          * chest kills you and ends up in bones file */
+    Soundeffect(se_container_trap, 70); /* NetHack Modern: mechanism */
     You(disarm ? "set it off!" : "trigger a trap!");
     display_nhwindow(WIN_MESSAGE, FALSE);
     if (Luck > -13 && rn2(13 + Luck) > 7) { /* saved by luck */
@@ -6379,6 +6389,7 @@ chest_trap(
             insider = (*u.ushops && inside_shop(u.ux, u.uy)
                        && *in_rooms(ox, oy, SHOPBASE) == *u.ushops);
 
+            Soundeffect(se_kaboom, 90); /* NetHack Modern */
             pline("%s!", Tobjnam(obj, "explode"));
             Snprintf(buf, sizeof buf, "exploding %s", xname(obj));
 
@@ -6433,6 +6444,7 @@ chest_trap(
         case 19:
         case 18:
         case 17:
+            fx_trap(&gy.youmonst, SLP_GAS_TRAP, u.ux, u.uy); /* gas hiss */
             pline("A cloud of noxious gas billows from %s.", the(xname(obj)));
             if (rn2(3))
                 poisoned("gas cloud", A_STR, "cloud of poison gas", 15,
@@ -6453,6 +6465,7 @@ chest_trap(
         case 11:
         case 10:
         case 9:
+            fx_trap(&gy.youmonst, FIRE_TRAP, u.ux, u.uy); /* NetHack Modern */
             dofiretrap(obj);
             break;
         case 8:
@@ -6892,13 +6905,16 @@ lava_effects(void)
 
     if (!Fire_resistance) {
         if (Wwalking) {
+            Soundeffect(se_lava_sizzle, 70); /* NetHack Modern */
             pline_The("%s here burns you!", hliquid("lava"));
             if (usurvive) {
                 losehp(dmg, lava_killer, KILLED_BY); /* lava damage */
                 goto burn_stuff;
             }
-        } else
+        } else {
+            Soundeffect(se_lava_fall, 90); /* NetHack Modern */
             You("fall into the %s!", waterbody_name(u.ux, u.uy));
+        }
 
         usurvive = Lifesaved || discover;
         if (wizard)
@@ -6990,6 +7006,7 @@ lava_effects(void)
         set_utrap((unsigned) (rn1(4, 4) + ((boil_away ? 2
                                                       : rn1(4, 12)) << 8)),
                   TT_LAVA);
+        Soundeffect(se_lava_fall, 80); /* NetHack Modern */
         You("sink into the %s%s!", waterbody_name(u.ux, u.uy),
             !boil_away ? ", but it only burns slightly"
                        : " and are about to be immolated");
@@ -7042,6 +7059,7 @@ sink_into_lava(void)
             if (!Levitation && !Flying)
                 (void) safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT);
         } else if (!u.umoved) {
+            Soundeffect(se_lava_bubble, 50); /* NetHack Modern */
             /* can't fully turn into slime while in lava, but might not
                have it be burned away until you've come awfully close */
             if (Slimed && rnd(10 - 1) >= (int) (Slimed & TIMEOUT)) {

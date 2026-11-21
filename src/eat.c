@@ -1817,6 +1817,7 @@ Hear_again(void)
 staticfn int
 rottenfood(struct obj *obj)
 {
+    Soundeffect(se_food_bad, 60); /* NetHack Modern */
     pline("Blecch!  %s %s!",
           is_rottable(obj) ? "Rotten" : "Awful", foodword(obj));
     if (!rn2(4)) {
@@ -1904,6 +1905,7 @@ eatcorpse(struct obj *otmp)
         boolean cannibal = maybe_cannibal(mnum, FALSE);
 
         /* tp++; -- early return makes this unnecessary */
+        Soundeffect(se_food_bad, 60); /* NetHack Modern */
         pline("Ulch - that %s was tainted%s!",
               (mons[mnum].mlet == S_FUNGUS) ? "fungoid vegetation"
               : vegetarian(&mons[mnum]) ? "protoplasm"
@@ -1930,11 +1932,13 @@ eatcorpse(struct obj *otmp)
         return 2;
     } else if (acidic(&mons[mnum]) && !Acid_resistance) {
         tp++;
+        Soundeffect(se_food_bad, 60); /* NetHack Modern */
         You("have a very bad case of stomach acid.");   /* not body_part() */
         losehp(rnd(15), !glob ? "acidic corpse" : "acidic glob",
                KILLED_BY_AN); /* acid damage */
     } else if (poisonous(&mons[mnum]) && rn2(5)) {
         tp++;
+        Soundeffect(se_food_bad, 60); /* NetHack Modern */
         pline("Ecch - that must have been poisonous!");
         if (!Poison_resistance) {
             poison_strdmg(rnd(4), rnd(15),
@@ -2007,6 +2011,10 @@ eatcorpse(struct obj *otmp)
 
         if (!strncmpi(pmxnam, "the ", 4))
             pmxnam += 4;
+        /* NetHack Modern: eating sound follows the corpse's texture */
+        fx_eat_texture(yummy ? FXT_DELICIOUS
+                       : !palatable ? FXT_TERRIBLE
+                       : FXT_OKAY + idx); /* okay/stringy/gamey/fatty/tough */
         pline("%s%s %s %s%c",
               type_is_pname(&mons[mnum])
                  ? "" : the_unique_pm(&mons[mnum]) ? "The " : "This ",
@@ -2044,6 +2052,7 @@ start_eating(struct obj *otmp, boolean already_partly_eaten)
     debugpline1("oeaten = %d", otmp->oeaten);
     svc.context.victual.fullwarn = svc.context.victual.doreset = 0;
     svc.context.victual.eating = 1;
+    fx_eat(otmp->otyp); /* NetHack Modern: chewing sound */
 
     if (otmp->otyp == CORPSE || otmp->globby) {
         cprefx(svc.context.victual.piece->corpsenm);
@@ -2143,6 +2152,7 @@ fprefx(struct obj *otmp)
             pline(Hallucination ? "Tastes great!  Less filling!"
                                 : "Mmm, tripe... not bad!");
         } else {
+            Soundeffect(se_food_bad, 60); /* NetHack Modern */
             pline("Yak - dog food!");
             more_experienced(1, 0);
             newexplevel();
@@ -2801,6 +2811,7 @@ doeat_nonfood(struct obj *otmp)
         nodelicious = TRUE;
 
     if (otmp->oclass == WEAPON_CLASS && otmp->opoisoned) {
+        Soundeffect(se_food_bad, 60); /* NetHack Modern */
         pline("Ecch - that must have been poisonous!");
         if (!Poison_resistance) {
             poison_strdmg(rnd(4), rnd(15), xname(otmp), KILLED_BY_AN);
@@ -2890,6 +2901,7 @@ doeat(void)
             else
                 otmp = splitobj(otmp, 1L);
         }
+        Soundeffect(se_food_bad, 60); /* NetHack Modern */
         pline("Ulch - that %s was rustproofed!", xname(otmp));
         /* The regurgitated object's rustproofing is gone now */
         otmp->oerodeproof = 0;

@@ -500,6 +500,7 @@ use_magic_whistle(struct obj *obj)
     if (!can_blow(&gy.youmonst)) {
         You("are incapable of using the whistle.");
     } else if (obj->cursed && !rn2(2)) {
+        Soundeffect(se_whistle_hum, 70); /* NetHack Modern */
         You("produce a %shigh-%s.", Underwater ? "very " : "",
             Deaf ? "frequency vibration" : "pitched humming noise");
         wake_nearby(TRUE);
@@ -511,7 +512,7 @@ use_magic_whistle(struct obj *obj)
             Hallucination ? "normal"
             : (Underwater && !Deaf) ? "strange, high-pitched"
               : "strange");
-        Soundeffect(se_shrill_whistle, 80);
+        Soundeffect(se_magic_whistle, 80); /* NetHack Modern: own sound */
         magic_whistled(obj);
     }
 }
@@ -4241,6 +4242,7 @@ doapply(void)
     if (obj->oclass == COIN_CLASS)
         return flip_coin(obj);
 
+    fx_apply(obj); /* NetHack Modern: tool use sound */
     switch (obj->otyp) {
     case BLINDFOLD:
     case LENSES:

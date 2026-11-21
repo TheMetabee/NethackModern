@@ -17,8 +17,10 @@
     seffect(angry_drone),
     seffect(angry_snakes),
     seffect(angry_voice),
+    seffect(ascension),         /* NetHack Modern: the Amulet is accepted */
     seffect(applause),
     seffect(avian_screak),
+    seffect(bag_open),          /* NetHack Modern: open a bag or sack */
     seffect(bang_weapon_side),
     seffect(bars_clink),
     seffect(bars_clonk),
@@ -26,6 +28,7 @@
     seffect(bars_whang),
     seffect(bars_whap),
     seffect(bees),
+    seffect(blade_snaps),       /* NetHack Modern: #force breaks a blade */
     seffect(blast),
     seffect(board_squeak),
     seffect(board_squeaks_loudly),
@@ -34,8 +37,10 @@
     seffect(bone_rattle),
     seffect(boomerang_klonk),
     seffect(boulder_drop),
+    seffect(boulder_roll),      /* NetHack Modern: boulder starts rolling */
     seffect(bovine_bellow),
     seffect(bovine_moo),
+    seffect(box_destroyed),     /* NetHack Modern: #force wrecks a box */
     seffect(bubble_rising),
     seffect(bugle_playing_reveille),
     seffect(buzz),
@@ -49,12 +54,16 @@
     seffect(chain_shatters),
     seffect(chains_rattling_gears_turning),
     seffect(chant),
+    seffect(chest_open),        /* NetHack Modern: open a box or chest */
     seffect(chirp),
+    seffect(chop_tree),         /* NetHack Modern: axe digging/chopping */
     seffect(clanging_sound),
     seffect(clank),
     seffect(clanking_pipe),
     seffect(clash),
     seffect(cockatrice_hiss),
+    seffect(container_locked),  /* NetHack Modern: container is locked */
+    seffect(container_trap),    /* NetHack Modern: box trap triggers */
     seffect(cough),
     seffect(courtly_conversation),
     seffect(cracking_sound),
@@ -75,10 +84,17 @@
     seffect(crushing_sound),
     seffect(deafening_roar_atmospheric),
     seffect(destroy_web),
+    seffect(dig_down),          /* NetHack Modern: digging downward */
+    seffect(dig_rock),          /* NetHack Modern: digging through rock */
+    seffect(dip_potion),        /* NetHack Modern: dip something in a potion */
+    seffect(dip_water),         /* NetHack Modern: dip into fountain/sink */
     seffect(distant_thunder),
     seffect(divine_music),
+    seffect(door_close),        /* NetHack Modern: hero closes a door */
     seffect(door_crash_open),
+    seffect(door_locked),       /* NetHack Modern: "This door is locked." */
     seffect(door_open),
+    seffect(door_resists),      /* NetHack Modern: "The door resists!" */
     seffect(door_unlock_and_open),
     seffect(drain_noises),
     seffect(dry_throat_rattle),
@@ -98,11 +114,15 @@
     seffect(feline_yelp),
     seffect(feline_yip),
     seffect(feline_yowl),
+    seffect(food_bad),          /* NetHack Modern: rotten/tainted/etc. */
+    seffect(force_bash),        /* NetHack Modern: #force, bashing */
+    seffect(force_pry),         /* NetHack Modern: #force, prying */
     seffect(furious_bubbling),
     seffect(gear_turn),
     seffect(gears_turning_chains_rattling),
     seffect(glass_crashing),
     seffect(glass_shattering),
+    seffect(god_angry),         /* NetHack Modern: prayer angers god */
     seffect(groan),
     seffect(groans_and_moans),
     seffect(growl),
@@ -113,6 +133,7 @@
     seffect(heart_beat),
     seffect(hiss),
     seffect(hollow_sound),
+    seffect(holy_glow),         /* NetHack Modern: holy water glow */
     seffect(horn_being_played),
     seffect(iron_ball_dragging_you),
     seffect(iron_ball_hits_you),
@@ -126,17 +147,26 @@
     seffect(kerplunk_boulder_gone),
     seffect(kick_door_it_crashes_open),
     seffect(kick_door_it_shatters),
+    seffect(kick_door_thwack),  /* NetHack Modern: kick doesn't open it */
     seffect(klick),
     seffect(klunk),
     seffect(klunk_pipe),
+    seffect(ladder_down),       /* NetHack Modern: climb down a ladder */
+    seffect(ladder_up),         /* NetHack Modern: climb up a ladder */
     seffect(laughter),
+    seffect(lava_bubble),       /* NetHack Modern: stuck in lava */
+    seffect(lava_fall),         /* NetHack Modern: fall/sink into lava */
+    seffect(lava_sizzle),       /* NetHack Modern: lava burns water walker */
     seffect(lid_slams_open_falls_shut),
+    seffect(lock),              /* NetHack Modern: lock a door/container */
+    seffect(lock_forced),       /* NetHack Modern: #force succeeds */
     seffect(loud_click),
     seffect(loud_crash),
     seffect(loud_pop),
     seffect(loud_splash),
     seffect(low_buzzing),
     seffect(low_hum),
+    seffect(magic_whistle),     /* NetHack Modern: magic whistle */
     seffect(maniacal_laughter),
     seffect(masticating_sound),
     seffect(mon_chugging_potion),
@@ -146,6 +176,10 @@
     seffect(orc_grunt),
     seffect(paranoid_confirmation),
     seffect(potion_crash_and_break),
+    seffect(potion_mix),        /* NetHack Modern: potions mix/bubble */
+    seffect(prayer_success),    /* NetHack Modern: god is pleased */
+    seffect(quaff_fountain),    /* NetHack Modern: drink from a fountain */
+    seffect(quaff_sink),        /* NetHack Modern: drink from a sink */
     seffect(ring_in_drain),
     seffect(ripping_sound),
     seffect(snarl),
@@ -159,6 +193,7 @@
     seffect(scratching),
     seffect(scream),
     seffect(screech),
+    seffect(secret_found),      /* NetHack Modern: hidden door/passage */
     seffect(sewer_song),
     seffect(sharp_crack),
     seffect(shriek),
@@ -194,6 +229,11 @@
     seffect(squeak_G_sharp),
     seffect(squeal),
     seffect(squelch),
+    seffect(stairs_down),       /* NetHack Modern: walk down stairs */
+    seffect(stairs_fly),        /* NetHack Modern: fly/float on stairs */
+    seffect(stairs_up),         /* NetHack Modern: walk up stairs */
+    seffect(stat_gain),         /* NetHack Modern: attribute goes up */
+    seffect(stat_loss),         /* NetHack Modern: attribute goes down */
     seffect(stone_breaking),
     seffect(stone_crumbling),
     seffect(swoosh),
@@ -201,11 +241,17 @@
     seffect(thud),
     seffect(thump),
     seffect(thunderclap),
+    seffect(trap_found),        /* NetHack Modern: a trap is discovered */
     seffect(tumbler_click),
     seffect(typing_noise),
+    seffect(unholy_glow),       /* NetHack Modern: unholy water glow */
+    seffect(unlock),            /* NetHack Modern: unlock a door/container */
     seffect(wail),
     seffect(wailing_of_the_banshee),
     seffect(wall_of_force),
+    seffect(water_splash_in),   /* NetHack Modern: hero falls into water */
+    seffect(water_walk),        /* NetHack Modern: water walking step */
+    seffect(whistle_hum),       /* NetHack Modern: cursed magic whistle */
     seffect(yelp),
     seffect(zap),
     seffect(zap_then_explosion),

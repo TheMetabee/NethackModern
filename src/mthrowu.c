@@ -104,6 +104,7 @@ thitu(
     is_acid = (obj && obj->otyp == ACID_VENOM);
 
     if (u.uac + tlev <= (dieroll = rnd(20))) {
+        fx_attack_wep(gm.marcher, &gy.youmonst, AD_PHYS, FALSE, obj, TRUE);
         ++gm.mesg_given;
         if (Blind || !flags.verbose) {
             pline("It misses.");
@@ -115,6 +116,7 @@ thitu(
             You("are almost hit by %s.", onm);
         return 0;
     } else {
+        fx_attack_wep(gm.marcher, &gy.youmonst, AD_PHYS, TRUE, obj, TRUE);
         if (Blind || !flags.verbose)
             You("are hit%s", exclam(dam));
         else
@@ -348,6 +350,7 @@ ohitmon(
             tmp += spec_abon(mon_launcher, mtmp);
     }
     if (tmp < rnd(20)) {
+        fx_attack_wep(gm.marcher, mtmp, AD_PHYS, FALSE, otmp, TRUE);
         if (!ismimic) {
             if (vis)
                 miss(distant_name(otmp, mshot_xname), mtmp);
@@ -371,6 +374,7 @@ ohitmon(
         boolean harmless = (stone_missile(otmp) && passes_rocks(mtmp->data));
 
         damage = dmgval(otmp, mtmp);
+        fx_attack_wep(gm.marcher, mtmp, AD_PHYS, TRUE, otmp, TRUE);
         if (otmp->otyp == ACID_VENOM && resists_acid(mtmp))
             damage = 0;
 #if 0 /* can't use this because we don't have the attacker */
@@ -589,6 +593,9 @@ m_throw(
     gb.bhitpos.x = x;
     gb.bhitpos.y = y;
     gn.notonhead = FALSE; /* reset potentially stale value */
+    /* NetHack Modern: twang/whoosh as it leaves */
+    fx_launch(mon, obj, (MON_WEP(mon) && ammo_and_launcher(obj, MON_WEP(mon)))
+                            ? MON_WEP(mon) : (struct obj *) 0);
 
     if (obj->quan == 1L) {
         /*

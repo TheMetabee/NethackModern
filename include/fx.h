@@ -21,7 +21,34 @@ enum fx_event_type {
     FXE_HEAL,       /* target gained 'amount' HP */
     FXE_ATTACK,     /* source attacked target (hit or miss) */
     FXE_MISS,       /* source's attack on target missed */
-    FXE_DEATH       /* target died (monsters only) */
+    FXE_DEATH,      /* target died (monsters only) */
+    FXE_HEAR,       /* a "You hear ..." message (x,y = hero) */
+    FXE_SWAP,       /* hero swapped places with target (x,y = target's
+                     * new square, sx,sy = hero's new square) */
+    FXE_BUMP,       /* hero was stopped by friendly target at x,y */
+    FXE_PICKUP,     /* hero picked up an item of class 'objclass' */
+    FXE_TRAP,       /* target set off a trap of type 'ttyp' at x,y */
+    FXE_EAT,        /* hero starts eating food 'otyp' ('texture' for
+                     * corpses) */
+    FXE_LAUNCH,     /* source fires/throws missile 'wep_otyp' (from
+                     * launcher 'launcher_otyp', if any) */
+    FXE_WEPFX,      /* a weapon's special effect of kind 'adtyp' landed on
+                     * the target (not resisted): Fire Brand burning, etc */
+    FXE_APPLY,      /* hero applies tool 'otyp'; amount = 1 if it was lit */
+    FXE_READ,       /* hero reads scroll 'otyp'; amount = 1 if confused */
+    FXE_APPEAR      /* a notable monster ('mndx') just came into view */
+};
+
+/* fx_event.texture: how a corpse turned out to taste (see eatcorpse()) */
+enum fx_texture {
+    FXT_NONE = 0, /* no taste message (or not a corpse) */
+    FXT_OKAY,     /* vegetarian corpses: "tastes okay" */
+    FXT_STRINGY,
+    FXT_GAMEY,
+    FXT_FATTY,
+    FXT_TOUGH,
+    FXT_DELICIOUS,
+    FXT_TERRIBLE
 };
 
 /* fx_event.flags */
@@ -32,6 +59,7 @@ enum fx_event_type {
                                  * ports should summarise, not animate */
 #define FXF_HALLU       0x0010U /* hero hallucinating; values scrambled */
 #define FXF_TARGET_PET  0x0020U /* target is tame */
+#define FXF_RANGED      0x0040U /* ATTACK/MISS by a thrown/fired missile */
 
 struct fx_event {
     int type;            /* enum fx_event_type */
@@ -43,6 +71,15 @@ struct fx_event {
     int hp, hpmax;       /* target HP after the event */
     unsigned target_id;  /* m_id of target, 0 for hero */
     unsigned source_id;  /* m_id of source, 0 for hero or none */
+    int objclass;        /* PICKUP: object class (POTION_CLASS etc.) */
+    int mndx;            /* DEATH: monster species (mons[] index) */
+    int ttyp;            /* TRAP: trap type (ARROW_TRAP etc.) */
+    int otyp;            /* EAT: object type being eaten */
+    int texture;         /* EAT: enum fx_texture */
+    int wep_otyp;        /* ATTACK/MISS/LAUNCH: weapon or missile otyp,
+                          * 0 (STRANGE_OBJECT) for none/natural attack */
+    int wep_art;         /* ...and its artifact index, 0 if ordinary */
+    int launcher_otyp;   /* LAUNCH: bow/crossbow/sling used, else 0 */
 };
 
 typedef void (*fx_handler_fn)(const struct fx_event *);
@@ -74,12 +111,28 @@ typedef void (*fx_handler_fn)(const struct fx_event *);
 
 /* fx.c */
 extern void fx_set_handler(fx_handler_fn);
+extern void fx_set_audio_handler(fx_handler_fn);
 extern boolean fx_active(void);
+extern void fx_debug_log(const char *);
 extern void fx_sync(void);
 extern void fx_attack(struct monst *, struct monst *, int, boolean);
+extern void fx_attack_wep(struct monst *, struct monst *, int, boolean,
+                          struct obj *, boolean);
+extern void fx_launch(struct monst *, struct obj *, struct obj *);
+extern void fx_weapon_effect(struct monst *, int);
+extern void fx_apply(struct obj *);
+extern void fx_read_scroll(int, boolean);
+extern void fx_wizard_laugh(struct monst *);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);
+extern void fx_hear(void);
+extern void fx_swap(struct monst *, coordxy, coordxy);
+extern void fx_bump(struct monst *, coordxy, coordxy);
+extern void fx_pickup(int, int);
+extern void fx_trap(struct monst *, int, coordxy, coordxy);
+extern void fx_eat_texture(int);
+extern void fx_eat(int);
 extern void fx_glyphinfo(coordxy, coordxy, int, glyph_info *);
 
 #endif /* FX_H */

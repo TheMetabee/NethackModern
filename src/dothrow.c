@@ -1608,6 +1608,9 @@ throwit(
                                           : hand_tossed_ammo);
 
     gn.notonhead = FALSE; /* reset potentially stale value */
+    /* NetHack Modern: twang/whoosh as it leaves */
+    fx_launch(&gy.youmonst, obj,
+              (toss_type == launcher_fired_ammo) ? uwep : (struct obj *) 0);
 
     if ((obj->cursed || obj->greased) && (u.dx || u.dy) && !rn2(7)) {
         boolean slipok = TRUE;
@@ -2041,6 +2044,8 @@ staticfn void
 tmiss(struct obj *obj, struct monst *mon, boolean maybe_wakeup)
 {
     const char *missile = mshot_xname(obj);
+
+    fx_attack_wep(&gy.youmonst, mon, AD_PHYS, FALSE, obj, TRUE);
 
     /* If the target can't be seen or doesn't look like a valid target,
        avoid "the arrow misses it," or worse, "the arrows misses the mimic."

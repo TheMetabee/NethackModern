@@ -2221,6 +2221,11 @@ domove_swap_with_pet(
             break;
         }
     }
+    /* NetHack Modern: the pet now stands where the hero was */
+    if (didnt_move)
+        fx_bump(mtmp, x, y);
+    else
+        fx_swap(mtmp, u.ux0, u.uy0);
     return !didnt_move;
 }
 
@@ -3304,6 +3309,9 @@ pooleffects(
                        || !(Swimming || Amphibious || Breathless))) {
             if (drown())
                 return TRUE;
+        } else if (Wwalking && newspot) {
+            /* NetHack Modern: splashy step across the surface */
+            Soundeffect(se_water_walk, 40);
         }
     }
     return FALSE;

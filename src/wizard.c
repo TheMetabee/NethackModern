@@ -771,6 +771,7 @@ resurrect(void)
 
         mtmp->mtame = 0, mtmp->mpeaceful = 0; /* paranoia */
         set_malign(mtmp);
+        fx_wizard_laugh(mtmp); /* NetHack Modern */
         if (!Deaf) {
             pline("A voice booms out...");
             SetVoice(mtmp, 0, 80, 0);
@@ -849,6 +850,7 @@ cuss(struct monst *mtmp)
         return;
     if (mtmp->iswiz) {
         if (!rn2(5)) { /* typical bad guy action */
+            fx_wizard_laugh(mtmp); /* NetHack Modern */
             pline("%s laughs fiendishly.", Monnam(mtmp));
         } else if (u.uhave.amulet && !rn2(SIZE(random_insult))) {
             SetVoice(mtmp, 0, 80, 0);

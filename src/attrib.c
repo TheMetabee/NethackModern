@@ -191,8 +191,11 @@ adjattrib(
     AEXE(ndx) = 0;
 
     disp.botl = TRUE;
-    if (msgflg <= 0)
+    if (msgflg <= 0) {
+        /* NetHack Modern: rising chime or falling drain */
+        Soundeffect((incr > 0) ? se_stat_gain : se_stat_loss, 60);
         You_feel("%s%s!", (incr > 1 || incr < -1) ? "very " : "", attrstr);
+    }
     if (program_state.in_moveloop && (ndx == A_STR || ndx == A_CON))
         encumber_msg();
     return TRUE;

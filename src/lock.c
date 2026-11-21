@@ -135,6 +135,10 @@ picklock(void)
         return ((gx.xlock.usedtime = 0));
     }
 
+    /* NetHack Modern: tumbler sound; locking if it isn't locked now */
+    Soundeffect((gx.xlock.door ? !(gx.xlock.door->doormask & D_LOCKED)
+                               : !gx.xlock.box->olocked)
+                    ? se_lock : se_unlock, 60);
     You("succeed in %s.", lock_action());
     if (gx.xlock.door) {
         if (gx.xlock.door->doormask & D_TRAPPED) {
@@ -179,6 +183,7 @@ breakchestlock(struct obj *box, boolean destroyit)
                 peaceful_shk = costly && (boolean) shkp->mpeaceful;
         long loss = 0L;
 
+        Soundeffect(se_box_destroyed, 80); /* NetHack Modern */
         pline("In fact, you've totally destroyed %s.", the(xname(box)));
         /* Put the contents on ground at the hero's feet. */
         while ((otmp = box->cobj) != 0) {
@@ -231,6 +236,7 @@ forcelock(void)
             /* for a +0 weapon, probability that it survives an unsuccessful
              * attempt to force the lock is (.992)^50 = .67
              */
+            Soundeffect(se_blade_snaps, 80); /* NetHack Modern */
             pline("%sour %s broke!", (uwep->quan > 1L) ? "One of y" : "Y",
                   xname(uwep));
             useup(uwep);
@@ -241,9 +247,12 @@ forcelock(void)
     } else             /* blunt */
         wake_nearby(FALSE); /* due to hammering on the container */
 
+    /* NetHack Modern: one pry or bash per turn */
+    Soundeffect(gx.xlock.picktyp ? se_force_pry : se_force_bash, 55);
     if (rn2(100) >= gx.xlock.chance)
         return 1; /* still busy */
 
+    Soundeffect(se_lock_forced, 70); /* NetHack Modern */
     You("succeed in forcing the lock.");
     exercise(gx.xlock.picktyp ? A_DEX : A_STR, TRUE);
     /* breakchestlock() might destroy xlock.box; if so, xlock context will
@@ -877,6 +886,8 @@ doopen_indir(coordxy x, coordxy y)
             break;
         }
         set_msg_xy(cc.x, cc.y);
+        if (locked)
+            Soundeffect(se_door_locked, 50);
         pline("This door%s.", mesg);
         if (locked && flags.autounlock) {
             struct obj *unlocktool;
@@ -908,6 +919,7 @@ doopen_indir(coordxy x, coordxy y)
     /* door is known to be CLOSED */
     if (rnl(20) < (ACURRSTR + ACURR(A_DEX) + ACURR(A_CON)) / 3) {
         set_msg_xy(cc.x, cc.y);
+        Soundeffect(se_door_open, 60);
         pline_The("door opens.");
         if (door->doormask & D_TRAPPED) {
             b_trapped("door", FINGER);
@@ -921,6 +933,7 @@ doopen_indir(coordxy x, coordxy y)
     } else {
         exercise(A_STR, TRUE);
         set_msg_xy(cc.x, cc.y);
+        Soundeffect(se_door_resists, 60);
         pline_The("door resists!");
     }
 
@@ -1042,12 +1055,14 @@ doclose(void)
         }
         if (u.usteed
             || rn2(25) < (ACURRSTR + ACURR(A_DEX) + ACURR(A_CON)) / 3) {
+            Soundeffect(se_door_close, 60);
             pline_The("door closes.");
             door->doormask = D_CLOSED;
             feel_newsym(x, y); /* the hero knows she closed it */
             block_point(x, y); /* vision:  no longer see there */
         } else {
             exercise(A_STR, TRUE);
+            Soundeffect(se_door_resists, 60);
             pline_The("door resists!");
         }
     }
@@ -1191,6 +1206,8 @@ doorlock(struct obj *otmp, coordxy x, coordxy y)
             res = FALSE;
             break;
         }
+        if (res && cansee(x, y))
+            Soundeffect(se_klunk, 50); /* NetHack Modern */
         block_point(x, y);
         door->doormask = D_LOCKED | (door->doormask & D_TRAPPED);
         newsym(x, y);
@@ -1198,6 +1215,8 @@ doorlock(struct obj *otmp, coordxy x, coordxy y)
     case WAN_OPENING:
     case SPE_KNOCK:
         if (door->doormask & D_LOCKED) {
+            if (cansee(x, y))
+                Soundeffect(se_klick, 50); /* NetHack Modern */
             msg = "The door unlocks!";
             door->doormask = D_CLOSED | (door->doormask & D_TRAPPED);
         } else

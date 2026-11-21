@@ -960,6 +960,7 @@ display_trap_map(int cursed_src)
     int door, glyph, ter_typ = TER_DETECT | (cursed_src ? TER_OBJ : TER_TRP);
     coord cc;
 
+    Soundeffect(se_trap_found, 60); /* NetHack Modern */
     cls();
 
     (void) unconstrain_map();
@@ -1816,6 +1817,8 @@ findit(void)
     /* count that controls "reveal" punctuation; 0..4 */
     k = !!found.num_sdoors + !!found.num_scorrs + !!found.num_traps
         + !!found.num_mons;
+    if (found.num_sdoors || found.num_scorrs) /* NetHack Modern */
+        Soundeffect(se_secret_found, 70);
 
     buf[0] = '\0';
     if (found.num_sdoors) {
@@ -1953,6 +1956,7 @@ find_trap(struct trap *trap)
     }
 
     set_msg_xy(trap->tx, trap->ty);
+    Soundeffect(se_trap_found, 60); /* NetHack Modern */
     You("find %s.", an(trapname(trap->ttyp, FALSE)));
 
     if (cleared) {
@@ -2048,6 +2052,7 @@ dosearch0(int aflag) /* intrinsic autosearch vs explicit searching */
                     nomul(0);
                     feel_location(x, y); /* make sure it shows up */
                     set_msg_xy(x, y);
+                    Soundeffect(se_secret_found, 70); /* NetHack Modern */
                     You("find a hidden door.");
                 } else if (levl[x][y].typ == SCORR) {
                     if (rnl(7 - fund))
@@ -2058,6 +2063,7 @@ dosearch0(int aflag) /* intrinsic autosearch vs explicit searching */
                     nomul(0);
                     feel_newsym(x, y); /* make sure it shows up */
                     set_msg_xy(x, y);
+                    Soundeffect(se_secret_found, 70); /* NetHack Modern */
                     You("find a hidden passage.");
                 } else {
                     /* Be careful not to find anything in an SCORR or SDOOR */
