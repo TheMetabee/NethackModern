@@ -1010,6 +1010,9 @@ onMeasureItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
         int map_y = 16;  /* leave it at the default size, unless
                            * we are actually showing the larger
                            * icons in the menu */
+
+        if (iflags.fx_theme) /* NetHack Modern: 1.5x tiles, airy rows */
+            map_y = (int) (24 * win10_monitor_scale(hWnd)) + 4;
         if (NHMENU_HAS_GLYPH(data->menui.menu.items[i])
             && !IS_MAP_ASCII(iflags.wc_map_mode)) {
             lpmis->itemHeight =
@@ -1050,6 +1053,7 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
     double monitorScale = win10_monitor_scale(hWnd);
     int tileXScaled = (int) (TILE_X * monitorScale);
     int tileYScaled = (int) (TILE_Y * monitorScale);
+    boolean heading;
 
     UNREFERENCED_PARAMETER(wParam);
 
@@ -1077,9 +1081,16 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
     if (item->color != NO_COLOR)
         (void) SetTextColor(lpdis->hDC, nhcolor_to_RGB(item->color));
 
+    if (iflags.fx_theme) {
+        /* NetHack Modern: item tiles at 1.5x */
+        tileXScaled = (int) (24 * monitorScale);
+        tileYScaled = (int) (24 * monitorScale);
+    }
+    heading = (iflags.fx_theme && !NHMENU_IS_SELECTABLE(*item)
+               && item->attr != ATR_NONE && item->color == NO_COLOR);
+
     /* NetHack Modern: group headings get a band and the accent colour */
-    if (iflags.fx_theme && !NHMENU_IS_SELECTABLE(*item)
-        && item->attr != ATR_NONE && item->color == NO_COLOR) {
+    if (heading) {
         static HBRUSH band, line;
         RECT r = lpdis->rcItem;
 
@@ -1099,11 +1110,34 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
 
     /* set initial offset */
     x = lpdis->rcItem.left + 1;
+    if (iflags.fx_theme)
+        x = lpdis->rcItem.left + max(8, spacing);
 
     /* print check mark and letter */
     if (NHMENU_IS_SELECTABLE(*item)) {
         char buf[2];
-        if (data->how != PICK_NONE) {
+        if (data->how != PICK_NONE && iflags.fx_theme) {
+            /* NetHack Modern: a flat check box (gold when picked, part
+               filled when a count is picked) */
+            int bs = max(10, tm.tmHeight * 3 / 5);
+            int by = (lpdis->rcItem.bottom + lpdis->rcItem.top - bs) / 2;
+            HBRUSH edge = CreateSolidBrush(TH_SEPARATOR);
+            RECT b;
+
+            SetRect(&b, x, by, x + bs, by + bs);
+            FrameRect(lpdis->hDC, &b, edge);
+            if (item->count != 0) {
+                HBRUSH fill = CreateSolidBrush(TH_ACCENT);
+
+                InflateRect(&b, -2, -2);
+                if (item->count > 0)
+                    b.top = b.bottom - (b.bottom - b.top) / 2;
+                FillRect(lpdis->hDC, &b, fill);
+                DeleteObject(fill);
+            }
+            DeleteObject(edge);
+            x += bs + spacing;
+        } else if (data->how != PICK_NONE) {
             HBITMAP bmpCheck;
             HBITMAP bmpSaved;
 
@@ -1126,7 +1160,8 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
             SelectObject(data->bmpDC, bmpSaved);
         }
 
-        x += tileXScaled + spacing;
+        if (!iflags.fx_theme)
+            x += tileXScaled + spacing;
 
         if (item->accelerator != 0) {
             COLORREF ink = GetTextColor(lpdis->hDC);
@@ -1204,6 +1239,8 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
     }
 
     x += spacing;
+    if (heading)
+        x = lpdis->rcItem.left + max(8, spacing); /* flush with the margin */
 
     /* draw item text */
     p1 = item->str;
@@ -1218,7 +1255,9 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
         if (p != NULL)
             *p = '\0'; /* for time being, view tab field as zstring */
         DrawText(lpdis->hDC, NH_A2W(p1, wbuf2, BUFSZ), strlen(p1), &drawRect,
-                 DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE
+                     | (iflags.fx_theme ? DT_END_ELLIPSIS | DT_NOPREFIX
+                                        : 0));
         if (p != NULL)
             *p = '\t';
         else /* last string so, */
