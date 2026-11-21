@@ -409,3 +409,7 @@ Boulder pushing and Sunsword light, built from the packs above:
 Boulder sounds (softened):
   se_boulder_push_1..3.wav <- TomMusic Rock Wall 1..2 (0.65 s slices, pitched down, heavily low-passed, soft fades): a gentle slide
   msg_boulder_1..3.wav <- Kenney Impact impactSoft_medium_001..003 (pitched down, low-passed): a light thud
+
+Poison and acid damage, built from the packs above (shock damage reuses wpn_layer_shock):
+  hit_poison_1..2.wav <- AHTu20 snake_hiss_01 (short, high-passed) + rubberduck burble_01..02: a sickly hiss and gurgle
+  hit_acid_1..2.wav <- TomMusic Firespray (short, high-passed: sizzle) + AHTu20 slime_move + Kenney Impact impactSoft_medium: corrosive splash

@@ -1268,6 +1268,16 @@ ma_fx_event(const struct fx_event *ev)
         else if (ev->adtyp == AD_MAGM)
             ma_play_group(MAG_HIT_MAGIC, 0.6f * vol, ma_frand(0.95f, 1.1f),
                           pan);
+        else if (ev->adtyp == AD_ELEC)
+            ma_play_named("wpn_layer_shock", 0.75f * vol,
+                          ma_frand(0.95f, 1.1f), pan);
+        else if (ev->adtyp == AD_DRST || ev->adtyp == AD_DRDX
+                 || ev->adtyp == AD_DRCO)
+            ma_play_named("hit_poison", 0.7f * vol, ma_frand(0.92f, 1.08f),
+                          pan);
+        else if (ev->adtyp == AD_ACID)
+            ma_play_named("hit_acid", 0.75f * vol, ma_frand(0.92f, 1.08f),
+                          pan);
         break;
     case FXE_MISS:
         if (!ma_weapon_attack(ev, vol, pan))
