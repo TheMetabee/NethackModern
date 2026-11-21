@@ -18,6 +18,9 @@ static ma_engine engine;
 static int engine_ok = 0;
 static ma_sound voices[NHMA_VOICES];
 static int voice_used[NHMA_VOICES];
+static ma_sound amb[2];
+static int amb_used[2], amb_cur = -1;
+static char amb_path[2][512];
 
 int
 nhma_init(void)
@@ -42,6 +45,12 @@ nhma_shutdown(void)
             ma_sound_uninit(&voices[i]);
             voice_used[i] = 0;
         }
+    for (i = 0; i < 2; i++)
+        if (amb_used[i]) {
+            ma_sound_uninit(&amb[i]);
+            amb_used[i] = 0;
+        }
+    amb_cur = -1;
     ma_engine_uninit(&engine);
     engine_ok = 0;
 }
@@ -84,4 +93,55 @@ nhma_play(const char *path, float volume, float pitch, float pan)
         return 0;
     }
     return 1;
+}
+
+/* NetHack Modern: one looping ambience at a time, streamed from disk.
+   Changing it fades the old loop out while the new one fades in; a NULL
+   path fades out to silence. Two slots, so the old one can finish its
+   fade while the new one starts. */
+
+void
+nhma_ambience(const char *path, float volume, unsigned fade_ms)
+{
+    int next;
+
+    if (!engine_ok)
+        return;
+    /* same loop already playing: just follow the volume */
+    if (path && amb_cur >= 0 && !strcmp(amb_path[amb_cur], path)) {
+        ma_sound_set_volume(&amb[amb_cur], volume);
+        return;
+    }
+    if (!path && amb_cur < 0)
+        return;
+    /* fade the current one out (it keeps the slot until next time) */
+    if (amb_cur >= 0)
+        ma_sound_stop_with_fade_in_milliseconds(&amb[amb_cur], fade_ms);
+    if (!path) {
+        amb_cur = -1;
+        return;
+    }
+    next = (amb_cur == 0) ? 1 : 0;
+    if (amb_used[next]) {
+        ma_sound_uninit(&amb[next]);
+        amb_used[next] = 0;
+    }
+    if (ma_sound_init_from_file(&engine, path, MA_SOUND_FLAG_STREAM, NULL,
+                                NULL, &amb[next]) != MA_SUCCESS) {
+        amb_cur = -1;
+        return;
+    }
+    amb_used[next] = 1;
+    (void) strncpy(amb_path[next], path, sizeof amb_path[next] - 1);
+    amb_path[next][sizeof amb_path[next] - 1] = '\0';
+    ma_sound_set_looping(&amb[next], MA_TRUE);
+    ma_sound_set_volume(&amb[next], volume);
+    ma_sound_set_fade_in_milliseconds(&amb[next], 0.0f, 1.0f, fade_ms);
+    if (ma_sound_start(&amb[next]) != MA_SUCCESS) {
+        ma_sound_uninit(&amb[next]);
+        amb_used[next] = 0;
+        amb_cur = -1;
+        return;
+    }
+    amb_cur = next;
 }

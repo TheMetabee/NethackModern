@@ -1170,10 +1170,37 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
             buf[1] = '\x0';
             SetRect(&drawRect, x, lpdis->rcItem.top, lpdis->rcItem.right,
                     lpdis->rcItem.bottom);
-            if (iflags.fx_theme) /* NetHack Modern: the letter softer */
+            HGDIOBJ prevFont = NULL;
+
+            if (iflags.fx_theme) {
+                /* NetHack Modern: the letter softer, and in a font where
+                   l, I and 1 (and O and 0) can't be mistaken for each
+                   other the way they can in the interface font */
+                static HFONT accFont;
+                static int accHeight;
+
                 SetTextColor(lpdis->hDC, TH_TEXT_DIM);
+                if (!accFont || accHeight != tm.tmHeight) {
+                    if (accFont)
+                        DeleteObject(accFont);
+                    accHeight = tm.tmHeight;
+                    accFont = CreateFontA(-(tm.tmAscent - tm.tmInternalLeading
+                                            + tm.tmDescent),
+                                          0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                                          FALSE, DEFAULT_CHARSET,
+                                          OUT_DEFAULT_PRECIS,
+                                          CLIP_DEFAULT_PRECIS,
+                                          CLEARTYPE_QUALITY,
+                                          FIXED_PITCH | FF_MODERN,
+                                          TH_FONT_MONO);
+                }
+                if (accFont)
+                    prevFont = SelectObject(lpdis->hDC, accFont);
+            }
             DrawText(lpdis->hDC, NH_A2W(buf, wbuf, 2), 1, &drawRect,
                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            if (prevFont)
+                SelectObject(lpdis->hDC, prevFont);
             SetTextColor(lpdis->hDC, ink);
         }
         x += tm.tmAveCharWidth + tm.tmOverhang + spacing;

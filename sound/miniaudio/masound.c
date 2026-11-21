@@ -1003,6 +1003,8 @@ static struct ma_msgsnd {
     { "* tries to move the boulder*", "msg_boulder", 0.45f, 1.0f, 0 },
     /* the game's own onomatopoeia */
     { "Boing!*", "msg_boing", 0.8f, 1.0f, 0 },
+    /* a vampire's bat, wolf or fog form destroyed: it rises as itself */
+    { "* and rises as *", "vampire_rise", 0.8f, 1.0f, 0 },
     { "Splat!*", "msg_splat", 0.8f, 1.0f, 0 },
     { "Splash!*", "se_water_splash_in", 0.6f, 1.1f, 0 },
     { "Plop!*", "se_dip_potion", 0.7f, 0.9f, 0 },
@@ -1156,6 +1158,8 @@ ma_death_cry(int mndx, float vol, float pan)
         name = "death_snake";
         break;
     case S_BAT:
+        name = "death_bat"; /* squeaks and wings, not a bird's cry */
+        break;
     case S_COCKATRICE:
         name = "death_bird";
         break;
@@ -1333,6 +1337,218 @@ ma_wand_self(int look)
     ma_play_named(name, v, ma_frand(0.97f, 1.03f), 0.0f);
 }
 
+/* ---- level ambience ----------------------------------------------- */
+
+/* Gehennom's maze levels come in flavours: mostly ice, mostly water,
+   walled with iron bars, or fire. Worked out once per level from its
+   terrain. */
+#define MA_HELL_FIRE 0
+#define MA_HELL_ICE 1
+#define MA_HELL_WATER 2
+#define MA_HELL_BARS 3
+
+static int
+ma_hell_flavour(void)
+{
+    static d_level seen;
+    static int flavour = MA_HELL_FIRE;
+    static boolean have;
+    int x, y, ice = 0, water = 0, bars = 0;
+
+    if (have && on_level(&seen, &u.uz))
+        return flavour;
+    for (x = 1; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++) {
+            int typ = levl[x][y].typ;
+
+            if (typ == ICE)
+                ice++;
+            else if (IS_POOL(typ) || typ == WATER)
+                water++;
+            else if (typ == IRONBARS)
+                bars++;
+        }
+    flavour = (ice >= 80 && ice >= water) ? MA_HELL_ICE
+              : (water >= 80) ? MA_HELL_WATER
+              : (bars >= 30) ? MA_HELL_BARS : MA_HELL_FIRE;
+    seen = u.uz;
+    have = TRUE;
+    return flavour;
+}
+
+/* the loop for the level the hero is on, and how loud it sits */
+static const char *
+ma_level_ambience(float *vol)
+{
+    d_level *z = &u.uz;
+
+    *vol = 0.30f;
+    if (Is_astralevel(z))
+        return "amb_astral";
+    if (Is_earthlevel(z))
+        return "amb_earth";
+    if (Is_airlevel(z))
+        return "amb_air";
+    if (Is_firelevel(z))
+        return "amb_fire";
+    if (Is_waterlevel(z))
+        return "amb_water";
+    if (isok(u.ux, u.uy) && In_W_tower(u.ux, u.uy, z))
+        return "amb_mystic"; /* the Wizard's Tower: something arcane */
+    if (In_V_tower(z))
+        return "amb_haunted"; /* a haunted castle */
+    if (Is_valley(z))
+        return "amb_valley"; /* cold, still and full of the dead */
+    if (In_hell(z) || Is_sanctum(z)) {
+        int f = Is_sanctum(z) ? MA_HELL_FIRE : ma_hell_flavour();
+
+        *vol = 0.42f; /* it should be felt */
+        if (f == MA_HELL_ICE)
+            return "amb_frozen";
+        if (f == MA_HELL_WATER)
+            return "amb_flood";
+        return "amb_hell"; /* fire (barred levels add chains) */
+    }
+    if (Is_stronghold(z))
+        return "amb_castle";
+    if (Is_medusa_level(z))
+        return "amb_sea";
+    if (Is_knox(z))
+        return "amb_vault"; /* Fort Ludios: a vast guarded vault */
+    if (In_quest(z))
+        return Is_qstart(z) ? "amb_quest" : "amb_deep";
+    if (In_sokoban(z))
+        return "amb_tower"; /* a closed stone tower */
+    if (In_mines(z)) {
+        if (Is_mineend_level(z))
+            return "amb_deep";
+        if (svl.level.flags.has_town)
+            return "amb_town";
+        return "amb_cave";
+    }
+    if (Is_oracle_level(z)) {
+        *vol = 0.22f;
+        return "amb_tower";
+    }
+    return "amb_cave";
+}
+
+/* start, change or stop the ambience to match where the hero is; a new
+   level crossfades over a couple of seconds */
+static void
+ma_ambience_update(unsigned fade_ms)
+{
+    char path[MAX_PATH + 64];
+    const char *name;
+    float vol;
+
+    if (!ma.ok)
+        return;
+    if (!iflags.fx_ambience || !iflags.sounds || Deaf || !u.uz.dlevel) {
+        nhma_ambience((const char *) 0, 0.0f, 1500);
+        return;
+    }
+    name = ma_level_ambience(&vol);
+    Snprintf(path, sizeof path, "%s%s.flac", ma.dir, name);
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
+        nhma_ambience((const char *) 0, 0.0f, 1500);
+        return;
+    }
+    nhma_ambience(path, vol, fade_ms);
+}
+
+/* now and then, a distant sound that belongs to the place: pickaxes in
+   the Mines, fire and groans in Gehennom, wails in the Valley, howls
+   and creaks in Vlad's Tower, chimes in the Wizard's Tower, creaks in
+   Sokoban. 'one_in' is the chance per step. */
+struct ma_acc {
+    const char *name;
+    float vol, plo, phi; /* volume, pitch range */
+};
+
+static void
+ma_ambience_accents(void)
+{
+    static const struct ma_acc mines[] = { { "se_dig_rock", 0.12f, 0.8f, 0.92f } },
+      hell[] = { { "acc_fire", 0.4f, 0.85f, 1.05f },
+                 { "acc_fire", 0.4f, 0.7f, 0.9f },
+                 { "acc_lava", 0.45f, 0.85f, 1.05f },
+                 { "acc_lava", 0.45f, 0.75f, 0.95f },
+                 { "acc_rumble", 0.5f, 0.85f, 1.05f },
+                 { "acc_groan", 0.3f, 0.8f, 1.0f },
+                 { "acc_wail", 0.18f, 0.8f, 0.95f } },
+      hellbars[] = { { "acc_fire", 0.4f, 0.85f, 1.05f },
+                     { "acc_lava", 0.45f, 0.85f, 1.05f },
+                     { "acc_rumble", 0.5f, 0.85f, 1.05f },
+                     { "acc_chain", 0.5f, 0.85f, 1.05f },
+                     { "acc_chain", 0.45f, 0.7f, 0.85f },
+                     { "acc_groan", 0.3f, 0.8f, 1.0f } },
+      frozen[] = { { "acc_ice", 0.5f, 0.85f, 1.1f },
+                   { "acc_ice", 0.45f, 0.7f, 0.9f },
+                   { "acc_rumble", 0.35f, 0.85f, 1.0f },
+                   { "acc_wail", 0.14f, 0.85f, 1.0f } },
+      flood[] = { { "acc_steam", 0.45f, 0.9f, 1.1f },
+                  { "acc_lava", 0.45f, 1.15f, 1.35f },
+                  { "acc_rumble", 0.4f, 0.85f, 1.0f },
+                  { "acc_groan", 0.25f, 0.8f, 1.0f } },
+      valley[] = { { "acc_bell", 0.3f, 0.97f, 1.03f },
+                   { "acc_crow", 0.18f, 0.9f, 1.05f } },
+      haunted[] = { { "acc_howl", 0.16f, 0.9f, 1.05f },
+                    { "acc_owl", 0.14f, 0.9f, 1.0f },
+                    { "acc_bat", 0.14f, 0.9f, 1.15f },
+                    { "acc_creak", 0.2f, 0.85f, 1.05f } },
+      mystic[] = { { "acc_chime", 0.18f, 0.9f, 1.2f } },
+      tower[] = { { "acc_creak", 0.12f, 0.8f, 0.95f } },
+      vault[] = { { "acc_clank", 0.3f, 0.9f, 1.05f },
+                  { "acc_march", 0.32f, 0.95f, 1.05f },
+                  { "acc_coins", 0.22f, 0.9f, 1.1f },
+                  { "acc_dragon", 0.25f, 0.9f, 1.05f } };
+    const struct ma_acc *set = 0;
+    int n = 0, one_in = 0, k;
+    d_level *z = &u.uz;
+
+    if (!iflags.fx_ambience || !iflags.sounds || Deaf || !u.uz.dlevel)
+        return;
+#define PICK(arr, odds) (set = (arr), n = SIZE(arr), one_in = (odds))
+    if (isok(u.ux, u.uy) && In_W_tower(u.ux, u.uy, z))
+        PICK(mystic, 14);
+    else if (In_V_tower(z))
+        PICK(haunted, 16);
+    else if (Is_valley(z))
+        PICK(valley, 28); /* a quiet graveyard: rarely anything */
+    else if (Is_sanctum(z))
+        PICK(hell, 7);
+    else if (In_hell(z)) {
+        switch (ma_hell_flavour()) {
+        case MA_HELL_ICE:
+            PICK(frozen, 9);
+            break;
+        case MA_HELL_WATER:
+            PICK(flood, 9);
+            break;
+        case MA_HELL_BARS:
+            PICK(hellbars, 7);
+            break;
+        default:
+            PICK(hell, 7);
+            break;
+        }
+    }
+    else if (In_sokoban(z))
+        PICK(tower, 60);
+    else if (Is_knox(z))
+        PICK(vault, 18);
+    else if (In_mines(z) && !svl.level.flags.has_town
+             && !Is_mineend_level(z))
+        PICK(mines, 45);
+#undef PICK
+    if (!set || ma_rand((unsigned) one_in) != 0)
+        return;
+    k = (int) ma_rand((unsigned) n);
+    ma_play_named(set[k].name, set[k].vol, ma_frand(set[k].plo, set[k].phi),
+                  ma_frand(-0.75f, 0.75f));
+}
+
 static void
 ma_fx_event(const struct fx_event *ev)
 {
@@ -1508,6 +1724,22 @@ ma_fx_event(const struct fx_event *ev)
             ma_play_named(ev->adtyp == FXD_MONSTER ? "detect_monster"
                                                    : "detect_object",
                           0.55f, 1.0f, 0.0f);
+        break;
+    case FXE_ARRIVE:
+        ma_ambience_update(2500);
+        break;
+    case FXE_UI:
+        if (ev->text && !strcmp(ev->text, "inventory"))
+            ma_play_named("ui_inventory", 0.8f, ma_frand(0.95f, 1.05f),
+                          0.0f);
+        break;
+    case FXE_MOVE:
+        /* the hero stepping: keep the ambience right (the option, deafness,
+           the Wizard's Tower) and maybe a distant sound */
+        if (ev->flags & FXF_HERO_TARGET) {
+            ma_ambience_update(1500);
+            ma_ambience_accents();
+        }
         break;
     case FXE_TELEPORT:
         /* a shimmering whoosh, where it was seen (or heard) to go */

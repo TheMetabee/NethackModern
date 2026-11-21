@@ -3059,6 +3059,7 @@ dispinv_with_action(
 int
 ddoinv(void)
 {
+    fx_ui("inventory"); /* NetHack Modern: the bag shuffled open */
     return dispinv_with_action((char *) 0, FALSE, NULL);
 }
 

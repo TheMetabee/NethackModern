@@ -487,3 +487,78 @@ ffmpeg:
   unihorn_bad_1.wav      <- a sour, falling, slightly detuned pair
   detect_monster_1.wav   <- two deep throbs and a dark rising sweep
   detect_object_1.wav    <- a glassy rising arpeggio and a glitter
+
+Level ambience loops (amb_*.flac), played under everything by the
+fx_ambience option; mono 22.05 kHz FLAC, evened out in loudness. From
+TomMusic's Free Fantasy SFX Pack, "BGS Loops" folder (royalty-free):
+  amb_cave.flac          <- Cave/Cave.wav (Dungeons of Doom, Mines)
+  amb_deep.flac          <- Cave/Cave Storm.wav (Mines' End, the Quest)
+  amb_town.flac          <- Interior Day/Inside Day.wav (Minetown)
+  amb_castle.flac        <- Interior Night/Inside Night Storm.wav
+  amb_sea.flac           <- Sea/Sea.wav (Medusa)
+  amb_water.flac         <- Sea/Sea Storm.wav (Plane of Water)
+  amb_quest.flac         <- Forest Day/Forest Day.wav (Quest home)
+  amb_air.flac           <- Beach/Beach Storm.wav, high-passed (Plane of Air)
+  amb_fire.flac          <- Cave/Cave Storm.wav pitched to 0.66, low-passed
+                            (Plane of Fire)
+  amb_earth.flac         <- Cave/Cave.wav pitched to 0.75, low-passed
+  amb_astral.flac        <- a slow choir-like pad, synthesized for this
+                            project with ffmpeg
+
+More ambience, synthesized for this project with ffmpeg (each 60 s,
+crossfaded end into start so it loops without a seam):
+  amb_tower.flac         <- brown-noise room tone and wind through stone
+                            (Sokoban, the Oracle)
+  amb_valley.flac        <- a cold wind that swells and dies away over a
+                            faint low unease (the Valley of the Dead)
+  amb_hell.flac          <- a roaring, flickering fire bed of filtered noise
+                            with crackle, over a throbbing deep drone and
+                            Cave/Cave Storm.wav (TomMusic) pitched to 0.55 and
+                            low-passed (Gehennom, the Sanctum)
+  amb_haunted.flac       <- wind howling through stone, a thin whistle and
+                            Interior Night/Inside Night Storm.wav (TomMusic)
+                            low-passed for far thunder (Vlad's Tower)
+  amb_mystic.flac        <- a shimmering minor-ninth pad with chorus and
+                            echo, high glints and soft air (Wizard's Tower)
+Distant accents played now and then over the ambience, each filtered and
+given an echo so it sounds far off:
+  acc_fire_1..3.wav      <- trap_fire_1, hit_fire_2, trap_fire_2
+  acc_groan_1..2.wav     <- AHTu20 zombie_groan_01, pitched down
+  acc_wail_1..2.wav      <- se_scream_1..2 (rubberduck), pitched down
+  acc_howl_1.wav         <- se_canine_howl_1 (AHTu20 wolf_howl_01)
+  acc_owl_1.wav          <- AHTu20 owl_hoot_01
+  acc_bat_1.wav          <- se_avian_screak_1, pitched up and cut short
+  acc_creak_1..2.wav     <- door_open_1..2 (Kenney), pitched down
+  acc_chime_1..3.wav     <- hit_magic_1, hit_magic_3, trap_magic_2
+                            (TomMusic), pitched up with long echoes
+Opening the inventory:
+  ui_inventory_1..2.wav  <- pickup_bag_2/4 and se_bag_open_3/1 mixed
+  acc_bell_1..2.wav      <- a far-off funeral bell, synthesized (inharmonic
+                            partials, slow decay, long echo)
+  acc_crow_1..2.wav      <- AHTu20 crow_caw_01, distant
+  acc_rumble_1..2.wav    <- se_kaboom_1..2 (TomMusic), slowed and low-passed
+  acc_lava_1..2.wav      <- se_lava_bubble_1..2, filtered
+Gehennom's flavoured maze levels (chosen from the level's terrain):
+  amb_frozen.flac        <- a bitter wind howling through ice, a thin high
+                            whine and a deep drone; synthesized with ffmpeg
+  amb_flood.flac         <- Sea/Sea Storm.wav (TomMusic) slowed to 0.7 and
+                            darkened, over the deep drone
+  acc_ice_1..2.wav       <- wpn_stone_hit_1/3 (Kenney Impact), pitched up and
+                            brightened: ice cracking
+  acc_steam_1.wav        <- filtered white noise: a hiss of steam
+  acc_chain_1..2.wav     <- se_klick/se_klunk clinks in a run, slowed: chains
+Bats, vampires and Fort Ludios:
+  death_bat_1..2.wav     <- three falling high squeaks and a flutter of wings,
+                            synthesized with ffmpeg
+  vampire_rise_1.wav     <- a synthesized dark swell, se_growl_1 (rubberduck)
+                            slowed, a low-passed trap_fall_2 (Kenney Impact) hit
+                            and wpn_whip_swing_1 (Leonardo Calvo / Soundrack,
+                            CC BY 4.0) as a cape swish, with an echo
+  amb_vault.flac         <- a deep synthesized hall tone and hum with Cave/
+                            Cave.wav (TomMusic) slowed, under a long echo
+  acc_clank_1..2.wav     <- wpn_blunt_metal_hit_2, pickup_armor_1, distant
+  acc_coins_1.wav        <- msg_coins_fly_1, distant
+  acc_dragon_1.wav       <- se_roar_1 (AHTu20 bear_roar_01), slowed, distant
+  acc_march_1.wav        <- trap_fall_1 (Kenney Impact) six times in step
+(Frozen Gehennom lost its high whine, fire Gehennom's crackle is rarer
+and softer, and Vlad's Tower's whistle is an octave lower and softer.)

@@ -183,6 +183,10 @@ fx_typename(int type)
         return "UNIHORN";
     case FXE_DETECT:
         return "DETECT";
+    case FXE_ARRIVE:
+        return "ARRIVE";
+    case FXE_UI:
+        return "UI";
     }
     return "?";
 }
@@ -230,6 +234,17 @@ fx_reset_level(void)
     fx.lev = u.uz;
     fx.have_lev = TRUE;
     fx.hero_x = fx.hero_y = 0; /* arriving isn't a step */
+    {
+        /* tell the ports which level we're on now (ambience) */
+        struct fx_event ev;
+
+        (void) memset((genericptr_t) &ev, 0, sizeof ev);
+        ev.type = FXE_ARRIVE;
+        ev.flags = FXF_HERO_TARGET;
+        ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+        ev.adtyp = -1;
+        fx_emit(&ev);
+    }
 }
 
 /* find (or optionally start tracking) a monster */
@@ -1046,6 +1061,23 @@ fx_detected(int kind)
     ev.flags = FXF_HERO_TARGET;
     ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
     ev.amount = n;
+    fx_emit(&ev);
+}
+
+/* an interface action with a sound of its own ("inventory") */
+void
+fx_ui(const char *what)
+{
+    struct fx_event ev;
+
+    if (!fx_active() || !what)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_UI;
+    ev.flags = FXF_HERO_SOURCE;
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
+    ev.text = what;
     fx_emit(&ev);
 }
 

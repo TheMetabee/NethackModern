@@ -62,6 +62,10 @@ enum fx_event_type {
                      * 'mndx' 1 blessed / -1 cursed / 0 */
     FXE_UNIHORN,    /* unicorn horn applied: 'amount' 1 cured something,
                      * 0 nothing happened, -1 cursed horn */
+    FXE_ARRIVE,     /* the hero is on a different level (or the game
+                     * just started or was restored) */
+    FXE_UI,         /* an interface action: 'text' names it ("inventory");
+                     * valid only during the handler call */
     FXE_DETECT      /* detection revealed things: 'adtyp' FXD_*; with
                      * FXF_HERO_TARGET once at the hero ('amount' = how
                      * many), otherwise one per square found ('amount' =
@@ -186,6 +190,7 @@ extern void fx_quaff(struct obj *, int);
 extern void fx_scroll_effect(int);
 extern void fx_unihorn(int);
 extern void fx_detected(int);
+extern void fx_ui(const char *);
 extern void fx_note_kind(struct monst *, int);
 extern void fx_mon_dying(struct monst *);
 extern void fx_mon_died(struct monst *);

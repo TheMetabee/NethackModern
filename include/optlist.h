@@ -351,6 +351,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_afterimage, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_afterimage, Term_False,
            "fast creatures leave fading afterimages as they move")
+    NHOPTB(fx_ambience, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_ambience, Term_False,
+           "a quiet background loop for each kind of level")
     NHOPTB(fx_auras, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_auras, Term_False,
            "show lasting status effects on creatures (sleeping z's)")

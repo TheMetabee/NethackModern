@@ -16,5 +16,7 @@ void nhma_set_master_volume(float); /* 0.0 .. 1.0 */
 /* play a sound file once; volume 0..1, pitch 1.0 = normal,
    pan -1 (left) .. +1 (right); returns 1 if it started */
 int nhma_play(const char *path, float volume, float pitch, float pan);
+/* NetHack Modern: a looping ambience, crossfaded; NULL fades it out */
+void nhma_ambience(const char *path, float volume, unsigned fade_ms);
 
 #endif /* NHMINIAUDIO_H */

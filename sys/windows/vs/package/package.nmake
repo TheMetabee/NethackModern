@@ -116,6 +116,8 @@ modernsounds:
 	@if not exist $(VSBINDIR)\sounds\*.* mkdir $(VSBINDIR)\sounds
 	@if exist $(VSBINDIR)\sounds\*.wav del /Q $(VSBINDIR)\sounds\*.wav
 	copy /Y $(ROOTDIR)\sound\modern\*.wav $(VSBINDIR)\sounds
+	@if exist $(VSBINDIR)\sounds\*.flac del /Q $(VSBINDIR)\sounds\*.flac
+	copy /Y $(ROOTDIR)\sound\modern\*.flac $(VSBINDIR)\sounds
 	copy /Y $(ROOTDIR)\sound\modern\attributions.txt $(VSBINDIR)\sounds
 
 $(VSBINDIR)\record:
