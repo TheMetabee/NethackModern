@@ -29,6 +29,7 @@
 #include "mhmain.h"
 #include "mhfont.h"
 #include "resource.h"
+#include "mhtheme.h"
 #undef MSWPROC_C
 
 #define LLEN 128
@@ -51,6 +52,7 @@ logDebug(const char *fmt, ...)
 
 static void mswin_main_loop(void);
 static BOOL initMapTiles(void);
+static void mswin_apply_theme(void);
 static void mswin_color_from_string(char *colorstring, HBRUSH *brushptr,
                                     COLORREF *colorptr);
 static void prompt_for_player_selection(void);
@@ -127,6 +129,49 @@ struct window_procs mswin_procs = {
     mswin_update_inventory,
     mswin_ctrl_nhwindow,
 };
+
+/* NetHack Modern: the game's colours retuned for dark panels */
+const COLORREF th_palette[16] = {
+    RGB(100, 106, 120), /* CLR_BLACK: a dim grey, still visible */
+    RGB(235, 84, 76),   /* CLR_RED */
+    RGB(104, 200, 98),  /* CLR_GREEN */
+    RGB(186, 128, 72),  /* CLR_BROWN */
+    RGB(96, 136, 245),  /* CLR_BLUE */
+    RGB(200, 104, 224), /* CLR_MAGENTA */
+    RGB(72, 200, 212),  /* CLR_CYAN */
+    RGB(196, 200, 210), /* CLR_GRAY */
+    RGB(222, 226, 233), /* NO_COLOR */
+    RGB(242, 152, 62),  /* CLR_ORANGE */
+    RGB(132, 236, 120), /* CLR_BRIGHT_GREEN */
+    RGB(242, 222, 96),  /* CLR_YELLOW */
+    RGB(116, 172, 255), /* CLR_BRIGHT_BLUE */
+    RGB(242, 134, 242), /* CLR_BRIGHT_MAGENTA */
+    RGB(134, 234, 246), /* CLR_BRIGHT_CYAN */
+    RGB(246, 247, 251)  /* CLR_WHITE */
+};
+
+static void
+mswin_theme_color(COLORREF c, HBRUSH *brushptr, COLORREF *colorptr)
+{
+    if (*brushptr)
+        DeleteObject(*brushptr);
+    *brushptr = CreateSolidBrush(c);
+    *colorptr = c;
+}
+
+/* the dark theme: every text window gets the same panel and ink */
+static void
+mswin_apply_theme(void)
+{
+    mswin_theme_color(TH_TEXT, &menu_fg_brush, &menu_fg_color);
+    mswin_theme_color(TH_TEXT, &message_fg_brush, &message_fg_color);
+    mswin_theme_color(TH_TEXT, &status_fg_brush, &status_fg_color);
+    mswin_theme_color(TH_TEXT, &text_fg_brush, &text_fg_color);
+    mswin_theme_color(TH_BG_PANEL, &menu_bg_brush, &menu_bg_color);
+    mswin_theme_color(TH_BG_PANEL, &message_bg_brush, &message_bg_color);
+    mswin_theme_color(TH_BG_PANEL, &status_bg_brush, &status_bg_color);
+    mswin_theme_color(TH_BG_PANEL, &text_bg_brush, &text_bg_color);
+}
 
 /*
 init_nhwindows(int *argcp, char **argv)
@@ -257,6 +302,8 @@ mswin_init_nhwindows(int *argc, char **argv)
                             &status_bg_brush, &status_bg_color);
     mswin_color_from_string(iflags.wcolors[wcolor_text].bg,
                             &text_bg_brush, &text_bg_color);
+    if (iflags.fx_theme)
+        mswin_apply_theme(); /* NetHack Modern: one dark palette */
 
     if (iflags.wc_splash_screen)
         mswin_display_splash_window(FALSE);

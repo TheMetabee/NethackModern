@@ -285,6 +285,7 @@ struct instance_flags {
     boolean fx_particles;      /* NetHack Modern: ray/explosion particles */
     boolean fx_auras;          /* NetHack Modern: lasting status effects */
     boolean fx_afterimage;     /* NetHack Modern: speed afterimages */
+    boolean fx_theme;          /* NetHack Modern: NetHackW dark theme */
     boolean pending_customizations; /* at least one custom. was specified */
     xint8 debug_fuzzer;    /* fuzz testing */
     int at_midnight;       /* only valid during end of game disclosure */

@@ -16,6 +16,7 @@
 #include "mhstatus.h"
 #include "mhmsgwnd.h"
 #include "mhmap.h"
+#include "mhtheme.h"
 
 typedef struct mswin_nethack_main_window {
     int mapAcsiiModeSave;
@@ -110,7 +111,7 @@ register_main_window_class(void)
     wcex.hInstance = GetNHApp()->hApp;
     wcex.hIcon = LoadIcon(GetNHApp()->hApp, (LPCTSTR) IDI_NETHACKW);
     wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wcex.hbrBackground = CreateSolidBrush(RGB(0, 0, 0));
+    wcex.hbrBackground = CreateSolidBrush(TH_BG_APP); /* NetHack Modern */
     wcex.lpszMenuName = (TCHAR *) IDC_NETHACKW;
     wcex.lpszClassName = szMainWindowClass;
 

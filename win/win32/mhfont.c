@@ -7,6 +7,7 @@
 #include "win10.h"
 #include "winos.h"
 #include "mhfont.h"
+#include "mhtheme.h"
 
 /* font table - 64 fonts ought to be enough */
 #define MAXFONTS 64
@@ -188,6 +189,20 @@ mswin_get_font(int win_type, int attr, HDC hdc, BOOL replace)
             lgfnt.lfPitchAndFamily = FIXED_PITCH; // pitch and family
         }
         break;
+    }
+
+    /* NetHack Modern: one clean interface font, smoothed; text windows
+       (help pages, attribute lists) keep a monospaced one so columns
+       still line up */
+    if (iflags.fx_theme) {
+        NH_A2W(win_type == NHW_TEXT ? TH_FONT_MONO : TH_FONT_UI,
+               lgfnt.lfFaceName, LF_FACESIZE);
+        lgfnt.lfPitchAndFamily = (win_type == NHW_TEXT)
+                                     ? (FIXED_PITCH | FF_MODERN)
+                                     : (VARIABLE_PITCH | FF_SWISS);
+        lgfnt.lfQuality = CLEARTYPE_QUALITY;
+        if (lgfnt.lfWeight >= FW_BOLD)
+            lgfnt.lfWeight = FW_SEMIBOLD;
     }
 
     fnt = CreateFontIndirect(&lgfnt);

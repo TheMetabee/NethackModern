@@ -16,6 +16,7 @@
 #if !defined(PATCHLEVEL_H)
 #include "patchlevel.h"
 #endif
+#include "mhtheme.h"
 
 #define NHMAP_FONT_NAME TEXT("Terminal")
 #define NHMAP_TTFONT_NAME TEXT("Consolas")
@@ -1329,7 +1330,15 @@ onPaint(HWND hWnd)
             data->compBmpOld = SelectObject(data->compDC, data->compBmp);
         }
         hdc = data->compDC;
-        FillRect(hdc, &client, (HBRUSH) GetStockObject(BLACK_BRUSH));
+        {
+            /* the backdrop round the map */
+            static HBRUSH backdrop;
+
+            if (!backdrop)
+                backdrop = CreateSolidBrush(iflags.fx_theme ? TH_BG_APP
+                                                            : RGB(0, 0, 0));
+            FillRect(hdc, &client, backdrop);
+        }
         /* a screen shake moves everything drawn this frame */
         data->map_orig.x += shx, data->map_orig.y += shy;
         StretchBlt(hdc,
@@ -3817,6 +3826,8 @@ nhglyph2charcolor(short g, uchar *ch, int *color)
 COLORREF
 nhcolor_to_RGB(int c)
 {
+    if (c >= 0 && c < CLR_MAX && iflags.fx_theme && c < 16)
+        return th_palette[c]; /* NetHack Modern: tuned for dark panels */
     if (c >= 0 && c < CLR_MAX)
         return GetNHApp()->regMapColors[c];
     return RGB(0x00, 0x00, 0x00);

@@ -372,6 +372,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_screen_shake, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_screen_shake, Term_False,
            "shake the map view for explosions and big hits")
+    NHOPTB(fx_theme, Advanced, 0, opt_out, set_in_config,
+           On, Yes, No, No, NoAlias, &iflags.fx_theme, Term_False,
+           "NetHackW: modern dark theme and fonts (overrides windowcolors)")
     NHOPTB(fx_status_text, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_status_text, Term_False,
            "float status names (Confused, Fast...) when they change")

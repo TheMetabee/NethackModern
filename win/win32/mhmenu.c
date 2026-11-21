@@ -11,6 +11,7 @@
 #include "mhmsg.h"
 #include "mhfont.h"
 #include "mhdlg.h"
+#include "mhtheme.h"
 
 #define MENU_MARGIN 0
 #define NHMENU_STR_SIZE BUFSZ
@@ -1076,6 +1077,23 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
     if (item->color != NO_COLOR)
         (void) SetTextColor(lpdis->hDC, nhcolor_to_RGB(item->color));
 
+    /* NetHack Modern: group headings get a band and the accent colour */
+    if (iflags.fx_theme && !NHMENU_IS_SELECTABLE(*item)
+        && item->attr != ATR_NONE && item->color == NO_COLOR) {
+        static HBRUSH band, line;
+        RECT r = lpdis->rcItem;
+
+        if (!band)
+            band = CreateSolidBrush(TH_BG_HEADER);
+        if (!line)
+            line = CreateSolidBrush(TH_SEPARATOR);
+        FillRect(lpdis->hDC, &r, band);
+        r.top = r.bottom - 1;
+        FillRect(lpdis->hDC, &r, line);
+        SetBkColor(lpdis->hDC, TH_BG_HEADER);
+        SetTextColor(lpdis->hDC, TH_ACCENT);
+    }
+
     GetTextMetrics(lpdis->hDC, &tm);
     spacing = tm.tmAveCharWidth;
 
@@ -1111,12 +1129,17 @@ onDrawItem(HWND hWnd, WPARAM wParam, LPARAM lParam)
         x += tileXScaled + spacing;
 
         if (item->accelerator != 0) {
+            COLORREF ink = GetTextColor(lpdis->hDC);
+
             buf[0] = item->accelerator;
             buf[1] = '\x0';
             SetRect(&drawRect, x, lpdis->rcItem.top, lpdis->rcItem.right,
                     lpdis->rcItem.bottom);
+            if (iflags.fx_theme) /* NetHack Modern: the letter softer */
+                SetTextColor(lpdis->hDC, TH_TEXT_DIM);
             DrawText(lpdis->hDC, NH_A2W(buf, wbuf, 2), 1, &drawRect,
                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SetTextColor(lpdis->hDC, ink);
         }
         x += tm.tmAveCharWidth + tm.tmOverhang + spacing;
     } else {
