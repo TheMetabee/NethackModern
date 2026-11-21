@@ -288,6 +288,8 @@ struct instance_flags {
     boolean fx_theme;          /* NetHack Modern: NetHackW dark theme */
     boolean fx_msg_overlay;    /* NetHack Modern: messages on the map */
     boolean fx_msg_backdrop;   /* NetHack Modern: panel behind them */
+    boolean fx_hero_frame;     /* NetHack Modern: mark the hero's square */
+    boolean fx_hero_frame_light; /* NetHack Modern: ...faintly */
     boolean pending_customizations; /* at least one custom. was specified */
     xint8 debug_fuzzer;    /* fuzz testing */
     int at_midnight;       /* only valid during end of game disclosure */

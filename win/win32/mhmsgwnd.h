@@ -14,4 +14,5 @@ void mswin_message_window_size(HWND hWnd, LPSIZE sz);
 
 boolean mswin_msg_overlay_line(int, char *, size_t, COLORREF *, long *,
                                boolean *, boolean *);
+extern boolean mswin_msg_restoring;
 #endif /* MSWINMessageWindow_h */

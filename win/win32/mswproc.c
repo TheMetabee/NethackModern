@@ -2197,9 +2197,11 @@ mswin_putmsghistory(const char *msg, boolean restoring)
     save_sound_opt = GetNHApp()->bNoSounds;
     GetNHApp()->bNoSounds =
         TRUE; /* disable sounds while restoring message history */
+    mswin_msg_restoring = TRUE; /* NetHack Modern: these are old news */
     mswin_putstr_ex(WIN_MESSAGE, ATR_NONE, msg, 0);
     clear_nhwindow(WIN_MESSAGE); /* it is in fact end-of-turn indication so
                                     each message will print on the new line */
+    mswin_msg_restoring = FALSE;
     GetNHApp()->bNoSounds = save_sound_opt; /* restore sounds option */
 }
 

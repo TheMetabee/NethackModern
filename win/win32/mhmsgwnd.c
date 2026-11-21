@@ -15,6 +15,10 @@ extern COLORREF nhcolor_to_RGB(int c); /* from mhmap */
 /* NetHack Modern: messages drawn on the map instead of in this window */
 #define MSG_OVERLAY (iflags.fx_theme && iflags.fx_msg_overlay)
 #define MSG_OVERLAY_LINES 6
+
+/* NetHack Modern: set while a restored game's saved message history is
+   replayed into this window, so those lines count as old ones */
+boolean mswin_msg_restoring = FALSE;
 #define MSG_LINES (int) min(iflags.msg_history, MAX_MSG_HISTORY)
 #define MAXWINDOWTEXT TBUFSZ
 
@@ -400,7 +404,8 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
 
                 /* append new text to the end of the array */
                 data->window_text[MSG_LINES - 1].attr = msg_data->attr;
-                data->window_text[MSG_LINES - 1].turn = svm.moves;
+                data->window_text[MSG_LINES - 1].turn =
+                    mswin_msg_restoring ? -1000000L : svm.moves;
                 data->window_text[MSG_LINES - 1].has_hl = th_msg_highlight(
                     msg_data->text, &data->window_text[MSG_LINES - 1].hl);
                 strncpy(data->window_text[MSG_LINES - 1].text, msg_data->text,

@@ -366,6 +366,12 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_motion, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_motion, Term_False,
            "sprites lunge and shake in combat")
+    NHOPTB(fx_hero_frame, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_hero_frame, Term_False,
+           "NetHackW: gold corner marks around the hero's square")
+    NHOPTB(fx_hero_frame_light, Advanced, 0, opt_in, set_in_game,
+           Off, Yes, No, No, NoAlias, &iflags.fx_hero_frame_light,
+           Term_False, "NetHackW: a lighter, fainter hero frame")
     NHOPTB(fx_msg_backdrop, Advanced, 0, opt_in, set_in_game,
            Off, Yes, No, No, NoAlias, &iflags.fx_msg_backdrop, Term_False,
            "NetHackW: a translucent panel behind messages on the map")

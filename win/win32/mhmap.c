@@ -214,6 +214,7 @@ static void fx_scroll_particles(PNHMapWindow, const struct fx_event *);
 COLORREF nhcolor_to_RGB(int);
 static void fx_paint_particles(PNHMapWindow, HDC);
 static void fx_paint_messages(PNHMapWindow, HDC);
+static void fx_paint_hero_frame(PNHMapWindow, HDC);
 static int fx_paint_auras(PNHMapWindow, HDC);
 static void fx_part_layer(PNHMapWindow, HDC);
 static void fx_make_fonts(PNHMapWindow);
@@ -1401,6 +1402,7 @@ onPaint(HWND hWnd)
         }
         fx_paint_translucent(data, hdc);
         fx_paint_sprites(data, hdc);
+        fx_paint_hero_frame(data, hdc);
         if (!fx_paint_auras(data, hdc))
             fx_aura_timer(data, FALSE);
         fx_paint_particles(data, hdc);
@@ -3530,6 +3532,85 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
     SelectObject(hdc, oldFont);
 #undef FX_MSG_SHOW
 #undef FX_MSG_KEEP
+}
+
+/* NetHack Modern: four small gold corner marks around the hero's square,
+   with a dark edge so they show on any floor */
+static void
+fx_paint_hero_frame(PNHMapWindow data, HDC hdc)
+{
+    static HBRUSH gold, dark;
+    int ox, oy, tw, th, x, y, len, t, k;
+
+    if (!iflags.fx_theme || !iflags.fx_hero_frame || u.uswallow
+        || !isok(u.ux, u.uy))
+        return;
+    if (!gold)
+        gold = CreateSolidBrush(TH_ACCENT);
+    if (!dark)
+        dark = CreateSolidBrush(RGB(10, 10, 14));
+    ox = data->map_orig.x - data->xPos * data->xFrontTile;
+    oy = data->map_orig.y - data->yPos * data->yFrontTile;
+    tw = data->xFrontTile, th = data->yFrontTile;
+    x = ox + u.ux * tw, y = oy + u.uy * th;
+    len = max(3, min(tw, th) / 4);  /* arm length */
+    t = max(1, min(tw, th) / 16);   /* thickness */
+    if (iflags.fx_hero_frame_light) {
+        /* the light version: thin, short, half see-through, no edge */
+        static HDC dotDC;
+        static HBITMAP dotBmp;
+        BLENDFUNCTION bf;
+        RECT r[8];
+        int j;
+
+        len = max(3, min(tw, th) / 5);
+        t = 1;
+        if (!dotDC) {
+            dotDC = CreateCompatibleDC(hdc);
+            dotBmp = CreateCompatibleBitmap(hdc, 1, 1);
+            SelectObject(dotDC, dotBmp);
+            SetPixel(dotDC, 0, 0, RGB(255, 226, 150));
+        }
+        bf.BlendOp = AC_SRC_OVER;
+        bf.BlendFlags = 0;
+        bf.SourceConstantAlpha = 150;
+        bf.AlphaFormat = 0;
+        SetRect(&r[0], x, y, x + len, y + t);
+        SetRect(&r[1], x, y + t, x + t, y + len);
+        SetRect(&r[2], x + tw - len, y, x + tw, y + t);
+        SetRect(&r[3], x + tw - t, y + t, x + tw, y + len);
+        SetRect(&r[4], x, y + th - t, x + len, y + th);
+        SetRect(&r[5], x, y + th - len, x + t, y + th - t);
+        SetRect(&r[6], x + tw - len, y + th - t, x + tw, y + th);
+        SetRect(&r[7], x + tw - t, y + th - len, x + tw, y + th - t);
+        for (j = 0; j < 8; j++)
+            (void) GdiAlphaBlend(hdc, r[j].left, r[j].top,
+                                 r[j].right - r[j].left,
+                                 r[j].bottom - r[j].top, dotDC, 0, 0, 1, 1,
+                                 bf);
+        return;
+    }
+    for (k = 0; k < 2; k++) {
+        /* first a dark outline one pixel wider, then the gold */
+        HBRUSH br = k ? gold : dark;
+        int g = k ? 0 : 1;
+        RECT r[8];
+        int j;
+
+        /* top-left, top-right, bottom-left, bottom-right: across, down */
+        SetRect(&r[0], x - g, y - g, x + len + g, y + t + g);
+        SetRect(&r[1], x - g, y - g, x + t + g, y + len + g);
+        SetRect(&r[2], x + tw - len - g, y - g, x + tw + g, y + t + g);
+        SetRect(&r[3], x + tw - t - g, y - g, x + tw + g, y + len + g);
+        SetRect(&r[4], x - g, y + th - t - g, x + len + g, y + th + g);
+        SetRect(&r[5], x - g, y + th - len - g, x + t + g, y + th + g);
+        SetRect(&r[6], x + tw - len - g, y + th - t - g, x + tw + g,
+                y + th + g);
+        SetRect(&r[7], x + tw - t - g, y + th - len - g, x + tw + g,
+                y + th + g);
+        for (j = 0; j < 8; j++)
+            FillRect(hdc, &r[j], br);
+    }
 }
 
 /* a keypress snaps every sprite back to its square (design rule 2) */
