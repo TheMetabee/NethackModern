@@ -348,6 +348,12 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fullscreen, Advanced, 0, opt_in, set_in_config,
            Off, Yes, No, No, NoAlias, &iflags.wc2_fullscreen, Term_False,
            "toggle fullscreen")
+    NHOPTB(fx_damage_numbers, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_damage_numbers, Term_False,
+           "show floating damage and healing numbers on the map")
+    NHOPTB(fx_healthbars, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_healthbars, Term_False,
+           "show health bars under hurt creatures on the map")
  /* NHOPTC(gender) -- moved to top */
     NHOPTC(glyph, Advanced, 40, opt_in, set_in_game,
                 No, Yes, Yes, No, NoAlias,

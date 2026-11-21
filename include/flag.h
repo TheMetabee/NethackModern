@@ -276,6 +276,8 @@ struct instance_flags {
     boolean remember_getpos; /* save getpos() positioning in do-again queue */
     boolean sad_feeling;   /* unseen pet is dying */
     boolean showdamage;    /* extra message reporting damage hero has taken */
+    boolean fx_damage_numbers; /* NetHack Modern: floating numbers on map */
+    boolean fx_healthbars;     /* NetHack Modern: health bars on map */
     boolean pending_customizations; /* at least one custom. was specified */
     xint8 debug_fuzzer;    /* fuzz testing */
     int at_midnight;       /* only valid during end of game disclosure */

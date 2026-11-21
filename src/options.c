@@ -5392,6 +5392,7 @@ optfn_boolean(
         case opt_showrace:
         case opt_use_inverse:
         case opt_hilite_pile:
+        case opt_fx_healthbars:
         case opt_perm_invent:
         case opt_ascii_map:
         case opt_tiled_map:

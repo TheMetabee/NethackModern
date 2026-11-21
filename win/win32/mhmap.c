@@ -24,6 +24,14 @@
 #define CURSOR_BLINK_INTERVAL 1000 // milliseconds
 #define CURSOR_HEIGHT 2 // pixels
 
+/* NetHack Modern floating numbers */
+#define CURSOR_TIMER_ID 0
+#define FX_TIMER_ID 2
+#define FX_FRAME_MS 30      /* ~33 frames per second while numbers float */
+#define FX_FLOAT_MS 900     /* lifetime of one number */
+#define FX_STACK_MS 400     /* a new number on a square this young stacks */
+#define FX_MAXFLOAT 64
+
 #define TILEBMP_X(ntile) \
     ((ntile % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X)
 #define TILEBMP_Y(ntile) \
@@ -71,6 +79,26 @@ typedef struct mswin_nethack_map_window {
 
     HDC tileDC;                /* tile drawing context */
 
+    /* NetHack Modern: floating damage/heal numbers (see fx.h) */
+    struct fx_floater {
+        int x, y;               /* map square */
+        unsigned target;        /* m_id, 0 = hero */
+        int type;               /* FXE_DAMAGE or FXE_HEAL */
+        int amount;
+        int stack;              /* raised this many slots to avoid overlap */
+        int xoff;               /* sideways jitter, percent of a tile */
+        boolean big;            /* large hit: drawn bigger */
+        COLORREF color;
+        DWORD start;            /* GetTickCount() when (re)started */
+    } floaters[FX_MAXFLOAT];
+    int nfloaters;
+    boolean fxTimerOn;
+    HFONT hFxFont, hFxFontBig;  /* fonts for the numbers */
+    int fxFontTileH;            /* yFrontTile the fonts were made for */
+    HDC compDC;                 /* composition buffer for onPaint */
+    HBITMAP compBmp, compBmpOld;
+    int compW, compH;
+
 } NHMapWindow, *PNHMapWindow;
 
 static TCHAR szNHMapWindowClass[] = TEXT("MSNethackMapWndClass");
@@ -88,6 +116,10 @@ static void dirty(PNHMapWindow data, int i, int j);
 static void setGlyph(PNHMapWindow data, int i, int j,
                      const glyph_info *fg, const glyph_info *bg);
 static void clearAll(PNHMapWindow data);
+static void mswin_fx_event(const struct fx_event *ev);
+static void fx_tick(PNHMapWindow data);
+static void fx_paint_overlay(PNHMapWindow data, HDC hdc);
+static void fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect);
 
 #if (VERSION_MAJOR < 4) && (VERSION_MINOR < 4) && (PATCHLEVEL < 2)
 static void nhglyph2charcolor(short glyph, uchar *ch, int *color);
@@ -137,7 +169,10 @@ mswin_init_map_window(void)
     mswin_apply_window_style(hWnd);
 
     /* set cursor blink timer */
-    SetTimer(hWnd, 0, CURSOR_BLINK_INTERVAL, NULL);
+    SetTimer(hWnd, CURSOR_TIMER_ID, CURSOR_BLINK_INTERVAL, NULL);
+
+    /* receive presentation events from the core */
+    fx_set_handler(mswin_fx_event);
 
     return hWnd;
 }
@@ -631,6 +666,18 @@ MapWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         return 0;
 
     case WM_DESTROY:
+        fx_set_handler((fx_handler_fn) 0);
+        if (data->fxTimerOn)
+            KillTimer(hWnd, FX_TIMER_ID);
+        if (data->hFxFont)
+            DeleteObject(data->hFxFont);
+        if (data->hFxFontBig)
+            DeleteObject(data->hFxFontBig);
+        if (data->compDC) {
+            SelectObject(data->compDC, data->compBmpOld);
+            DeleteObject(data->compBmp);
+            DeleteDC(data->compDC);
+        }
         if (data->hMapFont)
             DeleteObject(data->hMapFont);
         if (data->hMapFontUnicode)
@@ -645,6 +692,10 @@ MapWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
 
     case WM_TIMER:
+        if (wParam == FX_TIMER_ID) {
+            fx_tick(data);
+            break;
+        }
         data->cursorOn = !data->cursorOn;
         dirty(data, data->xCur, data->yCur);
         break;
@@ -942,6 +993,7 @@ paintTile(PNHMapWindow data, int i, int j, RECT * rect)
             DeleteDC(hdcPileMark);
         }
 #endif
+        fx_paint_healthbar(data, i, j, rect);
     }       /* glyph != NO_GLYPH */
 
     if (i == data->xCur && j == data->yCur &&
@@ -1045,6 +1097,7 @@ paintGlyph(PNHMapWindow data, int i, int j, RECT * rect)
         }
 
         SetTextColor(data->backBufferDC, OldFg);
+        fx_paint_healthbar(data, i, j, rect);
     }
 
     if (i == data->xCur && j == data->yCur &&
@@ -1068,7 +1121,9 @@ static void setGlyph(PNHMapWindow data, int i, int j,
         || data->map[i][j].gm.sym.color != fg->gm.sym.color
         || data->map[i][j].gm.customcolor != fg->gm.customcolor
         || data->map[i][j].gm.glyphflags != fg->gm.glyphflags
-        || data->map[i][j].gm.tileidx != fg->gm.tileidx) {
+        || data->map[i][j].gm.tileidx != fg->gm.tileidx
+        || data->map[i][j].fxauras != fg->fxauras
+        || data->map[i][j].fxhealth != fg->fxhealth) {
         data->map[i][j] = *fg;
         data->bkmap[i][j] = *bg;
         data->locDirty[i][j] = TRUE;
@@ -1085,6 +1140,7 @@ static void clearAll(PNHMapWindow data)
             data->locDirty[x][y] = TRUE;
         }
     data->mapDirty = TRUE;
+    data->nfloaters = 0; /* new level or full redraw: drop numbers */
 }
 
 static void dirtyAll(PNHMapWindow data)
@@ -1134,12 +1190,302 @@ onPaint(HWND hWnd)
     int frontWidth = COLNO * data->xFrontTile;
     int frontHeight = ROWNO * data->yFrontTile;
 
-    StretchBlt(hFrontBufferDC,
-        data->map_orig.x - (data->xPos * data->xFrontTile),
-        data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth, frontHeight,
-                data->backBufferDC, 0, 0, data->backWidth, data->backHeight, SRCCOPY);
+    if (data->nfloaters > 0) {
+        /* compose map + floating numbers off screen, then copy, so the
+           numbers don't flicker */
+        RECT client;
+        HDC hdc;
+
+        GetClientRect(hWnd, &client);
+        if (!data->compDC || data->compW < client.right
+            || data->compH < client.bottom) {
+            if (data->compDC) {
+                SelectObject(data->compDC, data->compBmpOld);
+                DeleteObject(data->compBmp);
+                DeleteDC(data->compDC);
+            }
+            data->compDC = CreateCompatibleDC(hFrontBufferDC);
+            data->compW = max(client.right, 1);
+            data->compH = max(client.bottom, 1);
+            data->compBmp = CreateCompatibleBitmap(hFrontBufferDC,
+                                                   data->compW, data->compH);
+            data->compBmpOld = SelectObject(data->compDC, data->compBmp);
+        }
+        hdc = data->compDC;
+        FillRect(hdc, &client, (HBRUSH) GetStockObject(BLACK_BRUSH));
+        StretchBlt(hdc,
+            data->map_orig.x - (data->xPos * data->xFrontTile),
+            data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth,
+            frontHeight, data->backBufferDC, 0, 0, data->backWidth,
+            data->backHeight, SRCCOPY);
+        fx_paint_overlay(data, hdc);
+        BitBlt(hFrontBufferDC, ps.rcPaint.left, ps.rcPaint.top,
+               ps.rcPaint.right - ps.rcPaint.left,
+               ps.rcPaint.bottom - ps.rcPaint.top, hdc, ps.rcPaint.left,
+               ps.rcPaint.top, SRCCOPY);
+    } else {
+        StretchBlt(hFrontBufferDC,
+            data->map_orig.x - (data->xPos * data->xFrontTile),
+            data->map_orig.y - (data->yPos * data->yFrontTile), frontWidth, frontHeight,
+                    data->backBufferDC, 0, 0, data->backWidth, data->backHeight, SRCCOPY);
+    }
 
     EndPaint(hWnd, &ps);
+}
+
+/* ------------------------------------------------------------------ */
+/* NetHack Modern: damage numbers and health bars (Phase 2)            */
+
+static COLORREF
+fx_kind_color(const struct fx_event *ev)
+{
+    if (ev->type == FXE_HEAL)
+        return RGB(90, 255, 90);
+    switch (ev->adtyp) {
+    case AD_FIRE:
+        return RGB(255, 150, 40);
+    case AD_COLD:
+        return RGB(120, 200, 255);
+    case AD_ELEC:
+        return RGB(255, 240, 80);
+    case AD_DRST:
+    case AD_DRDX:
+    case AD_DRCO:
+        return RGB(140, 230, 60);
+    case AD_ACID:
+        return RGB(200, 255, 60);
+    case AD_MAGM:
+        return RGB(230, 120, 255);
+    case AD_SLEE:
+        return RGB(170, 140, 255);
+    case AD_DISN:
+        return RGB(190, 190, 190);
+    case AD_DRLI:
+        return RGB(190, 80, 210);
+    }
+    /* physical or unknown: red when it's you getting hurt */
+    return (ev->flags & FXF_HERO_TARGET) ? RGB(255, 70, 70)
+                                         : RGB(255, 255, 255);
+}
+
+/* called by the core (fx.c) */
+static void
+mswin_fx_event(const struct fx_event *ev)
+{
+    PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
+    struct fx_floater *f;
+    DWORD now = GetTickCount();
+    int i, stack = 0;
+
+    if (!data || !iflags.fx_damage_numbers)
+        return;
+    if (ev->type != FXE_DAMAGE && ev->type != FXE_HEAL)
+        return;
+    if (ev->amount <= 0)
+        return;
+    /* small heals are almost always regeneration; showing every one
+       would be noise */
+    if (ev->type == FXE_HEAL && ev->amount < max(2, ev->hpmax / 10))
+        return;
+
+    /* while running/travelling/occupied, keep one running total per
+       creature instead of a pile of numbers */
+    if (ev->flags & FXF_BULK) {
+        for (i = 0; i < data->nfloaters; i++) {
+            f = &data->floaters[i];
+            if (f->target == ev->target_id && f->type == ev->type) {
+                f->amount += ev->amount;
+                f->x = ev->x, f->y = ev->y;
+                f->start = now;
+                f->color = fx_kind_color(ev);
+                return;
+            }
+        }
+    }
+
+    /* raise above numbers still young on the same square */
+    for (i = 0; i < data->nfloaters; i++) {
+        f = &data->floaters[i];
+        if (f->x == ev->x && f->y == ev->y && now - f->start < FX_STACK_MS
+            && f->stack >= stack)
+            stack = f->stack + 1;
+    }
+
+    if (data->nfloaters >= FX_MAXFLOAT) {
+        /* drop the oldest */
+        memmove(&data->floaters[0], &data->floaters[1],
+                (FX_MAXFLOAT - 1) * sizeof data->floaters[0]);
+        data->nfloaters--;
+    }
+    f = &data->floaters[data->nfloaters++];
+    f->x = ev->x, f->y = ev->y;
+    f->target = ev->target_id;
+    f->type = ev->type;
+    f->amount = ev->amount;
+    f->stack = min(stack, 3);
+    {
+        /* jitter sideways so repeated numbers don't sit exactly on top of
+           each other; a private generator, never the game's RNG */
+        static unsigned long seed = 0;
+
+        if (!seed)
+            seed = (unsigned long) now | 1UL;
+        seed = seed * 1103515245UL + 12345UL;
+        f->xoff = (int) ((seed >> 16) % 61UL) - 30; /* -30..+30 */
+    }
+    f->big = (ev->type == FXE_DAMAGE
+              && (ev->hp <= 0 || ev->amount * 4 >= max(ev->hpmax, 1)));
+    f->color = fx_kind_color(ev);
+    f->start = now;
+
+    if (!data->fxTimerOn) {
+        SetTimer(data->hWnd, FX_TIMER_ID, FX_FRAME_MS, NULL);
+        data->fxTimerOn = TRUE;
+    }
+    InvalidateRect(data->hWnd, NULL, FALSE);
+}
+
+/* animation frame: expire old numbers, stop the timer when idle */
+static void
+fx_tick(PNHMapWindow data)
+{
+    DWORD now = GetTickCount();
+    int i, j;
+
+    for (i = j = 0; i < data->nfloaters; i++)
+        if (now - data->floaters[i].start < FX_FLOAT_MS)
+            data->floaters[j++] = data->floaters[i];
+    data->nfloaters = j;
+    if (!data->nfloaters && data->fxTimerOn) {
+        KillTimer(data->hWnd, FX_TIMER_ID);
+        data->fxTimerOn = FALSE;
+    }
+    /* one more repaint after the last number goes, to erase it */
+    InvalidateRect(data->hWnd, NULL, FALSE);
+}
+
+static void
+fx_make_fonts(PNHMapWindow data)
+{
+    LOGFONT lf;
+    int h = data->yFrontTile;
+
+    if (data->hFxFont && data->fxFontTileH == h)
+        return;
+    if (data->hFxFont)
+        DeleteObject(data->hFxFont);
+    if (data->hFxFontBig)
+        DeleteObject(data->hFxFontBig);
+    ZeroMemory(&lf, sizeof lf);
+    lf.lfWeight = FW_HEAVY;
+    lf.lfQuality = ANTIALIASED_QUALITY;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    strcpy(lf.lfFaceName, "Segoe UI");
+    lf.lfHeight = -max(12, (h * 3) / 5);
+    data->hFxFont = CreateFontIndirect(&lf);
+    lf.lfHeight = -max(16, (h * 17) / 20);
+    data->hFxFontBig = CreateFontIndirect(&lf);
+    data->fxFontTileH = h;
+}
+
+/* draw floating numbers onto the composed front-buffer image */
+static void
+fx_paint_overlay(PNHMapWindow data, HDC hdc)
+{
+    DWORD now = GetTickCount();
+    int i, ox, oy, o, dx, dy;
+    HFONT oldFont;
+    int oldBk;
+
+    if (!data->nfloaters)
+        return;
+    fx_make_fonts(data);
+    oldFont = SelectObject(hdc, data->hFxFont);
+    oldBk = SetBkMode(hdc, TRANSPARENT);
+    ox = data->map_orig.x - data->xPos * data->xFrontTile;
+    oy = data->map_orig.y - data->yPos * data->yFrontTile;
+    o = max(1, data->yFrontTile / 24); /* outline thickness */
+
+    for (i = 0; i < data->nfloaters; i++) {
+        struct fx_floater *f = &data->floaters[i];
+        DWORD age = now - f->start;
+        double t = (double) age / FX_FLOAT_MS; /* 0..1 */
+        char buf[16];
+        RECT r;
+        int cx, cy, rise, fade;
+        COLORREF c = f->color;
+
+        if (age >= FX_FLOAT_MS)
+            continue;
+        /* rise fast, then ease out */
+        rise = (int) (data->yFrontTile * 0.9 * (1.0 - (1.0 - t) * (1.0 - t)));
+        cx = ox + f->x * data->xFrontTile + data->xFrontTile / 2
+             + (f->xoff * data->xFrontTile) / 100;
+        cy = oy + f->y * data->yFrontTile + data->yFrontTile / 3 - rise
+             - f->stack * (data->yFrontTile * 9) / 20;
+        /* fade by darkening over the last third (the map is mostly
+           dark, so this reads as fading out without alpha blending) */
+        if (t > 0.66) {
+            fade = (int) (255 * (1.0 - (t - 0.66) / 0.34));
+            c = RGB(GetRValue(c) * fade / 255, GetGValue(c) * fade / 255,
+                    GetBValue(c) * fade / 255);
+        }
+        Sprintf(buf, "%s%d", f->type == FXE_HEAL ? "+"
+                             : f->target == 0 ? "-" : "", f->amount);
+        SelectObject(hdc, f->big ? data->hFxFontBig : data->hFxFont);
+        SetRect(&r, cx - data->xFrontTile * 2, cy - data->yFrontTile,
+                cx + data->xFrontTile * 2, cy + data->yFrontTile);
+        /* black outline */
+        SetTextColor(hdc, RGB(0, 0, 0));
+        for (dx = -o; dx <= o; dx += o)
+            for (dy = -o; dy <= o; dy += o) {
+                RECT rr = r;
+
+                if (!dx && !dy)
+                    continue;
+                OffsetRect(&rr, dx, dy);
+                DrawTextA(hdc, buf, -1, &rr,
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE
+                              | DT_NOPREFIX | DT_NOCLIP);
+            }
+        SetTextColor(hdc, c);
+        DrawTextA(hdc, buf, -1, &r,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX
+                      | DT_NOCLIP);
+    }
+    SetBkMode(hdc, oldBk);
+    SelectObject(hdc, oldFont);
+}
+
+/* thin bar along the bottom of a hurt creature's square (back buffer) */
+static void
+fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect)
+{
+    int pct = data->map[i][j].fxhealth;
+    int h, w, fillw;
+    RECT bar;
+    HBRUSH br;
+    COLORREF c;
+
+    if (!iflags.fx_healthbars || pct <= 0 || pct >= 100)
+        return;
+    h = max(2, data->yBackTile / 10);
+    w = (rect->right - rect->left) - 4;
+    if (w < 4)
+        return;
+    SetRect(&bar, rect->left + 2, rect->bottom - h - 1, rect->right - 2,
+            rect->bottom - 1);
+    br = CreateSolidBrush(RGB(0, 0, 0));
+    FillRect(data->backBufferDC, &bar, br);
+    DeleteObject(br);
+    fillw = max(1, (w * pct) / 100);
+    c = pct > 50 ? RGB(60, 220, 60) : pct > 25 ? RGB(240, 200, 40)
+                                               : RGB(230, 50, 40);
+    SetRect(&bar, rect->left + 2, rect->bottom - h - 1,
+            rect->left + 2 + fillw, rect->bottom - 1);
+    br = CreateSolidBrush(c);
+    FillRect(data->backBufferDC, &bar, br);
+    DeleteObject(br);
 }
 
 /* on WM_VSCROLL */
