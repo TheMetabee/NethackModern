@@ -1,0 +1,82 @@
+# NetHack Modern: build the Linux game with the miniaudio soundlib and
+# check that it starts, finds its sounds and reaches the map.
+# Kept apart from upstream's build.yml so merges from upstream stay clean.
+
+name: modern-linux
+
+on:
+  push:
+    branches: [ main, linux-build ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  linux-miniaudio:
+    name: Linux tty/curses with miniaudio
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # no audio development packages: miniaudio finds PulseAudio,
+      # PipeWire or ALSA at run time
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libncurses-dev tmux
+
+      - name: Generate makefiles
+        run: sh sys/unix/setup.sh sys/unix/hints/linux.501
+
+      - name: Compile and install
+        run: |
+          make -j"$(nproc)" WANT_WIN_TTY=1 WANT_WIN_CURSES=1 \
+            WANT_MINIAUDIO=1 install
+
+      - name: Installed files
+        working-directory: playground
+        run: |
+          test -f nhdat
+          test -f sysconf
+          ./nethack --version
+          test -f sounds/hit_1.wav
+          test -f sounds/amb_cave.flac
+          test -f sounds/attributions.txt
+          n=$(ls sounds | wc -l)
+          echo "sounds installed: $n"
+          test "$n" -ge "$(ls ../sound/modern | wc -l)"
+
+      # play a few moves in a hidden terminal with the effects log on;
+      # the runner has no sound card, so miniaudio may use its null
+      # device or stay silent, but either way it must have been chosen
+      - name: Play a few moves
+        working-directory: playground
+        run: |
+          export NETHACK_FXLOG="$RUNNER_TEMP/fx.log"
+          export NETHACKOPTIONS='name:ci,role:val,race:dwarf,gender:female,align:lawful,!tutorial,!legacy,!autopickup,windowtype:tty'
+          tmux new-session -d -s nh -x 100 -y 30 \
+            "env NETHACK_FXLOG=$NETHACK_FXLOG NETHACKOPTIONS='$NETHACKOPTIONS' ./nethack"
+          sleep 4
+          for k in h h h l l l j j k k s s; do
+            tmux send-keys -t nh "$k"; sleep 0.3
+          done
+          sleep 1
+          tmux capture-pane -p -t nh > "$RUNNER_TEMP/screen.txt"
+          tmux send-keys -t nh S; sleep 1; tmux send-keys -t nh y; sleep 2
+          tmux kill-session -t nh 2>/dev/null || true
+          cat "$RUNNER_TEMP/screen.txt"
+          echo "----- effects log"
+          cat "$NETHACK_FXLOG"
+          grep -q 'Dlvl:1' "$RUNNER_TEMP/screen.txt"
+          grep -q 'miniaudio: init' "$NETHACK_FXLOG"
+          if grep -q 'miniaudio: init ok' "$NETHACK_FXLOG"; then
+            grep -q 'miniaudio: init ok, dir=".*/sounds/"' "$NETHACK_FXLOG"
+          fi
