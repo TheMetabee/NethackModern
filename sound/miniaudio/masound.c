@@ -1337,6 +1337,101 @@ ma_wand_self(int look)
     ma_play_named(name, v, ma_frand(0.97f, 1.03f), 0.0f);
 }
 
+/* engraving (FXE_ENGRAVE): the writing itself, by engraving type, and
+   the clues a wand gives when engraved with. Wands that give the same
+   message share a kind, so the sound never says more than the text. */
+static void
+ma_engrave(const struct fx_event *ev)
+{
+    float p = ma_frand(0.95f, 1.05f);
+    boolean first = (ev->otyp != 0);
+
+    /* the message that goes with it ("You hear drilling!") is covered */
+    ma.last_se = GetTickCount();
+    switch (ev->adtyp) {
+    case FXG_STROKE: {
+        float v = first ? 0.6f : 0.45f;
+
+        switch (ev->amount) {
+        case ENGRAVE:
+        case HEADSTONE:
+            ma_play_named("eng_carve", v,
+                          p * (ev->amount == HEADSTONE ? 0.85f : 1.0f), 0.0f);
+            break;
+        case BURN:
+            ma_play_named("eng_burn", v, p, 0.0f);
+            break;
+        case MARK:
+            ma_play_named("eng_mark", 0.6f * v, p, 0.0f);
+            break;
+        case ENGR_BLOOD:
+            ma_play_named("msg_splat", 0.3f * v, p * 1.1f, 0.0f);
+            ma_play_named("eng_dust", 0.6f * v, p * 0.85f, 0.0f);
+            break;
+        case DUST:
+        default:
+            ma_play_named("eng_dust", v,
+                          p * (ev->ttyp == FXG_SURF_ICE ? 1.2f : 1.0f), 0.0f);
+            break;
+        }
+        break;
+    }
+    case FXG_VANISH:
+        ma_play_named("eng_vanish", 0.6f, p, 0.0f);
+        break;
+    case FXG_ICE:
+        ma_play_named("acc_ice", 0.55f, ma_frand(1.25f, 1.4f), 0.0f);
+        ma_play_named("hit_cold", 0.2f, ma_frand(1.2f, 1.3f), 0.0f);
+        break;
+    case FXG_BUGS_STOP:
+        ma_play_named("eng_hush", 0.5f, p, 0.0f);
+        break;
+    case FXG_GRAVEL:
+        ma_play_named("wand_dig", (ev->flags & FXF_UNSEEN) ? 0.55f : 0.7f,
+                      p * (ev->ttyp == FXG_SURF_ICE ? 1.15f
+                           : ev->ttyp == FXG_SURF_WOOD ? 0.9f : 1.0f),
+                      0.0f);
+        break;
+    case FXG_FLAMES:
+        ma_play_named("hit_fire", 0.45f, p, 0.0f);
+        break;
+    case FXG_LIGHTNING:
+        ma_play_named("wpn_layer_shock", (ev->flags & FXF_UNSEEN) ? 0.6f
+                                                                   : 0.9f,
+                      p, 0.0f);
+        ma_play_named("strike_hit", 0.35f, ma_frand(0.6f, 0.7f), 0.0f);
+        break;
+    case FXG_BULLETS:
+        ma_play_named("eng_bullets", 0.75f, p, 0.0f);
+        break;
+    case FXG_POLY:
+        ma_play_named("wand_poly", 0.5f, p, 0.0f);
+        break;
+    case FXG_SLOW:
+        ma_play_named("wand_slow", 0.5f, p, 0.0f);
+        break;
+    case FXG_SPEED:
+        ma_play_named("wand_speed", 0.5f, p, 0.0f);
+        break;
+    case FXG_STRUGGLE:
+        ma_play_named("strike_hit", 0.5f, ma_frand(0.8f, 0.9f), 0.0f);
+        ma_play_named("msg_boing", 0.35f, ma_frand(0.9f, 1.0f), 0.0f);
+        break;
+    case FXG_WORN:
+        ma_play_named("wand_fizz", 0.4f, ma_frand(0.85f, 0.95f), 0.0f);
+        break;
+    case FXG_CRUMBLE:
+        ma_play_named("msg_fizzle", 0.45f, p, 0.0f);
+        ma_play_named("eng_crumble", 0.6f, p, 0.0f);
+        break;
+    case FXG_WIPE:
+        ma_play_named("eng_wipe", 0.55f, p, 0.0f);
+        break;
+    default:
+        break;
+    }
+}
+
 /* ---- level ambience ----------------------------------------------- */
 
 /* Gehennom's maze levels come in flavours: mostly ice, mostly water,
@@ -1782,6 +1877,9 @@ ma_fx_event(const struct fx_event *ev)
             ma_play_named(nm[k], 0.75f * vol, ma_frand(0.95f, 1.05f), pan);
             ma_play_named("teleport", 0.35f * vol, ma_frand(0.8f, 0.9f), pan);
         }
+        break;
+    case FXE_ENGRAVE:
+        ma_engrave(ev);
         break;
     case FXE_IMPACT:
         /* striking / force bolt: a force whump; a softer, higher one

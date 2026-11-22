@@ -190,6 +190,8 @@ fx_typename(int type)
         return "UI";
     case FXE_SUMMON:
         return "SUMMON";
+    case FXE_ENGRAVE:
+        return "ENGRAVE";
     }
     return "?";
 }
@@ -201,7 +203,8 @@ fx_emit(struct fx_event *ev)
         ev->flags |= FXF_HALLU;
         if (ev->type == FXE_DAMAGE || ev->type == FXE_HEAL)
             ev->amount = 1 + rn2_on_display_rng(2 * ev->amount + 10);
-        ev->adtyp = rn2_on_display_rng(AD_ACID + 1);
+        if (ev->type != FXE_ENGRAVE) /* its 'adtyp' isn't a damage kind */
+            ev->adtyp = rn2_on_display_rng(AD_ACID + 1);
     }
     if (fx.logf) {
         fprintf(fx.logf,
@@ -1029,6 +1032,30 @@ fx_unihorn(int result)
     ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
     ev.adtyp = -1;
     ev.amount = result;
+    fx_emit(&ev);
+}
+
+/* engraving at the hero's square: 'kind' is FXG_*; for FXG_STROKE
+   'etype' is the engraving type and 'first' says it's the first action */
+void
+fx_engrave(int kind, int etype, boolean first)
+{
+    struct fx_event ev;
+    struct rm *lev = &levl[u.ux][u.uy];
+
+    if (!fx_active())
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_ENGRAVE;
+    ev.flags = FXF_HERO_SOURCE | FXF_HERO_TARGET | (Blind ? FXF_UNSEEN : 0U);
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = kind;
+    ev.amount = etype;
+    ev.otyp = first ? 1 : 0;
+    ev.ttyp = IS_GRAVE(lev->typ) ? FXG_SURF_GRAVE
+              : is_ice(u.ux, u.uy) ? FXG_SURF_ICE
+              : (lev->typ == DRAWBRIDGE_DOWN) ? FXG_SURF_WOOD
+              : FXG_SURF_FLOOR;
     fx_emit(&ev);
 }
 

@@ -23,6 +23,7 @@ struct _doengrave_ctx {
     int ret;          /* doengrave return value */
     int type;         /* Type of engraving made */
     int oetype;       /* will be set to type of current engraving */
+    int fxkind;       /* NetHack Modern: FXG_* to go with post_engr_text */
 
     struct obj *otmp; /* Object selected with which to engrave */
     struct engr* oep; /* The current engraving */
@@ -559,6 +560,7 @@ doengrave_ctx_init(struct _doengrave_ctx *de)
     de->ret = ECMD_OK;
     de->type = DUST;
     de->oetype = 0;
+    de->fxkind = -1;
 
     de->otmp = (struct obj *) 0;
     de->oep = engr_at(u.ux, u.uy);
@@ -604,17 +606,20 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
     case WAN_STRIKING:
         Strcpy(de->post_engr_text,
                "The wand unsuccessfully fights your attempt to write!");
+        de->fxkind = FXG_STRUGGLE;
         break;
     case WAN_SLOW_MONSTER:
         if (!Blind) {
             Sprintf(de->post_engr_text, "The bugs on the %s slow down!",
                     surface(u.ux, u.uy));
+            de->fxkind = FXG_SLOW;
         }
         break;
     case WAN_SPEED_MONSTER:
         if (!Blind) {
             Sprintf(de->post_engr_text, "The bugs on the %s speed up!",
                     surface(u.ux, u.uy));
+            de->fxkind = FXG_SPEED;
         }
         break;
     case WAN_POLYMORPH:
@@ -647,6 +652,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
             Sprintf(de->post_engr_text,
                     "The %s is riddled by bullet holes!",
                     surface(u.ux, u.uy));
+            de->fxkind = FXG_BULLETS;
         }
         break;
         /* can't tell sleep from death - Eric Backus */
@@ -655,12 +661,15 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
         if (!Blind) {
             Sprintf(de->post_engr_text, "The bugs on the %s stop moving!",
                     surface(u.ux, u.uy));
+            de->fxkind = FXG_BUGS_STOP;
         }
         break;
     case WAN_COLD:
-        if (!Blind)
+        if (!Blind) {
             Strcpy(de->post_engr_text,
                    "A few ice cubes drop from the wand.");
+            de->fxkind = FXG_ICE;
+        }
         if (!de->oep || (de->oep->engr_type != BURN))
             break;
         FALLTHROUGH;
@@ -669,6 +678,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
     case WAN_MAKE_INVISIBLE:
         if (de->oep && de->oep->engr_type != HEADSTONE) {
             if (!Blind) {
+                fx_engrave(FXG_VANISH, 0, FALSE);
                 pline_The("engraving on the %s vanishes!",
                           surface(u.ux, u.uy));
                 de->hero_told_it_vanished = TRUE;
@@ -679,6 +689,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
     case WAN_TELEPORTATION:
         if (de->oep && de->oep->engr_type != HEADSTONE) {
             if (!Blind) {
+                fx_engrave(FXG_VANISH, 0, FALSE);
                 pline_The("engraving on the %s vanishes!",
                           surface(u.ux, u.uy));
                 de->hero_told_it_vanished = TRUE;
@@ -708,6 +719,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
                           == DRAWBRIDGE_DOWN)
                            ? "Splinters fly up from the bridge."
                            : "Gravel flies up from the floor.");
+        de->fxkind = FXG_GRAVEL;
         break;
         /* type = BURN wands */
     case WAN_FIRE:
@@ -720,6 +732,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
         }
         Strcpy(de->post_engr_text, Blind ? "You feel the wand heat up."
                                          : "Flames fly from the wand.");
+        de->fxkind = FXG_FLAMES;
         break;
     case WAN_LIGHTNING:
         de->ptext = TRUE;
@@ -737,6 +750,7 @@ doengrave_sfx_item_WAN(struct _doengrave_ctx *de)
                    ? "You hear crackling!"     /* Deaf-aware */
                    : "Your hair stands up!");
         }
+        de->fxkind = FXG_LIGHTNING;
         break;
         /* type = MARK wands */
         /* type = ENGR_BLOOD wands */
@@ -816,8 +830,10 @@ doengrave_sfx_item(struct _doengrave_ctx *de)
                 if (de->otmp->spe < 0)
                     de->zapwand = TRUE;
                 /* empty wand just doesn't write */
-                else
+                else {
+                    fx_engrave(FXG_WORN, 0, FALSE);
                     pline_The("wand is too worn out to engrave.");
+                }
             }
         }
         break;
@@ -862,6 +878,7 @@ doengrave_sfx_item(struct _doengrave_ctx *de)
                     || de->oep->engr_type == MARK) {
                     if (is_wet_towel(de->otmp))
                         dry_a_towel(de->otmp, -1, TRUE);
+                    fx_engrave(FXG_WIPE, de->oep->engr_type, FALSE);
                     if (!Blind)
                         You("wipe out the message here.");
                     else
@@ -1098,6 +1115,7 @@ doengrave(void)
         tmp_ep = engr_at(u.ux, u.uy);
         if (!Blind) {
             if (tmp_ep != 0) {
+                fx_engrave(FXG_POLY, 0, FALSE);
                 pline_The("engraving now reads: \"%s\".", de->buf);
                 tmp_ep->eread = 1;
                 tmp_ep->erevealed = 1;
@@ -1107,6 +1125,7 @@ doengrave(void)
         de->ptext = FALSE;
     }
     if (de->zapwand && (de->otmp->spe < 0)) {
+        fx_engrave(FXG_CRUMBLE, 0, FALSE);
         pline("%s %sturns to dust.", The(xname(de->otmp)),
               Blind ? "" : "glows violently, then ");
         if (!IS_GRAVE(levl[u.ux][u.uy].typ))
@@ -1152,6 +1171,7 @@ doengrave(void)
                 || de->oep->engr_type == ENGR_BLOOD
                 || de->oep->engr_type == MARK) {
                 if (!Blind) {
+                    fx_engrave(FXG_WIPE, de->oep->engr_type, FALSE);
                     You("wipe out the message that was %s here.",
                         (de->oep->engr_type == DUST)
                             ? (de->frosted
@@ -1265,8 +1285,11 @@ doengrave(void)
     svc.context.engraving.actionct = 0;
     set_occupation(engrave, "engraving", 0);
 
-    if (de->post_engr_text[0])
+    if (de->post_engr_text[0]) {
+        if (de->fxkind >= 0)
+            fx_engrave(de->fxkind, de->type, FALSE);
         pline("%s", de->post_engr_text);
+    }
     if (de->doblind && !resists_blnd(&gy.youmonst)) {
         You("are blinded by the flash!");
         make_blinded((long) rnd(50), FALSE);
@@ -1338,6 +1361,8 @@ engrave(void)
     } else if (svc.context.engraving.type == MARK && !marker) {
         impossible("making graffiti with non-marker stylus");
     }
+    /* NetHack Modern: the sound (and a few motes) of this action's writing */
+    fx_engrave(FXG_STROKE, svc.context.engraving.type, firsttime);
 
     /* Step 1: Compute rate. */
     if (carving && stylus

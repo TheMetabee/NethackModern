@@ -209,6 +209,7 @@ static void fx_wand_particles(PNHMapWindow, const struct fx_event *);
 static void fx_dig_particles(PNHMapWindow, int, int);
 static void fx_teleport_particles(PNHMapWindow, const struct fx_event *);
 static void fx_summon_particles(PNHMapWindow, const struct fx_event *);
+static void fx_engrave_particles(PNHMapWindow, const struct fx_event *);
 static void fx_quaff_particles(PNHMapWindow, const struct fx_event *);
 static void fx_detect_particles(PNHMapWindow, const struct fx_event *);
 static void fx_scroll_particles(PNHMapWindow, const struct fx_event *);
@@ -1783,6 +1784,8 @@ mswin_fx_event(const struct fx_event *ev)
         fx_teleport_particles(data, ev);
     if (ev->type == FXE_SUMMON)
         fx_summon_particles(data, ev);
+    if (ev->type == FXE_ENGRAVE)
+        fx_engrave_particles(data, ev);
     if (ev->type == FXE_QUAFF && !(ev->flags & FXF_UNSEEN))
         fx_quaff_particles(data, ev);
     if (ev->type == FXE_READ && ev->adtyp == 1 && !(ev->flags & FXF_BULK))
@@ -2880,6 +2883,203 @@ fx_teleport_particles(PNHMapWindow data, const struct fx_event *ev)
             (void) fx_spawn_at(data, &tele, FALSE, ev->x + 0.5f, ev->y + 0.5f,
                                tele.speed * 1.6f, 1.0f, at);
         fx_ring(data, &tele, FALSE, ev->x, ev->y, 26, 0.9f, 0.01f, 400, at);
+    }
+    fx_start_timer(data);
+}
+
+/* 'n' particles of style 'st' born around the hero's feet on <x,y>,
+   thrown at 'speed' (upward if 'up'), 'delay' ms from now */
+static void
+fx_engr_spray(PNHMapWindow data, const struct fx_pstyle *st, boolean rainbow,
+              int x, int y, int n, float speed, boolean up, DWORD delay)
+{
+    int i;
+
+    for (i = 0; i < n; i++) {
+        struct fx_part *p = fx_spawn_at(
+            data, st, rainbow, x + 0.5f + fx_prange(-0.3f, 0.3f),
+            y + fx_prange(0.6f, 0.85f), speed, 1.0f,
+            delay + (DWORD) fx_prange(0, 120));
+
+        if (up) {
+            p->vx = fx_prange(-0.9f, 0.9f) * speed;
+            p->vy = -fx_prange(0.6f, 1.3f) * speed;
+        }
+    }
+}
+
+/* engraving: motes of whatever is being written in, and the wand clues */
+static void
+fx_engrave_particles(PNHMapWindow data, const struct fx_event *ev)
+{
+    static const struct fx_pstyle
+        dust = { RGB(200, 185, 160), RGB(160, 150, 130), RGB(30, 28, 24),
+                 0.5f, 0.5f, 0.3f, 0.04f, 350, 650 },
+        frost = { RGB(240, 250, 255), RGB(190, 220, 245), RGB(20, 40, 60),
+                  0.5f, 0.4f, 0.3f, 0.04f, 350, 650 },
+        chips = { RGB(185, 185, 190), RGB(130, 130, 138), RGB(25, 25, 28),
+                  1.0f, 4.0f, 0.6f, 0.045f, 300, 550 },
+        splinters = { RGB(190, 140, 90), RGB(140, 100, 60), RGB(30, 20, 10),
+                      1.0f, 4.0f, 0.6f, 0.045f, 300, 550 },
+        smoke = { RGB(120, 115, 110), RGB(90, 88, 85), RGB(15, 15, 15),
+                  0.25f, -0.9f, 0.5f, 0.07f, 600, 1000 },
+        ink = { RGB(60, 70, 120), RGB(40, 45, 80), RGB(10, 10, 20),
+                0.3f, 0.3f, 0.3f, 0.03f, 300, 500 },
+        blood = { RGB(170, 25, 25), RGB(120, 15, 15), RGB(30, 0, 0),
+                  0.3f, 0.6f, 0.3f, 0.035f, 300, 550 },
+        fade = { RGB(175, 175, 185), RGB(140, 140, 150), RGB(0, 0, 0),
+                 0.5f, -0.7f, 0.4f, 0.045f, 600, 1000 },
+        ice = { RGB(240, 250, 255), RGB(175, 215, 255), RGB(40, 70, 110),
+                0.2f, 7.0f, 0.9f, 0.06f, 380, 480 },
+        bugs = { RGB(70, 62, 52), RGB(45, 40, 35), RGB(10, 10, 10),
+                 1.2f, 0.0f, 0.004f, 0.03f, 900, 1200 },
+        flash = { RGB(255, 255, 255), RGB(255, 255, 220), RGB(120, 120, 60),
+                  0.0f, 0.0f, 0.5f, 0.9f, 140, 200 };
+    const struct fx_pstyle *st;
+    boolean rb;
+    int i, x = ev->x, y = ev->y;
+
+    if (!iflags.fx_particles || !isok(x, y) || (ev->flags & FXF_UNSEEN))
+        return;
+    switch (ev->adtyp) {
+    case FXG_STROKE:
+        switch (ev->amount) {
+        case ENGRAVE:
+        case HEADSTONE:
+            st = (ev->ttyp == FXG_SURF_WOOD) ? &splinters
+                 : (ev->ttyp == FXG_SURF_ICE) ? &frost : &chips;
+            fx_engr_spray(data, st, FALSE, x, y, 6, 1.6f, TRUE, 0);
+            break;
+        case BURN:
+            fx_engr_spray(data, fx_part_style(AD_FIRE), FALSE, x, y, 8, 0.8f,
+                          TRUE, 0);
+            fx_engr_spray(data, &smoke, FALSE, x, y, 5, 0.3f, FALSE, 120);
+            break;
+        case MARK:
+            fx_engr_spray(data, &ink, FALSE, x, y, 3, 0.3f, FALSE, 0);
+            break;
+        case ENGR_BLOOD:
+            fx_engr_spray(data, &blood, FALSE, x, y, 4, 0.3f, FALSE, 0);
+            break;
+        default: /* DUST */
+            fx_engr_spray(data, (ev->ttyp == FXG_SURF_ICE) ? &frost : &dust,
+                          FALSE, x, y, 6, 0.5f, FALSE, 0);
+            break;
+        }
+        break;
+    case FXG_VANISH:
+        /* the old writing lifts off as grey motes and is gone */
+        for (i = 0; i < 26; i++)
+            (void) fx_spawn_at(data, &fade, FALSE,
+                               x + 0.5f + fx_prange(-0.4f, 0.4f),
+                               y + fx_prange(0.55f, 0.9f), fade.speed, 1.0f,
+                               (DWORD) fx_prange(0, 250));
+        break;
+    case FXG_ICE:
+        /* a few ice cubes tumbling from the wand to the floor */
+        for (i = 0; i < 5; i++) {
+            struct fx_part *p = fx_spawn_at(
+                data, &ice, FALSE, x + 0.5f + fx_prange(-0.25f, 0.25f),
+                y + fx_prange(0.1f, 0.3f), 0.0f, fx_prange(0.8f, 1.3f),
+                (DWORD) (i * 70));
+
+            p->vx = fx_prange(-0.4f, 0.4f);
+            p->vy = fx_prange(-0.5f, 0.0f);
+        }
+        break;
+    case FXG_BUGS_STOP:
+        /* tiny specks scurry, then stop dead */
+        for (i = 0; i < 12; i++)
+            (void) fx_spawn_at(data, &bugs, FALSE,
+                               x + 0.5f + fx_prange(-0.35f, 0.35f),
+                               y + fx_prange(0.55f, 0.9f), bugs.speed, 1.0f,
+                               0);
+        break;
+    case FXG_GRAVEL:
+        st = (ev->ttyp == FXG_SURF_WOOD) ? &splinters
+             : (ev->ttyp == FXG_SURF_ICE) ? &frost : &chips;
+        fx_engr_spray(data, st, FALSE, x, y, 22, 3.0f, TRUE, 0);
+        fx_dig_particles(data, x, y);
+        break;
+    case FXG_FLAMES:
+        fx_engr_spray(data, fx_part_style(AD_FIRE), FALSE, x, y, 30, 1.6f,
+                      TRUE, 0);
+        fx_engr_spray(data, &smoke, FALSE, x, y, 8, 0.3f, FALSE, 200);
+        break;
+    case FXG_LIGHTNING:
+        /* a blinding flash and sparks crackling out */
+        for (i = 0; i < 3; i++) {
+            struct fx_part *p = fx_spawn_at(data, &flash, FALSE, x + 0.5f,
+                                            y + 0.5f, 0.0f, 1.0f + i * 0.6f,
+                                            0);
+
+            p->vx = p->vy = 0.0f;
+        }
+        st = fx_part_style(AD_ELEC);
+        for (i = 0; i < 40; i++)
+            (void) fx_spawn_at(data, st, FALSE, x + 0.5f, y + 0.6f,
+                               st->speed * 1.3f, 1.0f, 0);
+        break;
+    case FXG_BULLETS: {
+        /* small puffs popping up across the square, timed with the shots */
+        static const DWORD at[6] = { 0, 75, 140, 225, 285, 350 };
+
+        st = fx_part_style(AD_MAGM);
+        for (i = 0; i < 6; i++) {
+            float px = x + fx_prange(0.15f, 0.85f),
+                  py = y + fx_prange(0.4f, 0.9f);
+            int k;
+
+            for (k = 0; k < 6; k++)
+                (void) fx_spawn_at(data, st, FALSE, px, py, 1.2f, 0.8f,
+                                   at[i]);
+        }
+        break;
+    }
+    case FXG_POLY:
+        st = fx_wand_style(WAN_POLYMORPH, &rb);
+        fx_engr_spray(data, st, TRUE, x, y, 24, 0.9f, FALSE, 0);
+        fx_ring(data, st, TRUE, x, y, 16, 0.6f, 0.01f, 380, 0);
+        break;
+    case FXG_SLOW:
+        st = fx_wand_style(WAN_SLOW_MONSTER, &rb);
+        fx_engr_spray(data, st, FALSE, x, y, 14, 0.3f, FALSE, 0);
+        break;
+    case FXG_SPEED:
+        st = fx_wand_style(WAN_SPEED_MONSTER, &rb);
+        fx_engr_spray(data, st, FALSE, x, y, 16, 2.2f, FALSE, 0);
+        break;
+    case FXG_STRUGGLE:
+        fx_impact_particles(data, x, y, TRUE);
+        return; /* (starts its own timer) */
+    case FXG_CRUMBLE:
+        for (i = 0; i < 30; i++)
+            (void) fx_spawn_at(data, &dust, FALSE,
+                               x + 0.5f + fx_prange(-0.15f, 0.15f),
+                               y + 0.5f + fx_prange(-0.15f, 0.15f), 1.0f,
+                               1.4f, (DWORD) fx_prange(0, 150));
+        break;
+    case FXG_WIPE: {
+        /* the writing swept aside */
+        float dir = (fx_prand() < 0.5f) ? -1.0f : 1.0f;
+
+        st = (ev->ttyp == FXG_SURF_ICE) ? &frost
+             : (ev->amount == ENGR_BLOOD) ? &blood
+             : (ev->amount == MARK) ? &ink : &dust;
+        for (i = 0; i < 16; i++) {
+            struct fx_part *p = fx_spawn_at(
+                data, st, FALSE, x + 0.5f + fx_prange(-0.35f, 0.35f),
+                y + fx_prange(0.6f, 0.85f), 0.0f, 1.0f,
+                (DWORD) fx_prange(0, 180));
+
+            p->vx = dir * fx_prange(0.8f, 1.8f);
+            p->vy = fx_prange(-0.2f, 0.1f);
+        }
+        break;
+    }
+    case FXG_WORN:
+    default:
+        return;
     }
     fx_start_timer(data);
 }

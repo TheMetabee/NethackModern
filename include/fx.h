@@ -70,10 +70,39 @@ enum fx_event_type {
                      * FXF_HERO_TARGET once at the hero ('amount' = how
                      * many), otherwise one per square found ('amount' =
                      * its distance, for a ripple outward) */
-    FXE_SUMMON      /* a summoned or created monster appeared in sight at
+    FXE_SUMMON,     /* a summoned or created monster appeared in sight at
                      * <x,y>: 'adtyp' FXS_*, 'amount' its place in the
                      * group (0 first), for a staggered entrance */
+    FXE_ENGRAVE     /* engraving at the hero's square: 'adtyp' FXG_*;
+                     * for FXG_STROKE 'amount' is the engraving type (DUST,
+                     * ENGRAVE, BURN, ...) and 'otyp' 1 for the first
+                     * action; 'ttyp' the surface (FXG_SURF_*); FXF_UNSEEN
+                     * if the hero can't see it (sound only) */
 };
+
+/* fx_event.adtyp for FXE_ENGRAVE. Wands that give the same message give
+   the same kind, so neither sound nor look tells them apart. */
+#define FXG_STROKE    0  /* one action of writing (each turn) */
+#define FXG_VANISH    1  /* "The engraving ... vanishes!" */
+#define FXG_ICE       2  /* "A few ice cubes drop from the wand." */
+#define FXG_BUGS_STOP 3  /* "The bugs ... stop moving!" */
+#define FXG_GRAVEL    4  /* digging: gravel, ice chips, splinters */
+#define FXG_FLAMES    5  /* "Flames fly from the wand." */
+#define FXG_LIGHTNING 6  /* "Lightning arcs from the wand." */
+#define FXG_BULLETS   7  /* "... riddled by bullet holes!" */
+#define FXG_POLY      8  /* "The engraving now reads: ..." */
+#define FXG_SLOW      9  /* "The bugs ... slow down!" */
+#define FXG_SPEED     10 /* "The bugs ... speed up!" */
+#define FXG_STRUGGLE  11 /* striking: "The wand unsuccessfully fights ..." */
+#define FXG_WORN      12 /* "The wand is too worn out to engrave." */
+#define FXG_CRUMBLE   13 /* a cancelled wand "turns to dust" */
+#define FXG_WIPE      14 /* the hero wipes out a message (towel, rewriting) */
+
+/* fx_event.ttyp for FXE_ENGRAVE: what's being written on */
+#define FXG_SURF_FLOOR 0
+#define FXG_SURF_ICE   1
+#define FXG_SURF_WOOD  2 /* a lowered drawbridge */
+#define FXG_SURF_GRAVE 3 /* a headstone */
 
 /* fx_event.adtyp for FXE_SUMMON: what kind of summoning */
 #define FXS_ARCANE  0 /* create monster: a violet swirl */
@@ -198,6 +227,7 @@ extern void fx_teleport(coordxy, coordxy, coordxy, coordxy, boolean,
 extern void fx_quaff(struct obj *, int);
 extern void fx_scroll_effect(int);
 extern void fx_unihorn(int);
+extern void fx_engrave(int, int, boolean);
 extern void fx_detected(int);
 extern void fx_ui(const char *);
 extern unsigned fx_summon_begin(void);

@@ -562,3 +562,21 @@ Bats, vampires and Fort Ludios:
   acc_march_1.wav        <- trap_fall_1 (Kenney Impact) six times in step
 (Frozen Gehennom lost its high whine, fire Gehennom's crackle is rarer
 and softer, and Vlad's Tower's whistle is an octave lower and softer.)
+Engraving (see ma_engrave() in sound/miniaudio/masound.c), synthesized
+with ffmpeg for this project unless noted:
+  eng_dust_1..3.wav      <- band-passed pink noise in soft strokes: a
+                            fingertip in the dust (pitched up for frost)
+  eng_carve_1..3.wav     <- gritty band-passed noise strokes, each with a
+                            Kenney Impact impactMining_000..002 tap
+                            (pitched up): scratching into stone
+  eng_burn_1..2.wav      <- high-passed hiss and random crackle: burning
+  eng_mark_1..2.wav      <- wobbling sine squeaks over pink noise: a marker
+  eng_vanish_1..2.wav    <- an airy noise swell and falling shimmer, echoed
+  eng_hush_1.wav         <- two low falling tones over brown noise, echoed
+  eng_bullets_1..2.wav   <- five or six shots in a quick burst: each a
+                            synthesized crack and low thump over Kenney
+                            Impact impactMining_000..004 (pitched up), with
+                            a synthesized ricochet whine and a short echo
+  eng_crumble_1.wav      <- Kenney Impact impactMining_001/003 (pitched up)
+                            over decaying crackle: a wand turning to dust
+  eng_wipe_1..2.wav      <- two pink-noise swishes: wiping a message out
