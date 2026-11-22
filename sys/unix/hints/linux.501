@@ -275,7 +275,16 @@ endif      #USE_CURSESLIB
 NHCFLAGS+=-DDLB
 NHCFLAGS+=-DHACKDIR=\"$(HACKDIR)\"
 NHCFLAGS+=-DDEFAULT_WINDOW_SYS=\"$(WANT_DEFAULT)\"
+ifdef WANT_RELOCATABLE
+# NetHack Modern: sysconf is read from the game's own directory, whatever
+# it is (the game chdir()s there, to $NETHACKDIR if set, before reading
+# it), so the installed directory can be moved or packaged (AppImage)
+NHCFLAGS+=-DSYSCF -DSYSCF_FILE=\"sysconf\" -DSECURE
+# and libraries bundled in ../lib beside the binary are found first
+LFLAGS+=-Wl,-rpath,'$$ORIGIN/../lib'
+else
 NHCFLAGS+=-DSYSCF -DSYSCF_FILE=\"$(HACKDIR)/sysconf\" -DSECURE
+endif
 NHCFLAGS+=-DTIMED_DELAY
 NHCFLAGS+=-DDUMPLOG
 NHCFLAGS+=-DCONFIG_ERROR_SECURE=FALSE

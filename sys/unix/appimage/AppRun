@@ -1,0 +1,49 @@
+#!/bin/sh
+# NetHack Modern AppImage launcher.
+#
+# The AppImage itself is read-only, but NetHack writes its saves, scores
+# and lock files into its own directory. So the game runs from a writable
+# directory, by default ~/.local/share/nethackmodern, which holds the
+# player's files and links to the read-only game data in the AppImage.
+# The links are refreshed on every start, since the AppImage is mounted
+# somewhere new each time.
+
+HERE=$(dirname "$(readlink -f "$0")")
+DATA="$HERE/usr/share/nethackmodern"
+GAMEDIR="${NETHACKMODERN_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/nethackmodern}"
+
+# started from a file manager (no terminal either way, no arguments, a
+# desktop to show one on): open a terminal and run there. Run from a
+# script or with arguments (--version), it just runs.
+if [ $# -eq 0 ] && [ ! -t 0 ] && [ ! -t 1 ] \
+   && [ -n "$DISPLAY$WAYLAND_DISPLAY" ]; then
+    self="${APPIMAGE:-$0}"
+    for t in x-terminal-emulator gnome-terminal konsole xfce4-terminal \
+             alacritty kitty xterm; do
+        command -v "$t" >/dev/null 2>&1 || continue
+        case "$t" in
+        gnome-terminal) exec "$t" -- "$self" "$@" ;;
+        xfce4-terminal) exec "$t" -x "$self" "$@" ;;
+        kitty)          exec "$t" "$self" "$@" ;;
+        *)              exec "$t" -e "$self" "$@" ;;
+        esac
+    done
+    # no terminal found; carry on and let the game report what it can
+fi
+
+mkdir -p "$GAMEDIR/save" || {
+    echo "NetHack Modern: cannot create $GAMEDIR" >&2
+    exit 1
+}
+for f in nhdat symbols license recover sounds; do
+    ln -sfn "$DATA/$f" "$GAMEDIR/$f"
+done
+# the player's own copy, so it can be edited; never overwritten
+[ -f "$GAMEDIR/sysconf" ] || cp "$DATA/sysconf" "$GAMEDIR/sysconf"
+for f in perm record logfile xlogfile livelog; do
+    [ -f "$GAMEDIR/$f" ] || : > "$GAMEDIR/$f"
+done
+
+NETHACKDIR="$GAMEDIR"
+export NETHACKDIR
+exec "$HERE/usr/bin/nethack" "$@"

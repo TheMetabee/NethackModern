@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NetHack Modern
+Comment=NetHack 5.0 with modern sound
+Exec=nethackmodern
+Icon=nethackmodern
+Terminal=true
+Categories=Game;RolePlaying;

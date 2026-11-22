@@ -80,3 +80,76 @@ jobs:
           if grep -q 'miniaudio: init ok' "$NETHACK_FXLOG"; then
             grep -q 'miniaudio: init ok, dir=".*/sounds/"' "$NETHACK_FXLOG"
           fi
+
+  # a downloadable AppImage. Built on Ubuntu 22.04, so it needs no newer
+  # C library than that (glibc 2.35) and runs on most current distros.
+  appimage:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    timeout-minutes: 30
+    env:
+      APPIMAGETOOL_VERSION: "1.9.1"
+      APPIMAGE_RUNTIME_VERSION: "20251108"
+      # no FUSE in a container: AppImages unpack themselves and run
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            --no-install-recommends build-essential libncurses-dev \
+            git ca-certificates curl file
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # tags, for the version in the file name
+
+      - name: Generate makefiles
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          sh sys/unix/setup.sh sys/unix/hints/linux.501
+
+      - name: Compile and install
+        run: |
+          make -j"$(nproc)" WANT_WIN_TTY=1 WANT_WIN_CURSES=1 \
+            WANT_MINIAUDIO=1 WANT_RELOCATABLE=1 install
+
+      - name: Get appimagetool and the AppImage runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools"
+          cd "$RUNNER_TEMP/tools"
+          curl -fsSL -o appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-x86_64.AppImage"
+          curl -fsSL -o runtime-x86_64 \
+            "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_VERSION/runtime-x86_64"
+          chmod +x appimagetool
+          sha256sum appimagetool runtime-x86_64
+
+      - name: Make the AppImage
+        run: |
+          APPIMAGETOOL="$RUNNER_TEMP/tools/appimagetool" \
+          APPIMAGE_RUNTIME="$RUNNER_TEMP/tools/runtime-x86_64" \
+            sh sys/unix/appimage/build-appimage.sh playground dist
+          ls -l dist
+
+      # run the packed AppImage itself, from another directory, with the
+      # build's own game directory out of the way
+      - name: Check the AppImage
+        run: |
+          mv playground playground.built
+          cd "$RUNNER_TEMP"
+          image=$(ls "$GITHUB_WORKSPACE"/dist/*.AppImage)
+          "$image" --version
+          dir="$HOME/.local/share/nethackmodern"
+          test -L "$dir/nhdat"
+          test -f "$dir/sysconf"
+          test -d "$dir/save"
+          test -f "$dir/sounds/hit_1.wav"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: NetHackModern-linux-x86_64-AppImage
+          path: dist/*.AppImage
+          retention-days: 30
+          if-no-files-found: error
