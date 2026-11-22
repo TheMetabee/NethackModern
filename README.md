@@ -1,5 +1,7 @@
 # NetHack Modern
 
+https://github.com/user-attachments/assets/0be7569d-6417-454a-9a92-c5f842572008
+
 NetHack Modern is a fork of **NetHack 5.0** that changes how the game
 looks and sounds on Windows. It adds a dark interface, floating damage
 numbers, health bars, animations, particle effects, lighting, and a full
@@ -11,6 +13,7 @@ Each addition has its own option, so you can turn off any of them and get
 back the look of stock NetHackW.
 
 > The NetHack DevTeam's own README, which covers NetHack 5.0 itself, is
+
 > still in this repository as [`README`](README).
 
 ---
