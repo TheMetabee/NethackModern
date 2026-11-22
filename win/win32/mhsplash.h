@@ -13,4 +13,15 @@ void mswin_display_splash_window(BOOL);
 void mswin_display_menu_screen(void);   /* NetHack Modern */
 void mswin_menu_screen_place(HWND main);
 
+/* NetHack Modern: the title screen's look, shared with the name and
+   character screens (mhcharsel.c) */
+HFONT mswin_ms_font(int px, int weight, BOOL serif);
+void mswin_ms_text(HDC hdc, const char *s, RECT *r, UINT how, COLORREF c,
+                   int shadow);
+void mswin_ms_button(HDC hdc, const RECT *r, const char *label,
+                     boolean primary, boolean hot, boolean focus,
+                     boolean down, boolean enabled, double s);
+void mswin_ms_backdrop(HDC hdc, HDC dst, int w, int h, int dim);
+void mswin_ms_backdrop_free(void);
+
 #endif /* MSWINSplashWindow_h */

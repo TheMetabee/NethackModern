@@ -829,7 +829,7 @@ GUIDEF= -DTILES -DMSWIN_GRAPHICS -DNOTTYGRAPHICS $(CURSESGUIDEF1)
 ALL_GUIHDR = $(MSWIN)mhaskyn.h $(MSWIN)mhdlg.h $(MSWIN)mhfont.h \
 	$(MSWIN)mhinput.h $(MSWIN)mhmain.h $(MSWIN)mhmap.h $(MSWIN)mhmenu.h \
 	$(MSWIN)mhmsg.h $(MSWIN)mhmsgwnd.h $(MSWIN)mhrip.h \
-	$(MSWIN)mhsplash.h $(MSWIN)mhstatus.h \
+	$(MSWIN)mhsplash.h $(MSWIN)mhcharsel.h $(MSWIN)mhstatus.h \
 	$(MSWIN)mhtext.h $(MSWIN)resource.h $(MSWIN)winMS.h
 
 #RANDOMGUI = $(OGUI)random.o
@@ -844,6 +844,7 @@ SOBJGUI   = $(OGUI)windmain.o $(OGUI)windsys.o $(OGUI)win10.o
 GUIOBJ	= $(OGUI)mhaskyn.o $(OGUI)mhdlg.o \
 	$(OGUI)mhfont.o $(OGUI)mhinput.o $(OGUI)mhmain.o $(OGUI)mhmap.o \
 	$(OGUI)mhmenu.o $(OGUI)mhmsgwnd.o $(OGUI)mhrip.o $(OGUI)mhsplash.o \
+	$(OGUI)mhcharsel.o \
 	$(OGUI)mhstatus.o $(OGUI)mhtext.o $(OGUI)mswproc.o $(OGUI)NetHackW.o
 
 COREOBJGUI = \
@@ -2310,6 +2311,8 @@ $(OGUI)mhrip.o: $(MSWIN)mhrip.c $(MSWIN)$(@B).h $(MSWIN)mhmsg.h $(MSWIN)mhfont.h
 		$(MSWIN)resource.h $(WINDHDR) $(HACK_H)
 $(OGUI)mhsplash.o: $(MSWIN)mhsplash.c $(MSWIN)$(@B).h $(MSWIN)mhmsg.h $(MSWIN)mhfont.h \
 		$(MSWIN)resource.h $(WINDHDR) $(HACK_H)
+$(OGUI)mhcharsel.o: $(MSWIN)mhcharsel.c $(MSWIN)$(@B).h $(MSWIN)mhsplash.h \
+		$(MSWIN)mhdlg.h $(MSWIN)mhtheme.h $(WINDHDR) $(HACK_H)
 $(OGUI)mhstatus.o: $(MSWIN)mhstatus.c $(MSWIN)$(@B).h $(MSWIN)mhmsg.h $(MSWIN)mhfont.h \
 		$(WINDHDR) $(HACK_H)
 $(OGUI)mhtext.o: $(MSWIN)mhtext.c $(MSWIN)$(@B).h $(MSWIN)mhmsg.h $(MSWIN)mhfont.h \

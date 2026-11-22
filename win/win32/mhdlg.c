@@ -10,6 +10,7 @@
 #include "func_tab.h"
 #include "resource.h"
 #include "mhdlg.h"
+#include "mhcharsel.h" /* NetHack Modern */
 
 #include <assert.h>
 int list_view_height(HWND hWnd, int count);
@@ -355,6 +356,13 @@ void do_player_selector_layout(plsel_data_t * data);
 void plselInitDialog(struct plsel_data * data);
 int plselFinalSelection(HWND hWnd);
 
+/* NetHack Modern: the character screen's Random button */
+static void
+plselRandomizeCb(void *data)
+{
+    (void) plselRandomize((plsel_data_t *) data);
+}
+
 boolean
 mswin_player_selection_window(void)
 {
@@ -369,13 +377,21 @@ mswin_player_selection_window(void)
     data.config_alignment = flags.initalign;
 
     if (!plselRandomize(&data)) {
-        /* create modal dialog */
-        ret = DialogBoxParam(
-            GetNHApp()->hApp, MAKEINTRESOURCE(IDD_PLAYER_SELECTOR),
-            GetNHApp()->hMainWnd, PlayerSelectorDlgProc, (LPARAM) &data);
-        if (ret == -1)
-            panic("Cannot create getlin window");
-        ok = (ret == IDOK);
+        /* NetHack Modern: the character screen, in the game window;
+           the old dialog only if it can't be shown */
+        int cs = mswin_char_screen(plselRandomizeCb, &data);
+
+        if (cs >= 0) {
+            ok = (cs == 1);
+        } else {
+            /* create modal dialog */
+            ret = DialogBoxParam(
+                GetNHApp()->hApp, MAKEINTRESOURCE(IDD_PLAYER_SELECTOR),
+                GetNHApp()->hMainWnd, PlayerSelectorDlgProc, (LPARAM) &data);
+            if (ret == -1)
+                panic("Cannot create getlin window");
+            ok = (ret == IDOK);
+        }
     }
 
     return ok;

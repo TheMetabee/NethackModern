@@ -212,6 +212,17 @@ light, medium, dark or deep.
   with Play, About and Exit and both version numbers. Dying, quitting or
   saving brings you back to it, ready for another game; closing the
   window still exits.
+- **Character creation.** The name prompt and the role, race, gender and
+  alignment choices are full-window screens in the same style as the
+  title screen, in place of the old pop-up dialogs. Use the mouse or the
+  keyboard: arrows move between and through the lists, Tab steps through
+  everything, letters jump to a role, `*` picks at random, Enter plays
+  and Esc goes back. The game's rules about what goes together still
+  apply. Choices that don't fit are dimmed, pointing at one says why, and
+  changing your role or race moves any later choice that no longer fits.
+  A side panel describes the role, its races, alignments and gods.
+
+![The character screen: an elven Wizard, with lawful dimmed and the note "Elven Wizards can't be lawful."](docs/modern/media/character-creation.png)
 
 ### Tilesets
 

@@ -681,26 +681,34 @@ ms_text(HDC hdc, const char *s, RECT *r, UINT how, COLORREF c, int shadow)
     DrawTextA(hdc, s, -1, r, how | DT_NOPREFIX);
 }
 
-static void
-ms_button(HDC hdc, int i, double s)
+/* a rounded button in the title screen's style: 'primary' is the wide
+   gold one, the others dark; used by the character screens too */
+void
+mswin_ms_button(HDC hdc, const RECT *rp, const char *label, boolean primary,
+                boolean hot, boolean focus, boolean down, boolean enabled,
+                double s)
 {
-    RECT r = ms_btn[i];
-    boolean hot = (ms_hot == i), focus = (ms_focus == i),
-            down = (ms_down == i && hot);
+    RECT r = *rp;
     COLORREF fill, ink, edge;
     HBRUSH fb;
     HPEN pen;
     HGDIOBJ ob, op;
     int rad = (int) (12 * s);
 
-    if (i == MS_PLAY) {
+    if (!enabled)
+        hot = down = FALSE;
+    if (primary && enabled) {
         fill = down ? RGB(196, 152, 70) : hot ? RGB(244, 206, 124)
                                               : TH_ACCENT;
         ink = TH_BG_APP;
         edge = focus ? RGB(255, 236, 190) : fill;
+    } else if (primary) {
+        fill = RGB(92, 80, 58);
+        ink = RGB(40, 36, 30);
+        edge = focus ? TH_ACCENT : fill;
     } else {
         fill = down ? TH_SEPARATOR : hot ? TH_BG_HEADER : TH_BG_PANEL;
-        ink = hot || focus ? TH_TEXT : TH_TEXT_DIM;
+        ink = !enabled ? TH_SEPARATOR : hot || focus ? TH_TEXT : TH_TEXT_DIM;
         edge = focus ? TH_ACCENT : TH_SEPARATOR;
     }
     fb = CreateSolidBrush(fill);
@@ -712,8 +720,66 @@ ms_button(HDC hdc, int i, double s)
     SelectObject(hdc, ob);
     DeleteObject(pen);
     DeleteObject(fb);
-    ms_text(hdc, ms_label[i], &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-            ink, 0);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, ink);
+    DrawTextA(hdc, label, -1, &r,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+}
+
+static void
+ms_button(HDC hdc, int i, double s)
+{
+    mswin_ms_button(hdc, &ms_btn[i], ms_label[i], i == MS_PLAY, ms_hot == i,
+                    ms_focus == i, ms_down == i && ms_hot == i, TRUE, s);
+}
+
+/* the shared pieces of the full-window screens (see mhcharsel.c) */
+HFONT
+mswin_ms_font(int px, int weight, BOOL serif)
+{
+    return ms_font(px, weight, serif);
+}
+
+void
+mswin_ms_text(HDC hdc, const char *s, RECT *r, UINT how, COLORREF c,
+              int shadow)
+{
+    ms_text(hdc, s, r, how, c, shadow);
+}
+
+/* copy the painting, sized to w x h, into 'dst', then darken all of it
+   by 'dim' (0..255) so panels and text read over it */
+void
+mswin_ms_backdrop(HDC hdc, HDC dst, int w, int h, int dim)
+{
+    HDC bdc;
+    HGDIOBJ obb;
+
+    ms_make_bg(hdc, w, h);
+    bdc = CreateCompatibleDC(hdc);
+    obb = SelectObject(bdc, ms_bg);
+    BitBlt(dst, 0, 0, w, h, bdc, 0, 0, SRCCOPY);
+    SelectObject(bdc, obb);
+    if (dim > 0) {
+        HBITMAP one = CreateCompatibleBitmap(hdc, 1, 1);
+        BLENDFUNCTION bf = { AC_SRC_OVER, 0, (BYTE) min(dim, 255), 0 };
+        RECT px;
+
+        obb = SelectObject(bdc, one);
+        SetRect(&px, 0, 0, 1, 1);
+        FillRect(bdc, &px, (HBRUSH) GetStockObject(BLACK_BRUSH));
+        (void) GdiAlphaBlend(dst, 0, 0, w, h, bdc, 0, 0, 1, 1, bf);
+        SelectObject(bdc, obb);
+        DeleteObject(one);
+    }
+    DeleteDC(bdc);
+}
+
+void
+mswin_ms_backdrop_free(void)
+{
+    if (ms_bg)
+        DeleteObject(ms_bg), ms_bg = NULL;
 }
 
 static void

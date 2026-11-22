@@ -19,6 +19,7 @@
 #include "mhtheme.h"
 #include "mhfont.h"
 #include "mhsplash.h"
+#include "mhcharsel.h"
 
 typedef struct mswin_nethack_main_window {
     int mapAcsiiModeSave;
@@ -458,6 +459,7 @@ MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         mswin_layout_main_window(NULL);
         mswin_menu_screen_place(hWnd); /* NetHack Modern: title screen */
+        mswin_char_screen_place(hWnd); /* ... and name, character */
 
         wp.length = sizeof(wp);
         if (GetWindowPlacement(hWnd, &wp)) {

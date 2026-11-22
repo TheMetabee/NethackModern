@@ -21,6 +21,7 @@
 #include "mhmsgwnd.h"
 #include "mhmenu.h"
 #include "mhsplash.h"
+#include "mhcharsel.h"
 #include "mhmsg.h"
 #include "mhinput.h"
 #include "mhaskyn.h"
@@ -749,8 +750,10 @@ mswin_askname(void)
 {
     logDebug("mswin_askname()\n");
 
-    if (mswin_getlin_window("Who are you?", svp.plname, PL_NSIZ) == IDCANCEL) {
-        bail("bye-bye");
+    /* NetHack Modern: asked in the game window, over the title art;
+       Back returns to the title screen */
+    if (!mswin_name_screen(svp.plname, PL_NSIZ)) {
+        bail((char *) 0);
         /* not reached */
     }
 }

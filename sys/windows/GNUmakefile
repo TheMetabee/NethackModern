@@ -1184,7 +1184,7 @@ CPPFLAGSW = $(CFLAGS) $(CPPFLAGSXTRA) $(COMMONDEF) $(DLBFLG) -DTILES -D_WINDOWS 
 
 ONHW = $(O)nethackw
 NHWONLY = $(addsuffix .o, mhaskyn mhdlg mhfont mhinput mhmain mhmap mhmenu \
-	  mhmsgwnd mhrip mhsplash mhstatus mhtext mswproc tile NetHackW win10)
+	  mhmsgwnd mhrip mhsplash mhcharsel mhstatus mhtext mswproc tile NetHackW win10)
 NHWOBJS = $(addprefix $(ONHW)/, $(COREOBJS) $(NHWONLY))
 DATEW_O  = $(addsuffix .o, $(addprefix $(ONHW)/, date))
 TILEFILES = $(addprefix $(WSHR)/, monsters.txt objects.txt other.txt)
