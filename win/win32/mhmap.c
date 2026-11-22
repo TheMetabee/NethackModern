@@ -42,20 +42,6 @@ static const double fx_zooms[] = { 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0 };
                       | FXA_STONING | FXA_SLIMED | FXA_SICK | FXA_HALLU   \
                       | FXA_INVIS | FXA_CONFLICT)
 #define FX_FRAME_MS 30      /* ~33 frames per second while numbers float */
-#define FX_MAXANIM 96
-#define FXM_LUNGE 1
-#define FXM_SHAKE 2
-#define FXM_DEATH 3
-#define FXM_SLIDE 4         /* hurtled: glide in from the previous square */
-#define FXM_GHOST 5         /* speed afterimage left behind by a step */
-#define FX_GHOST_MS 460
-#define FX_INVIS_ALPHA 110  /* how solid an invisible-but-seen creature is */
-#define FX_SLIDE_MS 70      /* one hurtled step */
-#define FX_STEP_MS 110      /* an ordinary step */
-#define FX_DEATH_MS 360     /* shake ~35%, then fade out */
-#define FX_LUNGE_MS 150     /* out ~40%, back ~60% */
-#define FX_LUNGE_GAP 110    /* successive lunges in one turn queue up */
-#define FX_SHAKE_MS 220
 
 #define TILEBMP_X(ntile) \
     ((ntile % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X)
@@ -104,25 +90,12 @@ typedef struct mswin_nethack_map_window {
 
     HDC tileDC;                /* tile drawing context */
     /* floating numbers and status names are shared: fxv.floaters[] */
-    /* NetHack Modern Phase 4: sprites drawn off their square for a moment
-       (melee lunge, hit shake); the map state itself never moves */
-    struct fx_anim {
-        int kind;               /* FXM_LUNGE or FXM_SHAKE */
-        int x, y;               /* square whose creature moves */
-        int dx, dy;             /* lunge direction */
-        short tile;             /* creature tile when the event happened */
-        boolean hit;            /* lunge connected */
-        int strength;           /* shake: 1..100 */
-        DWORD start, dur;       /* GetTickCount() window */
-    } anims[FX_MAXANIM];
-    int nanims;
-    DWORD animSeq;              /* when the queued lunges finish */
+    /* creatures drawn off their squares (lunges, shakes, slides) and the
+       screen shake are shared too: fxv.anims[], fxv.shake_* */
     HDC fadeDC;                 /* scratch tile for fading sprites */
     HBITMAP fadeBmp, fadeBmpOld;
     int fadeW, fadeH;
     boolean fxTimerOn;
-    DWORD shakeStart, shakeDur; /* screen shake (0 dur = none) */
-    int shakeStrength;          /* 1..100 */
     /* particles for rays and explosions are shared: fxv.parts[] */
     boolean auraTimerOn;        /* lasting effects are being animated */
     boolean zoomSet;            /* the player chose zoomLevel (else auto) */
@@ -180,13 +153,11 @@ static void fx_part_layer(PNHMapWindow, HDC);
 static void fx_make_fonts(PNHMapWindow);
 static void fx_aura_timer(PNHMapWindow, boolean);
 static void fx_paint_overlay(PNHMapWindow data, HDC hdc);
-static boolean fx_shake_offset(PNHMapWindow, int *, int *);
 static void fx_paint_translucent(PNHMapWindow, HDC);
 static short fx_floor_tile(PNHMapWindow, int, int);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect);
 static int fx_spun_x = -1, fx_spun_y = -1; /* a missile was drawn turned */
-static DWORD fx_step_pace; /* a step following quickly on the last */
 
 #if (VERSION_MAJOR < 4) && (VERSION_MINOR < 4) && (PATCHLEVEL < 2)
 static void nhglyph2charcolor(short glyph, uchar *ch, int *color);
@@ -1020,6 +991,22 @@ mswin_fxv_start_timer(void)
         fx_start_timer(data);
 }
 
+static const glyph_info *
+mswin_fxv_glyph_at(int x, int y)
+{
+    PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
+
+    return data ? &data->map[x][y] : &nul_glyphinfo;
+}
+
+static boolean
+mswin_fxv_tiles_shown(void)
+{
+    PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
+
+    return data && !data->bAsciiMode && !Is_rogue_level(&u.uz);
+}
+
 /* on WM_CREATE */
 void
 onCreate(HWND hWnd, WPARAM wParam, LPARAM lParam)
@@ -1040,10 +1027,12 @@ onCreate(HWND hWnd, WPARAM wParam, LPARAM lParam)
 
     /* the shared effects (win/share/fxview.c) start empty too */
     {
-        static const struct fxv_hooks hooks = { mswin_fxv_now,
-                                                mswin_fxv_start_timer };
+        static const struct fxv_hooks hooks = {
+            mswin_fxv_now, mswin_fxv_start_timer, mswin_fxv_glyph_at,
+            mswin_fxv_tiles_shown, nhcolor_to_RGB
+        };
 
-        fxv.nparts = 0;
+        (void) memset(&fxv, 0, sizeof fxv);
         fxv_init(&hooks);
     }
 
@@ -1614,7 +1603,15 @@ onPaint(HWND hWnd)
     int frontHeight = ROWNO * data->yFrontTile;
 
     int shx = 0, shy = 0;
-    boolean shaking = fx_shake_offset(data, &shx, &shy);
+    boolean shaking;
+
+    {
+        float fdx, fdy;
+
+        shaking = fxv_shake_at(GetTickCount(), &fdx, &fdy);
+        shx = (int) (fdx * data->xFrontTile);
+        shy = (int) (fdy * data->xFrontTile);
+    }
 
     /* always compose off screen, then copy: switching between this and a
        direct stretch whenever an animation starts or stops made the whole
@@ -1702,10 +1699,8 @@ onPaint(HWND hWnd)
 /* ------------------------------------------------------------------ */
 /* NetHack Modern: damage numbers and health bars (Phase 2)            */
 
-static void fx_motion_event(PNHMapWindow, const struct fx_event *);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_start_timer(PNHMapWindow);
-static void fx_shake_event(PNHMapWindow, const struct fx_event *);
 static void fx_blend_tile(PNHMapWindow, HDC, int, int, int, int, short, int);
 
 /* called by the core (fx.c) */
@@ -1719,12 +1714,12 @@ mswin_fx_event(const struct fx_event *ev)
         mswin_end_snapshot(); /* the death screen's last words */
     if (!data)
         return;
-    fx_motion_event(data, ev); /* lunges and shakes */
+    fxv_motion_event(ev); /* lunges and shakes */
     if (ev->type == FXE_MOVE && (ev->flags & FXF_HERO_TARGET)
         && iflags.fx_theme && IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
         /* the character panel's action bar depends on where we stand */
         InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
-    fx_shake_event(data, ev);  /* the whole view */
+    fxv_shake_event(ev);  /* the whole view */
     if (ev->type == FXE_EXPLODE && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
         fxv_burst_particles(ev->x, ev->y, ev->adtyp, ev->amount);
     if (ev->type == FXE_WAND && !(ev->flags & FXF_BULK))
@@ -1770,273 +1765,6 @@ fx_start_timer(PNHMapWindow data)
     InvalidateRect(data->hWnd, NULL, FALSE);
 }
 
-static struct fx_anim *
-fx_new_anim(PNHMapWindow data)
-{
-    if (data->nanims >= FX_MAXANIM) {
-        memmove(&data->anims[0], &data->anims[1],
-                (FX_MAXANIM - 1) * sizeof data->anims[0]);
-        data->nanims--;
-    }
-    return &data->anims[data->nanims++];
-}
-
-/* melee attacks lunge the attacker toward its target; damage shakes the
-   victim. Only in tiles mode, never while running, and only for a
-   creature actually drawn on that square. */
-static void
-fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
-{
-    DWORD now = GetTickCount();
-    struct fx_anim *a;
-    int dx, dy, i;
-
-    if (!iflags.fx_motion || (ev->flags & FXF_BULK)
-        || data->bAsciiMode || Is_rogue_level(&u.uz))
-        return;
-
-    if (ev->type == FXE_ATTACK && !(ev->flags & FXF_RANGED)) {
-        dx = ev->x - ev->sx, dy = ev->y - ev->sy;
-        if ((!dx && !dy) || dx < -1 || dx > 1 || dy < -1 || dy > 1)
-            return; /* not adjacent */
-        if (!isok(ev->sx, ev->sy)
-            || !glyph_is_monster(data->map[ev->sx][ev->sy].glyph))
-            return; /* attacker not visibly there */
-        a = fx_new_anim(data);
-        a->kind = FXM_LUNGE;
-        a->x = ev->sx, a->y = ev->sy;
-        a->dx = dx, a->dy = dy;
-        a->tile = data->map[ev->sx][ev->sy].gm.tileidx;
-        a->hit = (ev->flags & FXF_HIT) != 0;
-        a->strength = 0;
-        /* several attacks in one turn play one after another */
-        a->start = ((long) (data->animSeq - now) > 0) ? data->animSeq : now;
-        a->dur = FX_LUNGE_MS;
-        data->animSeq = a->start + FX_LUNGE_GAP;
-        fx_start_timer(data);
-    } else if (ev->type == FXE_DAMAGE && ev->amount > 0) {
-        DWORD start = now;
-        int pct;
-
-        if (!isok(ev->x, ev->y)
-            || !glyph_is_monster(data->map[ev->x][ev->y].glyph))
-            return;
-        /* start at the peak of a lunge that just went for this square */
-        for (i = data->nanims - 1; i >= 0; i--) {
-            struct fx_anim *l = &data->anims[i];
-
-            if (l->kind == FXM_LUNGE && l->x + l->dx == ev->x
-                && l->y + l->dy == ev->y
-                && (long) (l->start + l->dur - now) > 0) {
-                start = l->start + (l->dur * 2) / 5;
-                break;
-            }
-        }
-        pct = (ev->amount * 100) / max(ev->hpmax, 1);
-        a = fx_new_anim(data);
-        a->kind = FXM_SHAKE;
-        a->x = ev->x, a->y = ev->y;
-        /* recoil away from the attacker that lunged in */
-        if (i >= 0)
-            a->dx = data->anims[i].dx, a->dy = data->anims[i].dy;
-        else
-            a->dx = a->dy = 0;
-        a->tile = data->map[ev->x][ev->y].gm.tileidx;
-        a->hit = TRUE;
-        a->strength = max(15, min(100, pct * 3));
-        a->start = start;
-        a->dur = FX_SHAKE_MS;
-        fx_start_timer(data);
-    } else if (ev->type == FXE_KNOCKBACK || ev->type == FXE_MOVE) {
-        boolean step = (ev->type == FXE_MOVE);
-
-        int lim = step ? 2 : 1;
-
-        dx = ev->x - ev->sx, dy = ev->y - ev->sy;
-        if (!isok(ev->x, ev->y) || dx < -lim || dx > lim || dy < -lim
-            || dy > lim)
-            return;
-        /* (a step is reported before the map is redrawn, so whether
-           something is drawn there is checked when painting) */
-        if (!step && !glyph_is_monster(data->map[ev->x][ev->y].glyph))
-            return;
-        /* the previous step's slide is over: this one takes over.  When
-           steps come faster than a slide lasts (a held key, quick taps,
-           running), the slides keep to that pace instead, or are skipped
-           when very quick, so the picture never trails behind the
-           creature */
-        {
-            /* where recent steps ended, and when */
-            static struct {
-                coordxy x, y;
-                DWORD at;
-            } last[16];
-            static int nlast;
-            long pace = -1;
-            int k;
-
-            for (i = 0; i < data->nanims; i++)
-                if (data->anims[i].kind == FXM_SLIDE
-                    && ((data->anims[i].x == ev->sx
-                         && data->anims[i].y == ev->sy)
-                        || (data->anims[i].x == ev->x
-                            && data->anims[i].y == ev->y)))
-                    data->anims[i].dur = 0;
-            if (step) {
-                for (k = 0; k < nlast; k++)
-                    if (last[k].x == ev->sx && last[k].y == ev->sy) {
-                        long since = (long) (now - last[k].at);
-
-                        if (since >= 0 && since < FX_STEP_MS)
-                            pace = since;
-                        break;
-                    }
-                if (k == nlast) { /* a walker not seen lately */
-                    if (nlast < SIZE(last)) {
-                        k = nlast++;
-                    } else { /* reuse the slot stepped longest ago */
-                        for (k = 0, i = 1; i < nlast; i++)
-                            if ((long) (last[i].at - last[k].at) < 0)
-                                k = i;
-                    }
-                }
-                last[k].x = ev->x, last[k].y = ev->y, last[k].at = now;
-            }
-            if (step && pace >= 0) {
-                /* afterimages of earlier steps go too */
-                for (i = 0; i < data->nanims; i++)
-                    if (data->anims[i].kind == FXM_GHOST
-                        && data->anims[i].x == ev->sx
-                        && data->anims[i].y == ev->sy)
-                        data->anims[i].dur = 0;
-                if (pace < 35)
-                    return; /* too quick to show: just be there */
-                fx_step_pace = (DWORD) pace;
-            }
-        }
-        /* shakes and recoils of the knocked creature are left behind */
-        for (i = 0; i < data->nanims; i++)
-            if (data->anims[i].kind == FXM_SHAKE
-                && data->anims[i].x == ev->sx && data->anims[i].y == ev->sy)
-                data->anims[i].dur = 0;
-        a = fx_new_anim(data);
-        a->kind = FXM_SLIDE;
-        a->x = ev->x, a->y = ev->y;
-        a->dx = dx, a->dy = dy;
-        a->tile = data->map[ev->x][ev->y].gm.tileidx; /* refreshed in paint */
-        a->hit = !step;
-        a->strength = 0;
-        a->start = now;
-        a->dur = step ? (max(abs(dx), abs(dy)) > 1 ? FX_STEP_MS + 40
-                                                   : FX_STEP_MS)
-                      : FX_SLIDE_MS;
-        if (step && fx_step_pace) /* keeping up with quick steps */
-            a->dur = min(a->dur, (int) fx_step_pace);
-        if (step && iflags.fx_afterimage && !fx_step_pace) {
-            int k;
-            short tile = a->tile;
-
-            for (k = 1; k <= 1; k++) { /* one afterimage */
-                a = fx_new_anim(data);
-                a->kind = FXM_GHOST;
-                a->x = ev->x, a->y = ev->y;
-                a->dx = dx, a->dy = dy;
-                a->tile = tile;
-                a->hit = FALSE;
-                a->strength = k; /* 1 = nearest the creature */
-                a->start = now;
-                a->dur = FX_GHOST_MS;
-            }
-        }
-        fx_step_pace = 0;
-        fx_start_timer(data);
-    } else if (ev->type == FXE_DEATH) {
-        DWORD start = now;
-
-        if (!isok(ev->x, ev->y)
-            || !glyph_is_monster(data->map[ev->x][ev->y].glyph))
-            return; /* nothing of it drawn there to fade */
-        /* follow the killing blow's shake on this square */
-        for (i = data->nanims - 1; i >= 0; i--) {
-            struct fx_anim *l = &data->anims[i];
-
-            if (l->kind == FXM_SHAKE && l->x == ev->x && l->y == ev->y
-                && (long) (l->start + l->dur - now) > 0) {
-                start = l->start + l->dur / 2;
-                l->dur = l->dur / 2; /* the death shake takes over */
-                break;
-            }
-        }
-        a = fx_new_anim(data);
-        a->kind = FXM_DEATH;
-        a->x = ev->x, a->y = ev->y;
-        a->dx = a->dy = 0;
-        a->tile = data->map[ev->x][ev->y].gm.tileidx;
-        a->hit = TRUE;
-        a->strength = 60;
-        a->start = start;
-        a->dur = FX_DEATH_MS;
-        fx_start_timer(data);
-    }
-}
-
-/* explosions, earthquakes and very big hits on the hero shake the whole
-   map view (tiles and ASCII alike); never while running */
-static void
-fx_shake_event(PNHMapWindow data, const struct fx_event *ev)
-{
-    DWORD now = GetTickCount();
-    int s = 0;
-
-    if (!iflags.fx_screen_shake || (ev->flags & FXF_BULK))
-        return;
-    if (ev->type == FXE_SHAKE) {
-        s = ev->amount;
-    } else if (ev->type == FXE_EXPLODE && !(ev->flags & FXF_UNSEEN)) {
-        s = 30 + ev->amount * 2; /* harder for bigger blasts */
-    } else if (ev->type == FXE_DAMAGE && (ev->flags & FXF_HERO_TARGET)
-               && ev->hpmax > 0 && ev->amount * 4 >= ev->hpmax) {
-        /* lost a quarter or more of max HP in one go: a small jolt */
-        s = 15 + min(25, (ev->amount * 100 / ev->hpmax - 25) / 2);
-    }
-    if (s <= 0)
-        return;
-    s = min(s, 100);
-    /* don't cut a bigger shake that's still going short */
-    if (data->shakeDur && (long) (data->shakeStart + data->shakeDur - now) > 0
-        && data->shakeStrength >= s)
-        return;
-    data->shakeStart = now;
-    data->shakeStrength = s;
-    data->shakeDur = 280 + 4 * s;
-    fx_start_timer(data);
-}
-
-/* where the view sits this frame; FALSE when not shaking */
-static boolean
-fx_shake_offset(PNHMapWindow data, int *dx, int *dy)
-{
-    long age;
-    double p, amp, decay;
-
-    *dx = *dy = 0;
-    if (!data->shakeDur)
-        return FALSE;
-    age = (long) (GetTickCount() - data->shakeStart);
-    if (age < 0 || age >= (long) data->shakeDur) {
-        data->shakeDur = 0;
-        return FALSE;
-    }
-    p = (double) age / data->shakeDur;
-    decay = (1.0 - p) * (1.0 - p);
-    amp = data->xFrontTile * (0.06 + 0.22 * data->shakeStrength / 100.0);
-    /* two unrelated frequencies per axis so it rattles, not sways */
-    *dx = (int) (amp * decay * (0.7 * sin(age * 0.105) + 0.3 * sin(age * 0.297)));
-    *dy = (int) (amp * 0.8 * decay
-                 * (0.6 * cos(age * 0.083) + 0.4 * sin(age * 0.241)));
-    return TRUE;
-}
-
 /* draw tile 'tile' at <x,y> on hdc, blended at 'alpha' (0..255) over
    whatever is already there (used to fade dying creatures out) */
 static void
@@ -2080,7 +1808,7 @@ mswin_map_fx_pump(int ms)
     PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
     DWORD start = GetTickCount();
 
-    if (!data || (!data->nanims && !fxv.nfloaters && !data->shakeDur
+    if (!data || (!fxv.nanims && !fxv.nfloaters && !fxv.shake_dur
                   && !fxv.nparts)) {
         Sleep(ms);
         return;
@@ -2960,25 +2688,11 @@ fx_paint_lighting(PNHMapWindow data, HDC hdc)
 static void
 fx_hero_slide_offset(PNHMapWindow data, int *offx, int *offy)
 {
-    DWORD now = GetTickCount();
-    int i;
+    float fx, fy;
 
-    *offx = *offy = 0;
-    for (i = 0; i < data->nanims; i++) {
-        struct fx_anim *a = &data->anims[i];
-        long age = (long) (now - a->start);
-        double e;
-
-        if (a->kind != FXM_SLIDE || a->x != u.ux || a->y != u.uy
-            || age < 0 || age >= (long) a->dur)
-            continue;
-        /* the same easing fx_paint_sprites uses */
-        e = 1.0 - (double) age / a->dur;
-        e = a->hit ? e * e : e * e * (3 - 2 * e);
-        *offx = (int) (-a->dx * data->xFrontTile * e);
-        *offy = (int) (-a->dy * data->yFrontTile * e);
-        return;
-    }
+    fxv_hero_slide(GetTickCount(), &fx, &fy);
+    *offx = (int) (fx * data->xFrontTile);
+    *offy = (int) (fy * data->yFrontTile);
 }
 
 static void
@@ -3070,12 +2784,8 @@ mswin_map_fx_snap(void)
 {
     PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
 
-    if (data && (data->nanims || data->shakeDur)) {
-        data->nanims = 0;
-        data->animSeq = 0;
-        data->shakeDur = 0;
+    if (fxv_snap() && data)
         InvalidateRect(data->hWnd, NULL, FALSE);
-    }
 }
 
 /* draw animating creatures off their squares onto the composed image */
@@ -3086,99 +2796,31 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
     HBITMAP saved;
     int i, ox, oy, tw, th;
 
-    if (!data->nanims)
+    if (!fxv.nanims)
         return;
     ox = data->map_orig.x - data->xPos * data->xFrontTile;
     oy = data->map_orig.y - data->yPos * data->yFrontTile;
     tw = data->xFrontTile, th = data->yFrontTile;
     saved = SelectObject(data->tileDC, GetNHApp()->bmpMapTiles);
-    for (i = 0; i < data->nanims; i++) {
-        struct fx_anim *a = &data->anims[i];
-        long age = (long) (now - a->start);
-        double p, e;
-        int cx, cy, offx = 0, offy = 0;
+    for (i = 0; i < fxv.nanims; i++) {
+        struct fxv_anim *a = &fxv.anims[i];
+        float fx, fy;
+        int cx, cy, offx, offy, alpha;
         short bk;
 
-        if (age < 0 || age >= (long) a->dur)
+        /* where it is this frame is shared (fxview.c); drawing it is
+           here */
+        if (!fxv_anim_pose(a, now, &fx, &fy, &alpha))
             continue;
-        p = (double) age / a->dur;
-        if (a->kind == FXM_GHOST) {
-            unsigned long au = data->map[a->x][a->y].fxauras;
-            int nghost = (au & (FXA_VERYFAST | FXA_FAST)) ? 1 : 0;
-
-            /* the hero's intrinsic speed is too common to trail every
-               step: only extra speed (boots, potion, spell) shows */
-            if (a->x == u.ux && a->y == u.uy && !(au & FXA_VERYFAST))
-                nghost = 0;
-            double back, lag;
-            int alpha;
-
-            if (!iflags.fx_afterimage)
-                continue; /* turned off since the step */
-            if (a->strength > nghost
-                || !glyph_is_monster(data->map[a->x][a->y].glyph))
-                continue;
-            /* where the creature is on its slide right now (the slide
-               runs FX_STEP_MS); a single afterimage hangs back along the
-               way it came (further when very fast), then slowly catches
-               up as it fades */
-            lag = (au & FXA_VERYFAST) ? 0.95 : 0.75;
-            back = 1.0 - min(1.0, (double) age / FX_STEP_MS);
-            back = back * back * (3 - 2 * back);
-            back = min(1.0, back + lag * (1.0 - p) * (1.0 - p));
-            alpha = (int) (125 * (1.0 - p));
-            cx = ox + a->x * tw - (int) (a->dx * tw * back);
-            cy = oy + a->y * th - (int) (a->dy * th * back);
-            fx_blend_tile(data, hdc, cx, cy, tw, th,
-                          data->map[a->x][a->y].gm.tileidx, alpha);
-            continue;
-        }
-        if (a->kind == FXM_SLIDE) {
-            /* whatever is drawn there now (the step was reported before
-               the map caught up); nothing to slide if it's gone */
-            if (!glyph_is_monster(data->map[a->x][a->y].glyph))
-                continue;
-            a->tile = data->map[a->x][a->y].gm.tileidx;
-        }
-        if (a->kind == FXM_DEATH) {
-            /* a small shake, then fade out over what's left there (its
-               corpse, items or bare floor) */
-            double fadefrom = 0.35;
-            int alpha = (p < fadefrom) ? 255
-                        : (int) (255 * (1.0 - (p - fadefrom) / (1 - fadefrom)));
-            double amp = tw * 0.06 * (p < fadefrom ? 1.0 - p / fadefrom : 0.0);
-
-            offx = (int) (amp * sin(p * 2 * 3.14159265358979 * 9.0));
-            cx = ox + a->x * tw, cy = oy + a->y * th;
-            fx_blend_tile(data, hdc, cx + offx, cy, tw, th, a->tile, alpha);
-            continue;
-        }
-        if (a->kind == FXM_LUNGE) {
-            /* quick push out, softer ease back */
-            double reach = (a->hit ? 0.28 : 0.2) * tw;
-
-            e = (p < 0.4) ? (p / 0.4) : (1.0 - (p - 0.4) / 0.6);
-            e = e * e * (3 - 2 * e); /* smoothstep */
-            offx = (int) (a->dx * reach * e);
-            offy = (int) (a->dy * reach * e);
-        } else if (a->kind == FXM_SLIDE) {
-            /* from the square it left, easing in (steps a bit softer) */
-            e = 1.0 - p;
-            e = a->hit ? e * e : e * e * (3 - 2 * e);
-            offx = (int) (-a->dx * tw * e);
-            offy = (int) (-a->dy * th * e);
-        } else { /* FXM_SHAKE: decaying side-to-side jitter */
-            double amp = tw * (0.04 + 0.10 * a->strength / 100.0);
-            /* plus a push away from the blow, springing back */
-            double push = tw * (0.06 + 0.10 * a->strength / 100.0)
-                          * (1.0 - p) * (1.0 - p);
-
-            offx = (int) (amp * sin(p * 2 * 3.14159265358979 * 3.0) * (1.0 - p));
-            offy = (int) (amp * 0.3 * sin(p * 2 * 3.14159265358979 * 5.0) * (1.0 - p));
-            offx += (int) (a->dx * push);
-            offy += (int) (a->dy * push);
-        }
+        offx = (int) (fx * tw), offy = (int) (fy * th);
         cx = ox + a->x * tw, cy = oy + a->y * th;
+        if (a->kind == FXM_GHOST || a->kind == FXM_DEATH) {
+            /* an afterimage, or a dying creature fading out over what's
+               left there */
+            fx_blend_tile(data, hdc, cx + offx, cy + offy, tw, th, a->tile,
+                          alpha);
+            continue;
+        }
         /* the floor under it, so it doesn't leave a copy behind */
         bk = fx_floor_tile(data, a->x, a->y);
         if (bk >= 0) {
@@ -3193,7 +2835,7 @@ fx_paint_sprites(PNHMapWindow data, HDC hdc)
         }
         if ((data->map[a->x][a->y].fxauras & FXA_INVIS) && iflags.fx_auras)
             fx_blend_tile(data, hdc, cx + offx, cy + offy, tw, th, a->tile,
-                          FX_INVIS_ALPHA);
+                          FXV_INVIS_ALPHA);
         else
             (*GetNHApp()->lpfnTransparentBlt)(
                 hdc, cx + offx, cy + offy, tw, th, data->tileDC,
@@ -3229,7 +2871,7 @@ fx_paint_translucent(PNHMapWindow data, HDC hdc)
 {
     DWORD now = GetTickCount();
     HBITMAP saved;
-    int x, y, i, ox, oy, tw, th;
+    int x, y, ox, oy, tw, th;
 
     if (!iflags.fx_auras || data->bAsciiMode || Is_rogue_level(&u.uz))
         return;
@@ -3241,30 +2883,18 @@ fx_paint_translucent(PNHMapWindow data, HDC hdc)
         for (y = 0; y < ROWNO; y++) {
             short bk;
             int cx, cy;
-            boolean busy = FALSE;
-
             if (!(data->map[x][y].fxauras & FXA_INVIS)
                 || !glyph_is_monster(data->map[x][y].glyph))
                 continue;
-            for (i = 0; i < data->nanims; i++) {
-                struct fx_anim *a = &data->anims[i];
-                long age = (long) (now - a->start);
-
-                if (a->x == x && a->y == y && a->kind != FXM_GHOST
-                    && age >= 0 && age < (long) a->dur) {
-                    busy = TRUE;
-                    break;
-                }
-            }
-            if (busy)
-                continue;
+            if (fxv_square_busy(x, y, now))
+                continue; /* drawn by fx_paint_sprites() */
             cx = ox + x * tw, cy = oy + y * th;
             if ((bk = fx_floor_tile(data, x, y)) >= 0)
                 StretchBlt(hdc, cx, cy, tw, th, data->tileDC, TILEBMP_X(bk),
                            TILEBMP_Y(bk), GetNHApp()->mapTile_X,
                            GetNHApp()->mapTile_Y, SRCCOPY);
             fx_blend_tile(data, hdc, cx, cy, tw, th,
-                          data->map[x][y].gm.tileidx, FX_INVIS_ALPHA);
+                          data->map[x][y].gm.tileidx, FXV_INVIS_ALPHA);
         }
     SelectObject(data->tileDC, saved);
 }
@@ -3274,18 +2904,8 @@ static void
 fx_tick(PNHMapWindow data)
 {
     DWORD now = GetTickCount();
-    int i, j;
 
-    for (i = j = 0; i < data->nanims; i++)
-        if ((long) (now - data->anims[i].start) < (long) data->anims[i].dur)
-            data->anims[j++] = data->anims[i];
-    data->nanims = j;
-    if (data->shakeDur
-        && (long) (now - data->shakeStart) >= (long) data->shakeDur)
-        data->shakeDur = 0;
-    fxv_expire(now);
-    if (!fxv.nfloaters && !data->nanims && !data->shakeDur && !fxv.nparts
-        && data->fxTimerOn) {
+    if (!fxv_expire(now) && data->fxTimerOn) {
         KillTimer(data->hWnd, FX_TIMER_ID);
         data->fxTimerOn = FALSE;
     }

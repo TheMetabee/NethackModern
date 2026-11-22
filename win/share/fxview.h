@@ -66,11 +66,43 @@ struct fxv_floater {
     fxv_ms start;           /* when (re)started */
 };
 
+/* motion: creatures drawn off their square for a moment (the map state
+   itself never moves), and the whole view shaking */
+#define FXV_MAXANIM 96
+#define FXM_LUNGE 1         /* a melee attacker pushes toward its target */
+#define FXM_SHAKE 2         /* a creature that's hit shakes */
+#define FXM_DEATH 3         /* shake, then fade out */
+#define FXM_SLIDE 4         /* a step or knockback: glide in from before */
+#define FXM_GHOST 5         /* speed afterimage left behind by a step */
+#define FXV_GHOST_MS 460
+#define FXV_INVIS_ALPHA 110 /* how solid an invisible-but-seen creature is */
+#define FXV_SLIDE_MS 70     /* one hurtled step */
+#define FXV_STEP_MS 110     /* an ordinary step */
+#define FXV_DEATH_MS 360    /* shake ~35%, then fade out */
+#define FXV_LUNGE_MS 150    /* out ~40%, back ~60% */
+#define FXV_LUNGE_GAP 110   /* successive lunges in one turn queue up */
+#define FXV_SHAKE_MS 220
+
+struct fxv_anim {
+    int kind;               /* FXM_* */
+    int x, y;               /* square whose creature moves */
+    int dx, dy;             /* direction */
+    short tile;             /* creature tile when the event happened */
+    boolean hit;            /* lunge connected; slide was a knockback */
+    int strength;           /* shake: 1..100; ghost: which one */
+    fxv_ms start, dur;
+};
+
 struct fxv_state {
     struct fxv_part parts[FXV_MAXPART];
     int nparts;
     struct fxv_floater floaters[FXV_MAXFLOAT];
     int nfloaters;
+    struct fxv_anim anims[FXV_MAXANIM];
+    int nanims;
+    fxv_ms anim_seq;        /* when the queued lunges finish */
+    fxv_ms shake_start, shake_dur; /* screen shake (0 dur = none) */
+    int shake_strength;     /* 1..100 */
 };
 extern struct fxv_state fxv;
 
@@ -78,13 +110,37 @@ extern struct fxv_state fxv;
 struct fxv_hooks {
     fxv_ms (*now)(void);        /* a millisecond clock */
     void (*start_timer)(void);  /* something is moving: keep repainting */
+    /* what the front end has drawn on a map square (its own copy of
+       the map, as print_glyph() gave it) */
+    const glyph_info *(*glyph_at)(int x, int y);
+    boolean (*tiles_shown)(void); /* tiles, not ASCII (motion needs them) */
+    fxv_color (*nh_color)(int);   /* a NetHack colour (CLR_*) as RGB */
 };
 void fxv_init(const struct fxv_hooks *);
 fxv_ms fxv_now(void);
 void fxv_start_timer(void);
+const glyph_info *fxv_glyph_at(int x, int y);
+boolean fxv_tiles_shown(void);
+fxv_color fxv_nh_color(int);
 
-/* drop the particles and floaters that are done */
-void fxv_expire(fxv_ms now);
+/* motion, made from fx events. fxv_anim_pose() says where to draw an
+   animating creature this frame, as an offset from its square in tiles
+   (x in tile widths, y in tile heights), and how solid (0..255); FALSE
+   if it isn't showing. fxv_shake_at() is the whole view's offset, in
+   tile widths. fxv_snap() stops it all at once (TRUE if anything was
+   moving). */
+void fxv_motion_event(const struct fx_event *);
+void fxv_shake_event(const struct fx_event *);
+boolean fxv_anim_pose(struct fxv_anim *, fxv_ms now, float *offx,
+                      float *offy, int *alpha);
+boolean fxv_shake_at(fxv_ms now, float *dx, float *dy);
+void fxv_hero_slide(fxv_ms now, float *offx, float *offy);
+boolean fxv_square_busy(int x, int y, fxv_ms now);
+boolean fxv_snap(void);
+
+/* drop the particles, floaters and motion that are done; TRUE while
+   anything is left (keep the frame timer going) */
+boolean fxv_expire(fxv_ms now);
 
 /* floating text: made from fx events; drawn by the front end at
    fxv_floater_at() (centre, squares; brightness 0..1), saying

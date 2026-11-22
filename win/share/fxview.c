@@ -39,8 +39,42 @@ fxv_start_timer(void)
         (*hooks.start_timer)();
 }
 
-/* drop the particles and floaters whose life is over */
-void
+const glyph_info *
+fxv_glyph_at(int x, int y)
+{
+    if (!hooks.glyph_at || !isok(x, y))
+        return &nul_glyphinfo;
+    return (*hooks.glyph_at)(x, y);
+}
+
+boolean
+fxv_tiles_shown(void)
+{
+    return hooks.tiles_shown ? (*hooks.tiles_shown)() : TRUE;
+}
+
+/* a NetHack colour as RGB, in the front end's palette if it has one */
+fxv_color
+fxv_nh_color(int c)
+{
+    static const fxv_color dflt[16] = {
+        FXV_RGB(0x55, 0x55, 0x55), FXV_RGB(0xb0, 0x00, 0x00),
+        FXV_RGB(0x00, 0x9b, 0x00), FXV_RGB(0x8b, 0x5a, 0x2b),
+        FXV_RGB(0x00, 0x00, 0xc8), FXV_RGB(0xb0, 0x00, 0xb0),
+        FXV_RGB(0x00, 0xa0, 0xa0), FXV_RGB(0xc0, 0xc0, 0xc0),
+        FXV_RGB(0x80, 0x80, 0x80), FXV_RGB(0xff, 0x80, 0x00),
+        FXV_RGB(0x00, 0xff, 0x00), FXV_RGB(0xff, 0xff, 0x00),
+        FXV_RGB(0x40, 0x40, 0xff), FXV_RGB(0xff, 0x40, 0xff),
+        FXV_RGB(0x00, 0xff, 0xff), FXV_RGB(0xff, 0xff, 0xff),
+    };
+
+    if (hooks.nh_color)
+        return (*hooks.nh_color)(c);
+    return (c >= 0 && c < 16) ? dflt[c] : FXV_RGB(0, 0, 0);
+}
+
+/* drop the particles, floaters and motion whose time is over */
+boolean
 fxv_expire(fxv_ms now)
 {
     int i, j;
@@ -53,6 +87,14 @@ fxv_expire(fxv_ms now)
         if (now - fxv.floaters[i].start < fxv.floaters[i].life)
             fxv.floaters[j++] = fxv.floaters[i];
     fxv.nfloaters = j;
+    for (i = j = 0; i < fxv.nanims; i++)
+        if ((long) (now - fxv.anims[i].start) < (long) fxv.anims[i].dur)
+            fxv.anims[j++] = fxv.anims[i];
+    fxv.nanims = j;
+    if (fxv.shake_dur
+        && (long) (now - fxv.shake_start) >= (long) fxv.shake_dur)
+        fxv.shake_dur = 0;
+    return (fxv.nparts || fxv.nfloaters || fxv.nanims || fxv.shake_dur);
 }
 
 /* where a particle is now: it moves at v slowed by drag (distance =
@@ -983,7 +1025,7 @@ fxv_quaff_particles(const struct fx_event *ev)
 
     if (ev->adtyp == 0) {
         /* a spiral of the potion's colour rising round the hero */
-        fxv_color c = nhcolor_to_RGB(ev->amount);
+        fxv_color c = fxv_nh_color(ev->amount);
 
         if (FXV_R(c) + FXV_G(c) + FXV_B(c) < 200)
             c = FXV_RGB(110, 110, 135); /* inky or black: still visible */
@@ -1795,4 +1837,426 @@ fxv_floater_text(const struct fxv_floater *f, char *buf, size_t bufsz)
         Snprintf(buf, bufsz, "%s%d",
                  f->type == FXE_HEAL ? "+" : f->target == 0 ? "-" : "",
                  f->amount);
+}
+
+/* ---- motion ------------------------------------------------------- */
+
+static fxv_ms fxv_step_pace; /* a step following quickly on the last */
+
+static struct fxv_anim *
+fxv_new_anim(void)
+{
+    if (fxv.nanims >= FXV_MAXANIM) {
+        memmove(&fxv.anims[0], &fxv.anims[1],
+                (FXV_MAXANIM - 1) * sizeof fxv.anims[0]);
+        fxv.nanims--;
+    }
+    return &fxv.anims[fxv.nanims++];
+}
+
+/* melee attacks lunge the attacker toward its target; damage shakes the
+   victim. Only in tiles mode, never while running, and only for a
+   creature actually drawn on that square. */
+void
+fxv_motion_event(const struct fx_event *ev)
+{
+    fxv_ms now = fxv_now();
+    struct fxv_anim *a;
+    int dx, dy, i;
+
+    if (!iflags.fx_motion || (ev->flags & FXF_BULK)
+        || !fxv_tiles_shown() || Is_rogue_level(&u.uz))
+        return;
+
+    if (ev->type == FXE_ATTACK && !(ev->flags & FXF_RANGED)) {
+        dx = ev->x - ev->sx, dy = ev->y - ev->sy;
+        if ((!dx && !dy) || dx < -1 || dx > 1 || dy < -1 || dy > 1)
+            return; /* not adjacent */
+        if (!isok(ev->sx, ev->sy)
+            || !glyph_is_monster(fxv_glyph_at(ev->sx, ev->sy)->glyph))
+            return; /* attacker not visibly there */
+        a = fxv_new_anim();
+        a->kind = FXM_LUNGE;
+        a->x = ev->sx, a->y = ev->sy;
+        a->dx = dx, a->dy = dy;
+        a->tile = fxv_glyph_at(ev->sx, ev->sy)->gm.tileidx;
+        a->hit = (ev->flags & FXF_HIT) != 0;
+        a->strength = 0;
+        /* several attacks in one turn play one after another */
+        a->start = ((long) (fxv.anim_seq - now) > 0) ? fxv.anim_seq : now;
+        a->dur = FXV_LUNGE_MS;
+        fxv.anim_seq = a->start + FXV_LUNGE_GAP;
+        fxv_start_timer();
+    } else if (ev->type == FXE_DAMAGE && ev->amount > 0) {
+        fxv_ms start = now;
+        int pct;
+
+        if (!isok(ev->x, ev->y)
+            || !glyph_is_monster(fxv_glyph_at(ev->x, ev->y)->glyph))
+            return;
+        /* start at the peak of a lunge that just went for this square */
+        for (i = fxv.nanims - 1; i >= 0; i--) {
+            struct fxv_anim *l = &fxv.anims[i];
+
+            if (l->kind == FXM_LUNGE && l->x + l->dx == ev->x
+                && l->y + l->dy == ev->y
+                && (long) (l->start + l->dur - now) > 0) {
+                start = l->start + (l->dur * 2) / 5;
+                break;
+            }
+        }
+        pct = (ev->amount * 100) / max(ev->hpmax, 1);
+        a = fxv_new_anim();
+        a->kind = FXM_SHAKE;
+        a->x = ev->x, a->y = ev->y;
+        /* recoil away from the attacker that lunged in */
+        if (i >= 0)
+            a->dx = fxv.anims[i].dx, a->dy = fxv.anims[i].dy;
+        else
+            a->dx = a->dy = 0;
+        a->tile = fxv_glyph_at(ev->x, ev->y)->gm.tileidx;
+        a->hit = TRUE;
+        a->strength = max(15, min(100, pct * 3));
+        a->start = start;
+        a->dur = FXV_SHAKE_MS;
+        fxv_start_timer();
+    } else if (ev->type == FXE_KNOCKBACK || ev->type == FXE_MOVE) {
+        boolean step = (ev->type == FXE_MOVE);
+
+        int lim = step ? 2 : 1;
+
+        dx = ev->x - ev->sx, dy = ev->y - ev->sy;
+        if (!isok(ev->x, ev->y) || dx < -lim || dx > lim || dy < -lim
+            || dy > lim)
+            return;
+        /* (a step is reported before the map is redrawn, so whether
+           something is drawn there is checked when painting) */
+        if (!step && !glyph_is_monster(fxv_glyph_at(ev->x, ev->y)->glyph))
+            return;
+        /* the previous step's slide is over: this one takes over.  When
+           steps come faster than a slide lasts (a held key, quick taps,
+           running), the slides keep to that pace instead, or are skipped
+           when very quick, so the picture never trails behind the
+           creature */
+        {
+            /* where recent steps ended, and when */
+            static struct {
+                coordxy x, y;
+                fxv_ms at;
+            } last[16];
+            static int nlast;
+            long pace = -1;
+            int k;
+
+            for (i = 0; i < fxv.nanims; i++)
+                if (fxv.anims[i].kind == FXM_SLIDE
+                    && ((fxv.anims[i].x == ev->sx
+                         && fxv.anims[i].y == ev->sy)
+                        || (fxv.anims[i].x == ev->x
+                            && fxv.anims[i].y == ev->y)))
+                    fxv.anims[i].dur = 0;
+            if (step) {
+                for (k = 0; k < nlast; k++)
+                    if (last[k].x == ev->sx && last[k].y == ev->sy) {
+                        long since = (long) (now - last[k].at);
+
+                        if (since >= 0 && since < FXV_STEP_MS)
+                            pace = since;
+                        break;
+                    }
+                if (k == nlast) { /* a walker not seen lately */
+                    if (nlast < SIZE(last)) {
+                        k = nlast++;
+                    } else { /* reuse the slot stepped longest ago */
+                        for (k = 0, i = 1; i < nlast; i++)
+                            if ((long) (last[i].at - last[k].at) < 0)
+                                k = i;
+                    }
+                }
+                last[k].x = ev->x, last[k].y = ev->y, last[k].at = now;
+            }
+            if (step && pace >= 0) {
+                /* afterimages of earlier steps go too */
+                for (i = 0; i < fxv.nanims; i++)
+                    if (fxv.anims[i].kind == FXM_GHOST
+                        && fxv.anims[i].x == ev->sx
+                        && fxv.anims[i].y == ev->sy)
+                        fxv.anims[i].dur = 0;
+                if (pace < 35)
+                    return; /* too quick to show: just be there */
+                fxv_step_pace = (fxv_ms) pace;
+            }
+        }
+        /* shakes and recoils of the knocked creature are left behind */
+        for (i = 0; i < fxv.nanims; i++)
+            if (fxv.anims[i].kind == FXM_SHAKE
+                && fxv.anims[i].x == ev->sx && fxv.anims[i].y == ev->sy)
+                fxv.anims[i].dur = 0;
+        a = fxv_new_anim();
+        a->kind = FXM_SLIDE;
+        a->x = ev->x, a->y = ev->y;
+        a->dx = dx, a->dy = dy;
+        a->tile = fxv_glyph_at(ev->x, ev->y)->gm.tileidx; /* refreshed in paint */
+        a->hit = !step;
+        a->strength = 0;
+        a->start = now;
+        a->dur = step ? (max(abs(dx), abs(dy)) > 1 ? FXV_STEP_MS + 40
+                                                   : FXV_STEP_MS)
+                      : FXV_SLIDE_MS;
+        if (step && fxv_step_pace) /* keeping up with quick steps */
+            a->dur = min(a->dur, fxv_step_pace);
+        if (step && iflags.fx_afterimage && !fxv_step_pace) {
+            int k;
+            short tile = a->tile;
+
+            for (k = 1; k <= 1; k++) { /* one afterimage */
+                a = fxv_new_anim();
+                a->kind = FXM_GHOST;
+                a->x = ev->x, a->y = ev->y;
+                a->dx = dx, a->dy = dy;
+                a->tile = tile;
+                a->hit = FALSE;
+                a->strength = k; /* 1 = nearest the creature */
+                a->start = now;
+                a->dur = FXV_GHOST_MS;
+            }
+        }
+        fxv_step_pace = 0;
+        fxv_start_timer();
+    } else if (ev->type == FXE_DEATH) {
+        fxv_ms start = now;
+
+        if (!isok(ev->x, ev->y)
+            || !glyph_is_monster(fxv_glyph_at(ev->x, ev->y)->glyph))
+            return; /* nothing of it drawn there to fade */
+        /* follow the killing blow's shake on this square */
+        for (i = fxv.nanims - 1; i >= 0; i--) {
+            struct fxv_anim *l = &fxv.anims[i];
+
+            if (l->kind == FXM_SHAKE && l->x == ev->x && l->y == ev->y
+                && (long) (l->start + l->dur - now) > 0) {
+                start = l->start + l->dur / 2;
+                l->dur = l->dur / 2; /* the death shake takes over */
+                break;
+            }
+        }
+        a = fxv_new_anim();
+        a->kind = FXM_DEATH;
+        a->x = ev->x, a->y = ev->y;
+        a->dx = a->dy = 0;
+        a->tile = fxv_glyph_at(ev->x, ev->y)->gm.tileidx;
+        a->hit = TRUE;
+        a->strength = 60;
+        a->start = start;
+        a->dur = FXV_DEATH_MS;
+        fxv_start_timer();
+    }
+}
+
+/* explosions, earthquakes and very big hits on the hero shake the whole
+   map view (tiles and ASCII alike); never while running */
+void
+fxv_shake_event(const struct fx_event *ev)
+{
+    fxv_ms now = fxv_now();
+    int s = 0;
+
+    if (!iflags.fx_screen_shake || (ev->flags & FXF_BULK))
+        return;
+    if (ev->type == FXE_SHAKE) {
+        s = ev->amount;
+    } else if (ev->type == FXE_EXPLODE && !(ev->flags & FXF_UNSEEN)) {
+        s = 30 + ev->amount * 2; /* harder for bigger blasts */
+    } else if (ev->type == FXE_DAMAGE && (ev->flags & FXF_HERO_TARGET)
+               && ev->hpmax > 0 && ev->amount * 4 >= ev->hpmax) {
+        /* lost a quarter or more of max HP in one go: a small jolt */
+        s = 15 + min(25, (ev->amount * 100 / ev->hpmax - 25) / 2);
+    }
+    if (s <= 0)
+        return;
+    s = min(s, 100);
+    /* don't cut a bigger shake that's still going short */
+    if (fxv.shake_dur && (long) (fxv.shake_start + fxv.shake_dur - now) > 0
+        && fxv.shake_strength >= s)
+        return;
+    fxv.shake_start = now;
+    fxv.shake_strength = s;
+    fxv.shake_dur = 280 + 4 * s;
+    fxv_start_timer();
+}
+
+/* where an animating creature is drawn this frame: offset from its
+   square in tiles, and how solid; FALSE if it isn't showing. Slides
+   and afterimages take the tile drawn there now (a step is reported
+   before the map catches up), so a->tile is refreshed for them. */
+boolean
+fxv_anim_pose(struct fxv_anim *a, fxv_ms now, float *offx, float *offy,
+              int *alpha)
+{
+    long age = (long) (now - a->start);
+    const glyph_info *here = fxv_glyph_at(a->x, a->y);
+    double p, e;
+
+    *offx = *offy = 0.0f;
+    *alpha = 255;
+    if (age < 0 || age >= (long) a->dur)
+        return FALSE;
+    p = (double) age / a->dur;
+    switch (a->kind) {
+    case FXM_GHOST: {
+        unsigned long au = here->fxauras;
+        int nghost = (au & (FXA_VERYFAST | FXA_FAST)) ? 1 : 0;
+        double back, lag;
+
+        /* the hero's intrinsic speed is too common to trail every step:
+           only extra speed (boots, potion, spell) shows */
+        if (a->x == u.ux && a->y == u.uy && !(au & FXA_VERYFAST))
+            nghost = 0;
+        if (!iflags.fx_afterimage)
+            return FALSE; /* turned off since the step */
+        if (a->strength > nghost || !glyph_is_monster(here->glyph))
+            return FALSE;
+        /* where the creature is on its slide right now (the slide runs
+           FXV_STEP_MS); a single afterimage hangs back along the way it
+           came (further when very fast), then slowly catches up as it
+           fades */
+        lag = (au & FXA_VERYFAST) ? 0.95 : 0.75;
+        back = 1.0 - min(1.0, (double) age / FXV_STEP_MS);
+        back = back * back * (3 - 2 * back);
+        back = min(1.0, back + lag * (1.0 - p) * (1.0 - p));
+        *offx = (float) (-a->dx * back);
+        *offy = (float) (-a->dy * back);
+        *alpha = (int) (125 * (1.0 - p));
+        a->tile = here->gm.tileidx;
+        return TRUE;
+    }
+    case FXM_DEATH: {
+        /* a small shake, then fade out over what's left there (its
+           corpse, items or bare floor) */
+        double fadefrom = 0.35;
+        double amp = 0.06 * (p < fadefrom ? 1.0 - p / fadefrom : 0.0);
+
+        *alpha = (p < fadefrom)
+                     ? 255
+                     : (int) (255 * (1.0 - (p - fadefrom) / (1 - fadefrom)));
+        *offx = (float) (amp * sin(p * 2 * 3.14159265358979 * 9.0));
+        return TRUE;
+    }
+    case FXM_LUNGE: {
+        /* quick push out, softer ease back */
+        double reach = a->hit ? 0.28 : 0.2;
+
+        e = (p < 0.4) ? (p / 0.4) : (1.0 - (p - 0.4) / 0.6);
+        e = e * e * (3 - 2 * e); /* smoothstep */
+        *offx = (float) (a->dx * reach * e);
+        *offy = (float) (a->dy * reach * e);
+        return TRUE;
+    }
+    case FXM_SLIDE:
+        /* whatever is drawn there now; nothing to slide if it's gone */
+        if (!glyph_is_monster(here->glyph))
+            return FALSE;
+        a->tile = here->gm.tileidx;
+        /* from the square it left, easing in (steps a bit softer) */
+        e = 1.0 - p;
+        e = a->hit ? e * e : e * e * (3 - 2 * e);
+        *offx = (float) (-a->dx * e);
+        *offy = (float) (-a->dy * e);
+        return TRUE;
+    default: { /* FXM_SHAKE: decaying side-to-side jitter */
+        double amp = 0.04 + 0.10 * a->strength / 100.0;
+        /* plus a push away from the blow, springing back */
+        double push = (0.06 + 0.10 * a->strength / 100.0) * (1.0 - p)
+                      * (1.0 - p);
+
+        *offx = (float) (amp * sin(p * 2 * 3.14159265358979 * 3.0) * (1.0 - p)
+                         + a->dx * push);
+        *offy = (float) (amp * 0.3 * sin(p * 2 * 3.14159265358979 * 5.0)
+                             * (1.0 - p)
+                         + a->dy * push);
+        return TRUE;
+    }
+    }
+}
+
+/* where the whole view sits this frame, in tile widths; FALSE when it
+   isn't shaking */
+boolean
+fxv_shake_at(fxv_ms now, float *dx, float *dy)
+{
+    long age;
+    double p, amp, decay;
+
+    *dx = *dy = 0.0f;
+    if (!fxv.shake_dur)
+        return FALSE;
+    age = (long) (now - fxv.shake_start);
+    if (age < 0 || age >= (long) fxv.shake_dur) {
+        fxv.shake_dur = 0;
+        return FALSE;
+    }
+    p = (double) age / fxv.shake_dur;
+    decay = (1.0 - p) * (1.0 - p);
+    amp = 0.06 + 0.22 * fxv.shake_strength / 100.0;
+    /* two unrelated frequencies per axis so it rattles, not sways */
+    *dx = (float) (amp * decay
+                   * (0.7 * sin(age * 0.105) + 0.3 * sin(age * 0.297)));
+    *dy = (float) (amp * 0.8 * decay
+                   * (0.6 * cos(age * 0.083) + 0.4 * sin(age * 0.241)));
+    return TRUE;
+}
+
+/* how far the hero is drawn off its square while sliding in from the
+   last one, in tiles (things that follow the hero move with it) */
+void
+fxv_hero_slide(fxv_ms now, float *offx, float *offy)
+{
+    int i;
+
+    *offx = *offy = 0.0f;
+    for (i = 0; i < fxv.nanims; i++) {
+        struct fxv_anim *a = &fxv.anims[i];
+        long age = (long) (now - a->start);
+        double e;
+
+        if (a->kind != FXM_SLIDE || a->x != u.ux || a->y != u.uy
+            || age < 0 || age >= (long) a->dur)
+            continue;
+        /* the same easing fxv_anim_pose() uses */
+        e = 1.0 - (double) age / a->dur;
+        e = a->hit ? e * e : e * e * (3 - 2 * e);
+        *offx = (float) (-a->dx * e);
+        *offy = (float) (-a->dy * e);
+        return;
+    }
+}
+
+/* is the creature on <x,y> in the middle of an animation (other than
+   leaving an afterimage)? */
+boolean
+fxv_square_busy(int x, int y, fxv_ms now)
+{
+    int i;
+
+    for (i = 0; i < fxv.nanims; i++) {
+        struct fxv_anim *a = &fxv.anims[i];
+        long age = (long) (now - a->start);
+
+        if (a->x == x && a->y == y && a->kind != FXM_GHOST && age >= 0
+            && age < (long) a->dur)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* stop all motion at once; TRUE if anything was moving */
+boolean
+fxv_snap(void)
+{
+    if (!fxv.nanims && !fxv.shake_dur)
+        return FALSE;
+    fxv.nanims = 0;
+    fxv.anim_seq = 0;
+    fxv.shake_dur = 0;
+    return TRUE;
 }
