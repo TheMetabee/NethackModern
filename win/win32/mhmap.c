@@ -228,6 +228,7 @@ static short fx_floor_tile(PNHMapWindow, int, int);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect);
 static int fx_spun_x = -1, fx_spun_y = -1; /* a missile was drawn turned */
+static DWORD fx_step_pace; /* a step following quickly on the last */
 
 #if (VERSION_MAJOR < 4) && (VERSION_MINOR < 4) && (PATCHLEVEL < 2)
 static void nhglyph2charcolor(short glyph, uchar *ch, int *color);
@@ -1763,6 +1764,7 @@ mswin_fx_event(const struct fx_event *ev)
     PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
     struct fx_floater *f;
     DWORD now = GetTickCount();
+
     int i;
 
     if (!data)
@@ -2082,6 +2084,7 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
         fx_start_timer(data);
     } else if (ev->type == FXE_KNOCKBACK || ev->type == FXE_MOVE) {
         boolean step = (ev->type == FXE_MOVE);
+
         int lim = step ? 2 : 1;
 
         dx = ev->x - ev->sx, dy = ev->y - ev->sy;
@@ -2092,13 +2095,60 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
            something is drawn there is checked when painting) */
         if (!step && !glyph_is_monster(data->map[ev->x][ev->y].glyph))
             return;
-        /* the previous step's slide is over: this one takes over */
-        for (i = 0; i < data->nanims; i++)
-            if (data->anims[i].kind == FXM_SLIDE
-                && ((data->anims[i].x == ev->sx && data->anims[i].y == ev->sy)
-                    || (data->anims[i].x == ev->x
-                        && data->anims[i].y == ev->y)))
-                data->anims[i].dur = 0;
+        /* the previous step's slide is over: this one takes over.  When
+           steps come faster than a slide lasts (a held key, quick taps,
+           running), the slides keep to that pace instead, or are skipped
+           when very quick, so the picture never trails behind the
+           creature */
+        {
+            /* where recent steps ended, and when */
+            static struct {
+                coordxy x, y;
+                DWORD at;
+            } last[16];
+            static int nlast;
+            long pace = -1;
+            int k;
+
+            for (i = 0; i < data->nanims; i++)
+                if (data->anims[i].kind == FXM_SLIDE
+                    && ((data->anims[i].x == ev->sx
+                         && data->anims[i].y == ev->sy)
+                        || (data->anims[i].x == ev->x
+                            && data->anims[i].y == ev->y)))
+                    data->anims[i].dur = 0;
+            if (step) {
+                for (k = 0; k < nlast; k++)
+                    if (last[k].x == ev->sx && last[k].y == ev->sy) {
+                        long since = (long) (now - last[k].at);
+
+                        if (since >= 0 && since < FX_STEP_MS)
+                            pace = since;
+                        break;
+                    }
+                if (k == nlast) { /* a walker not seen lately */
+                    if (nlast < SIZE(last)) {
+                        k = nlast++;
+                    } else { /* reuse the slot stepped longest ago */
+                        for (k = 0, i = 1; i < nlast; i++)
+                            if ((long) (last[i].at - last[k].at) < 0)
+                                k = i;
+                    }
+                }
+                last[k].x = ev->x, last[k].y = ev->y, last[k].at = now;
+            }
+            if (step && pace >= 0) {
+                /* afterimages of earlier steps go too */
+                for (i = 0; i < data->nanims; i++)
+                    if (data->anims[i].kind == FXM_GHOST
+                        && data->anims[i].x == ev->sx
+                        && data->anims[i].y == ev->sy)
+                        data->anims[i].dur = 0;
+                if (pace < 35)
+                    return; /* too quick to show: just be there */
+                fx_step_pace = (DWORD) pace;
+            }
+        }
         /* shakes and recoils of the knocked creature are left behind */
         for (i = 0; i < data->nanims; i++)
             if (data->anims[i].kind == FXM_SHAKE
@@ -2115,7 +2165,9 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
         a->dur = step ? (max(abs(dx), abs(dy)) > 1 ? FX_STEP_MS + 40
                                                    : FX_STEP_MS)
                       : FX_SLIDE_MS;
-        if (step && iflags.fx_afterimage) {
+        if (step && fx_step_pace) /* keeping up with quick steps */
+            a->dur = min(a->dur, (int) fx_step_pace);
+        if (step && iflags.fx_afterimage && !fx_step_pace) {
             int k;
             short tile = a->tile;
 
@@ -2131,6 +2183,7 @@ fx_motion_event(PNHMapWindow data, const struct fx_event *ev)
                 a->dur = FX_GHOST_MS;
             }
         }
+        fx_step_pace = 0;
         fx_start_timer(data);
     } else if (ev->type == FXE_DEATH) {
         DWORD start = now;

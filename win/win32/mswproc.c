@@ -763,10 +763,23 @@ mswin_get_nh_event(void)
 
     logDebug("mswin_get_nh_event()\n");
 
-    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) != 0) {
-        if (!TranslateAccelerator(msg.hwnd, GetNHApp()->hAccelTable, &msg)) {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+    {
+        /* NetHack Modern: catch up on what's waiting, but only briefly.
+           While anything on the map is animating (a message fading in, a
+           glide, a flickering lamp) each repaint asks for another, so the
+           queue is never empty; looping until it was held the game up for
+           as long as the animation lasted, and the screen fell behind the
+           keys.  Animations carry on while the game waits for a key. */
+        DWORD start = GetTickCount();
+
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) != 0) {
+            if (!TranslateAccelerator(msg.hwnd, GetNHApp()->hAccelTable,
+                                      &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+            if (GetTickCount() - start >= 10)
+                break;
         }
     }
     return;
