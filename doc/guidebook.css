@@ -1,0 +1,353 @@
+/* Print stylesheet for Guidebook.pdf (see make_guidebook_pdf.py). */
+
+:root {
+  --ink: #1d1a17;
+  --muted: #6b625a;
+  --accent: #8a1c1c;          /* dried-blood red for headings */
+  --gold: #a07a1f;
+  --rule: #d8cfc4;
+  --panel: #f6f2ec;
+  --panel-edge: #e4dbcf;
+  --serif: "Palatino Linotype", "Book Antiqua", Palatino, "Georgia", serif;
+  --mono: "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Courier New", monospace;
+}
+
+@page {
+  size: A4;
+  margin: 22mm 20mm 20mm 22mm;
+  @top-left {
+    content: "A Guide to the Mazes of Menace";
+    font: italic 8.5pt var(--serif);
+    color: var(--muted);
+    vertical-align: bottom;
+    padding-bottom: 3mm;
+  }
+  @top-right {
+    content: "NetHack 5.0";
+    font: italic 8.5pt var(--serif);
+    color: var(--muted);
+    vertical-align: bottom;
+    padding-bottom: 3mm;
+  }
+  @bottom-center {
+    content: counter(page);
+    font: 9pt var(--serif);
+    color: var(--muted);
+  }
+}
+@page :first {
+  @top-left { content: none; }
+  @top-right { content: none; }
+  @bottom-center { content: none; }
+}
+
+* { box-sizing: border-box; }
+
+html {
+  font-family: var(--serif);
+  font-size: 10.5pt;
+  line-height: 1.45;
+  color: var(--ink);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+body { margin: 0; }
+
+p {
+  margin: 0 0 0.55em;
+  text-align: justify;
+  hyphens: auto;
+  orphans: 3;
+  widows: 3;
+}
+
+a { color: inherit; text-decoration: none; }
+a[href^="http"] { color: var(--accent); }
+
+code, .verb {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  hyphens: none;
+}
+p code, dd code, li code, td code {
+  background: var(--panel);
+  border-radius: 2px;
+  padding: 0 0.15em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+em code, code em { font-style: italic; }
+.rm, .md { font-family: var(--serif); font-style: normal; font-weight: normal; }
+.nowrap { white-space: nowrap; }
+.gap { display: inline-block; width: 12mm; }
+
+/* ---- title page ---------------------------------------------------- */
+
+.titlepage {
+  height: 250mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  break-after: page;
+}
+.titleart {
+  font-family: var(--mono);
+  font-size: 13pt;
+  line-height: 1.15;
+  color: #8f877e;
+  margin: 0 0 14mm;
+  padding: 0;
+  background: none;
+  border: none;
+}
+.titleart .hero { color: var(--accent); font-weight: bold; }
+.titleart .dog { color: #9a6b2f; }
+.titleart .gold, .titleart .item { color: var(--gold); }
+.titleart .stairs { color: var(--ink); font-weight: bold; }
+.titleart .door { color: #7a5a3a; }
+.titleart .corr { color: #b9b0a6; }
+.titlepage h1 {
+  font-size: 30pt;
+  font-weight: normal;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  margin: 0;
+  color: var(--ink);
+  font-feature-settings: "smcp";
+}
+.titlepage .subtitle {
+  font-size: 15pt;
+  font-style: italic;
+  margin: 3mm 0 0;
+  text-align: center;
+  color: var(--accent);
+}
+.titlepage .rule {
+  width: 60mm;
+  height: 0;
+  border-top: 1px solid var(--rule);
+  margin: 10mm auto;
+  position: relative;
+}
+.titlepage .rule::after {
+  content: "\2666";
+  position: absolute;
+  left: 50%;
+  top: -0.62em;
+  transform: translateX(-50%);
+  background: white;
+  padding: 0 2mm;
+  color: var(--gold);
+  font-size: 10pt;
+}
+.titlepage .author { text-align: center; margin: 0; color: var(--ink); }
+.titlepage .date { text-align: center; margin: 5mm 0 0; color: var(--muted); }
+
+/* ---- table of contents --------------------------------------------- */
+
+.toc { break-after: page; }
+.toc .toc-title {
+  break-before: auto;
+  border: none;
+  margin-top: 0;
+}
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc li.sec { margin: 0 0 1.5mm; break-inside: avoid; }
+.toc li.sec > a {
+  display: flex;
+  font-size: 11.5pt;
+  font-weight: bold;
+  color: var(--ink);
+}
+.toc a { display: flex; align-items: baseline; }
+.toc .n { width: 9mm; color: var(--accent); flex: none; }
+.toc .t { flex: none; max-width: 85%; }
+.toc .dots {
+  flex: 1;
+  margin: 0 1.5mm;
+  border-bottom: 1px dotted #c9bfb3;
+  transform: translateY(-0.25em);
+}
+.toc .pg {
+  flex: none;
+  min-width: 2.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.toc ol.sub {
+  columns: 2;
+  column-gap: 10mm;
+  margin: 0.6mm 0 0 9mm;
+  font-size: 9pt;
+  line-height: 1.32;
+  color: var(--muted);
+}
+.toc ol.sub li { break-inside: avoid; margin: 0; }
+.toc ol.sub .pg { color: var(--ink); }
+
+/* ---- headings ------------------------------------------------------ */
+
+/* Line-height must stay roomy: if Palatino's ascenders poke above the line
+   box of a heading at the top of a page, Chrome lists that heading twice
+   in the PDF bookmarks ("IntroductionIntroduction"). */
+h2, h3, h4 {
+  font-weight: normal;
+  break-after: avoid;
+  line-height: 1.5;
+}
+h2 {
+  break-before: page;
+  font-size: 21pt;
+  color: var(--ink);
+  font-feature-settings: "smcp";
+  margin: 0 0 5mm;
+  padding-bottom: 1.5mm;
+  border-bottom: 1.5px solid var(--accent);
+}
+h2 .secno {
+  color: var(--accent);
+  margin-right: 0.2em;
+}
+h3 {
+  font-size: 13.5pt;
+  color: var(--accent);
+  margin: 6mm 0 2.5mm;
+}
+h4 {
+  font-size: 11.5pt;
+  font-style: italic;
+  margin: 4mm 0 1.5mm;
+}
+
+/* Keep a heading with at least the start of what follows it. */
+h2 + *, h3 + *, h4 + * { break-before: avoid; }
+
+/* ---- spacing helpers ----------------------------------------------- */
+
+.smallskip { height: 1.5mm; }
+.medskip { height: 3mm; }
+.bigskip { height: 6mm; }
+.pagebreak { break-after: page; }
+.keep { break-inside: avoid; }
+.center { text-align: center; margin: 2mm 0 4mm; }
+.center p { text-align: center; }
+.keep .center p { font-style: italic; color: var(--muted); font-size: 9.5pt; }
+
+/* ---- screens and code blocks --------------------------------------- */
+
+pre.screen {
+  font-family: var(--mono);
+  font-size: 8.6pt;
+  line-height: 1.3;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-left: 3px solid var(--gold);
+  border-radius: 3px;
+  padding: 2.5mm 4mm;
+  margin: 2mm 0 3.5mm;
+  white-space: pre;
+  overflow: hidden;
+  break-inside: avoid;
+}
+.center pre.screen { display: inline-block; text-align: left; }
+
+/* ---- description lists --------------------------------------------- */
+
+/* Block layout rather than grid: Chrome will not split a grid across
+   pages, which pushed whole lists onto the next page. */
+dl.desc {
+  --lw: 30mm;
+  --gap: 4mm;
+  margin: 2mm 0 4mm;
+}
+dl.desc > .item {
+  position: relative;
+  padding-left: calc(var(--lw) + var(--gap));
+  margin-bottom: 1.6mm;
+  min-height: 1.45em;   /* an item with no text still holds its label */
+}
+dl.desc dt {
+  position: absolute;
+  left: 0;
+  width: var(--lw);
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+dl.desc dt code { font-size: 0.92em; }
+dl.desc dd { margin: 0; }
+dl.desc dd > p:last-child { margin-bottom: 0; }
+dl.desc > .item.long dt {
+  position: static;
+  width: auto;
+  margin-left: calc(-1 * (var(--lw) + var(--gap)));
+  break-after: avoid;
+}
+
+dl.desc.compact { --gap: 3mm; margin-left: 6mm; }
+dl.desc.compact > .item { margin-bottom: 0.6mm; }
+dl.desc.compact dt { text-align: right; font-weight: normal; }
+dl.desc.compact.tt dt code { background: none; padding: 0; color: var(--accent); }
+dl.desc.compact dd { text-align: left; }
+
+/* A list inside a list item gets less air. */
+dd dl.desc { margin: 1mm 0 2mm; }
+
+ul, ol { margin: 1mm 0 3mm; padding-left: 6mm; }
+li { margin-bottom: 1mm; }
+li > p { margin: 0; }
+
+.numbox {
+  display: inline-block;
+  min-width: 1.6em;
+  text-align: right;
+  margin-right: 0.3em;
+  background: none !important;
+}
+
+/* ---- tables -------------------------------------------------------- */
+
+table { border-collapse: collapse; margin: 2mm auto 4mm; }
+table.tab td { padding: 0.4mm 3mm; text-align: left; }
+table.tab td.ac { text-align: center; }
+table.tab td.ar { text-align: right; }
+table.verbtab td { padding: 0 6mm; }
+table.verbtab code.verb {
+  white-space: pre;
+  background: none;
+  font-size: 10pt;
+  line-height: 1.25;
+}
+table.tab { font-size: 9.5pt; break-inside: avoid; }
+
+table.symbols {
+  width: 100%;
+  font-size: 8.8pt;
+  line-height: 1.3;
+  margin: 3mm 0;
+}
+table.symbols caption {
+  font-feature-settings: "smcp";
+  font-size: 11pt;
+  color: var(--accent);
+  margin-bottom: 2mm;
+}
+table.symbols th {
+  text-align: left;
+  font-weight: bold;
+  border-bottom: 1.5px solid var(--accent);
+  padding: 1mm 2mm;
+}
+table.symbols td { padding: 0.5mm 2mm; border-bottom: 0.5px solid #eee7de; }
+table.symbols tr:nth-child(even) td { background: #faf7f3; }
+table.symbols td:first-child {
+  font-family: var(--mono);
+  font-weight: bold;
+  width: 14mm;
+  text-align: center;
+  white-space: pre;
+}
+table.symbols td:nth-child(2) { font-family: var(--mono); width: 62mm; }
+table.symbols tr { break-inside: avoid; }
+table.symbols thead { display: table-header-group; }
