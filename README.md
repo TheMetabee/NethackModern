@@ -1,5 +1,7 @@
 # NetHack Modern
 
+<img width="3227" height="1825" alt="image" src="https://github.com/user-attachments/assets/13bf635f-0137-4cbe-af8b-fea718783347" />
+
 https://github.com/user-attachments/assets/0be7569d-6417-454a-9a92-c5f842572008
 
 NetHack Modern is a fork of **NetHack 5.0** that changes how the game
