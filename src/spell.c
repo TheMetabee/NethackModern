@@ -1417,6 +1417,7 @@ spelleffects(int spell_otyp, boolean atme, boolean force)
     otyp = pseudo->otyp;
     skill = spell_skilltype(otyp);
     role_skill = P_SKILL(skill);
+    fx_cast(otyp, 0); /* NetHack Modern: the casting flourish */
 
     switch (otyp) {
     /*
@@ -1602,6 +1603,7 @@ spelleffects(int spell_otyp, boolean atme, boolean force)
         obfree(pseudo, (struct obj *) 0);
         return ECMD_OK;
     }
+    fx_cast(otyp, 1); /* NetHack Modern: its effect's look */
 
     /* gain skill for successful cast */
     if (!force)

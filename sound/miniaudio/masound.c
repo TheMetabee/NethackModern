@@ -1290,6 +1290,11 @@ ma_beam_hit(int look, float vol, float pan)
            se_klick / se_klunk from the core instead) */
         { WAN_MAKE_INVISIBLE, "wand_invis", 0.5f }, /* shimmer fading out */
         { WAN_UNDEAD_TURNING, "wand_undead", 0.5f }, /* holy chord */
+        /* spells no wand does */
+        { SPE_DRAIN_LIFE, "wpn_layer_drain", 0.7f },
+        { SPE_HEALING, "potion_heal", 0.5f },
+        { SPE_EXTRA_HEALING, "potion_heal", 0.55f },
+        { SPE_STONE_TO_FLESH, "spell_flesh", 0.6f },
     };
     int i;
 
@@ -1660,6 +1665,103 @@ ma_volume_preview(void)
     ma_play_named("pickup_coin", 0.7f, 1.0f, 0.0f);
 }
 
+/* casting a spell (FXE_CAST): a shimmer as it's cast, pitched by school,
+   with a launch of its own for the attack spells; then, for the spells
+   that act like a scroll or potion (or have nothing else that sounds),
+   the sound of its effect */
+static void
+ma_cast(const struct fx_event *ev)
+{
+    /* attack, healing, divination, enchantment, clerical, escape, matter */
+    static const float school_pitch[7] = { 0.9f,  1.12f, 1.25f, 1.05f,
+                                           0.95f, 1.18f, 0.82f };
+    const char *name = 0;
+    float v = 0.55f, pitch = ma_frand(0.97f, 1.03f);
+
+    if (ev->adtyp == 0) {
+        int k = ev->amount - P_ATTACK_SPELL;
+
+        ma_play_named("spell_cast", 0.45f,
+                      school_pitch[(k < 0 || k > 6) ? 0 : k]
+                          * ma_frand(0.97f, 1.03f),
+                      0.0f);
+        switch (ev->otyp) {
+        case SPE_MAGIC_MISSILE:
+            name = "spell_missile", v = 0.6f;
+            break;
+        case SPE_FIREBALL:
+            name = "scroll_fire", v = 0.55f;
+            break;
+        case SPE_CONE_OF_COLD:
+            name = "spell_cold", v = 0.6f;
+            break;
+        case SPE_CHAIN_LIGHTNING:
+            name = "spell_chain", v = 0.7f;
+            break;
+        case SPE_FINGER_OF_DEATH:
+            name = "wpn_layer_drain", v = 0.8f, pitch *= 0.7f;
+            break;
+        default:
+            return;
+        }
+        ma_play_named(name, v, pitch, 0.0f);
+        return;
+    }
+
+    switch (ev->otyp) {
+    case SPE_REMOVE_CURSE:
+        name = "scroll_holy";
+        break;
+    case SPE_IDENTIFY:
+        name = "scroll_identify";
+        break;
+    case SPE_MAGIC_MAPPING:
+        name = "scroll_mapping";
+        break;
+    case SPE_CONFUSE_MONSTER:
+        name = "scroll_confuse";
+        break;
+    case SPE_CHARM_MONSTER:
+        name = "scroll_taming";
+        break;
+    case SPE_CAUSE_FEAR:
+        name = "spell_fear";
+        break;
+    case SPE_HASTE_SELF:
+        name = "wand_speed", v = 0.5f;
+        break;
+    case SPE_INVISIBILITY:
+        name = "wand_invis", v = 0.45f;
+        break;
+    case SPE_LEVITATION:
+        name = "spell_levitate";
+        break;
+    case SPE_RESTORE_ABILITY:
+        name = "spell_restore", v = 0.5f;
+        break;
+    case SPE_CURE_BLINDNESS:
+    case SPE_CURE_SICKNESS:
+        name = "unihorn_cure";
+        if (ev->otyp == SPE_CURE_SICKNESS)
+            pitch *= 0.9f;
+        break;
+    case SPE_PROTECTION:
+        name = "spell_protect";
+        break;
+    case SPE_JUMPING:
+        if (ev->sx == ev->x && ev->sy == ev->y)
+            return; /* it didn't get off the ground */
+        name = "spell_jump", v = 0.7f;
+        break;
+    case SPE_CLAIRVOYANCE:
+        name = "spell_clairvoyance";
+        break;
+    default:
+        return;
+    }
+    ma_play_named(name, v, pitch, 0.0f);
+}
+
 static void
 ma_fx_event(const struct fx_event *ev)
 {
@@ -1880,6 +1982,9 @@ ma_fx_event(const struct fx_event *ev)
         break;
     case FXE_ENGRAVE:
         ma_engrave(ev);
+        break;
+    case FXE_CAST:
+        ma_cast(ev);
         break;
     case FXE_IMPACT:
         /* striking / force bolt: a force whump; a softer, higher one

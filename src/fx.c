@@ -192,6 +192,8 @@ fx_typename(int type)
         return "SUMMON";
     case FXE_ENGRAVE:
         return "ENGRAVE";
+    case FXE_CAST:
+        return "CAST";
     }
     return "?";
 }
@@ -903,6 +905,11 @@ fx_wand_look(int otyp)
     case SPE_DIG:
     case WAN_DIGGING: /* the digging beam is drawn anyway */
         return WAN_DIGGING;
+    case SPE_DRAIN_LIFE:
+    case SPE_HEALING:
+    case SPE_EXTRA_HEALING:
+    case SPE_STONE_TO_FLESH:
+        return otyp; /* no wand does these: they have looks of their own */
     }
     if (otyp < FIRST_OBJECT || otyp >= NUM_OBJECTS
         || objects[otyp].oc_class != WAND_CLASS)
@@ -1092,6 +1099,37 @@ fx_detected(int kind)
     ev.flags = FXF_HERO_TARGET;
     ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
     ev.amount = n;
+    fx_emit(&ev);
+}
+
+/* the hero casts spell 'otyp': 'stage' 0 as it's cast (a flourish in the
+   colour of its school), 1 once it has taken effect, for the spells that
+   act like a scroll or potion (or have no other event) to show their
+   look; a familiar is shown arriving like any summoned monster */
+void
+fx_cast(int otyp, int stage)
+{
+    static coordxy cast_x, cast_y;
+    static unsigned cast_mark;
+    struct fx_event ev;
+
+    if (!fx_active())
+        return;
+    if (stage == 0) {
+        cast_x = u.ux, cast_y = u.uy;
+        cast_mark = fx_summon_begin();
+    } else if (otyp == SPE_CREATE_FAMILIAR) {
+        fx_summon_end(cast_mark, FXS_ARCANE);
+    }
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_CAST;
+    ev.flags = fx_bulk_flag() | FXF_HERO_SOURCE | FXF_HERO_TARGET
+               | (Blind ? FXF_UNSEEN : 0U);
+    ev.x = u.ux, ev.y = u.uy;
+    ev.sx = stage ? cast_x : u.ux, ev.sy = stage ? cast_y : u.uy;
+    ev.adtyp = stage;
+    ev.otyp = otyp;
+    ev.amount = spell_skilltype(otyp);
     fx_emit(&ev);
 }
 

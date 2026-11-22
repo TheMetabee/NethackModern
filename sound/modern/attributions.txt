@@ -580,3 +580,25 @@ with ffmpeg for this project unless noted:
   eng_crumble_1.wav      <- Kenney Impact impactMining_001/003 (pitched up)
                             over decaying crackle: a wand turning to dust
   eng_wipe_1..2.wav      <- two pink-noise swishes: wiping a message out
+
+Spells (spell_*.wav), synthesized for this project with ffmpeg unless
+noted; spells that work like a scroll, potion or wand reuse those sounds:
+  spell_cast_1..3.wav    <- a short rising shimmer over a soft whoosh,
+                            pitched by school when played
+  spell_chain_1..2.wav   <- wpn_layer_shock_1..2 and TomMusic Spell Impact
+                            1, 3 (pitched up) over a crackle of noise
+  spell_cold_1..2.wav    <- TomMusic Spells/Ice Throw 1..2
+  spell_missile_1..2.wav <- TomMusic Spell Impact 2..3 (pitched up) and a
+                            fast whoosh
+  spell_fear_1.wav       <- a low, wavering, dissonant swell over
+                            wpn_layer_drain_1 (reversed, low-passed)
+  spell_levitate_1.wav   <- rising air and a soft climbing tone
+  spell_protect_1.wav    <- a soft major pad and Chisper success-chime
+                            (low-passed, with echo)
+  spell_jump_1..2.wav    <- TomMusic Footsteps/Stone Jump and Stone Land
+                            around a whoosh
+  spell_clairvoyance_1.wav <- Chisper gem-sparkle (low-passed) over a
+                            hollow, distant pad with echo
+  spell_restore_1.wav    <- Chisper level-up-magic-harp (trimmed)
+  spell_flesh_1.wav      <- wpn_stone_hit_1 (Kenney Impact) crack and
+                            use_grease_1 (AHTu20, pitched down)

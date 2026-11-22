@@ -143,6 +143,12 @@ flash and a ring, coloured by where it came from: violet for create
 monster, fire and smoke for demons, gold for angels, a dusty burst for
 insects and snakes. Gas clouds billow.
 
+Every spell has a look and a sound. Casting draws motes of the spell
+school's colour into your hands. A spell that works like a wand, scroll
+or potion then plays that item's effect. The rest have their own: a
+golden haze for protection, a sweep of sight for clairvoyance, dust where
+you jump and land, and crackling sparks for chain lightning.
+
 ![A volley of fireballs bursting among a ring of orcs, with orange fire damage numbers](docs/modern/media/fireball.gif)
 
 ### Lasting status effects (auras)
