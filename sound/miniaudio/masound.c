@@ -16,9 +16,38 @@
  * sound/modern/attributions.txt. Missing files are simply silent.
  */
 
+#ifdef _WIN32
 #include "win32api.h"
+#endif
 #include "hack.h"
 #include "nhminiaudio.h"
+
+/* the little that differs between Windows and Unix */
+#ifdef _WIN32
+#define MA_PATHMAX MAX_PATH
+#define MA_SEP '\\'
+typedef DWORD ma_ms;
+#define ma_ticks() GetTickCount()
+#define ma_file_exists(p) (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES)
+#else
+#include <stdint.h>
+#include <time.h>
+#include <unistd.h>
+#define MA_PATHMAX 1024
+#define MA_SEP '/'
+typedef uint32_t ma_ms; /* milliseconds; wraps like GetTickCount() */
+
+static ma_ms
+ma_ticks(void)
+{
+    struct timespec ts;
+
+    (void) clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (ma_ms) ((unsigned long) ts.tv_sec * 1000UL
+                    + (unsigned long) (ts.tv_nsec / 1000000L));
+}
+#define ma_file_exists(p) (access((p), R_OK) == 0)
+#endif
 
 #ifdef SND_LIB_MINIAUDIO
 
@@ -78,11 +107,11 @@ static const struct ma_semap ma_se_names[] = {
 
 static struct {
     boolean ok;
-    char dir[MAX_PATH];             /* ends with a backslash */
+    char dir[MA_PATHMAX];             /* ends with a separator  */
     int nvar[MAG_COUNT];            /* variations found per group */
-    DWORD last_play[MAG_COUNT];     /* GetTickCount() of last play */
+    ma_ms last_play[MAG_COUNT];     /* ma_ticks() of last play */
     signed char se_nvar[number_of_se_entries]; /* -1 = not looked yet */
-    DWORD last_se;                  /* last time a core effect played */
+    ma_ms last_se;                  /* last time a core effect played */
     unsigned long seed;             /* private RNG, never the game's */
 } ma;
 
@@ -103,32 +132,61 @@ ma_frand(float lo, float hi)
 static boolean
 ma_dir_has_samples(const char *dir)
 {
-    char path[MAX_PATH + 32];
+    char path[MA_PATHMAX + 32];
 
     Snprintf(path, sizeof path, "%s%s_1.wav", dir, ma_group_names[MAG_HIT]);
-    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+    return ma_file_exists(path);
 }
 
 /* find the samples folder: <exedir>\sounds\, or, when running straight
-   out of the build tree (binary\<cfg>\<platform>), the source copy */
+   out of the build tree (binary\<cfg>\<platform>), the source copy.
+   On Unix: <exedir>/sounds/, the source copy beside the playground,
+   then the current directory (the game's own, once it has chdir()ed)
+   and the installed data directory, if one was built in. */
 static boolean
 ma_find_dir(void)
 {
-    char exe[MAX_PATH], *p;
+    char exe[MA_PATHMAX], *p;
+#ifdef _WIN32
     static const char *const tries[] = {
         "sounds\\", "..\\..\\..\\sound\\modern\\"
     };
+#else
+    static const char *const tries[] = {
+        "sounds/", "../sound/modern/"
+    };
+    static const char *const fixed[] = {
+        "sounds/",
+#ifdef NHMA_DATADIR
+        NHMA_DATADIR "/",
+#endif
+    };
+    ssize_t len;
+#endif
     int i;
 
+#ifdef _WIN32
     if (!GetModuleFileNameA(NULL, exe, sizeof exe))
-        return FALSE;
-    if ((p = strrchr(exe, '\\')) != 0)
+        exe[0] = '\0';
+#else
+    len = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    exe[(len > 0) ? len : 0] = '\0';
+#endif
+    if ((p = strrchr(exe, MA_SEP)) != 0) {
         p[1] = '\0';
-    for (i = 0; i < SIZE(tries); i++) {
-        Snprintf(ma.dir, sizeof ma.dir, "%s%s", exe, tries[i]);
+        for (i = 0; i < SIZE(tries); i++) {
+            Snprintf(ma.dir, sizeof ma.dir, "%s%s", exe, tries[i]);
+            if (ma_dir_has_samples(ma.dir))
+                return TRUE;
+        }
+    }
+#ifndef _WIN32
+    for (i = 0; i < SIZE(fixed); i++) {
+        Snprintf(ma.dir, sizeof ma.dir, "%s", fixed[i]);
         if (ma_dir_has_samples(ma.dir))
             return TRUE;
     }
+#endif
     ma.dir[0] = '\0';
     return FALSE;
 }
@@ -137,9 +195,9 @@ static void
 ma_init_nhsound(void)
 {
     int g, v;
-    char path[MAX_PATH + 32];
+    char path[MA_PATHMAX + 32];
 
-    ma.seed = (unsigned long) GetTickCount() | 1UL;
+    ma.seed = (unsigned long) ma_ticks() | 1UL;
     (void) memset(ma.se_nvar, -1, sizeof ma.se_nvar);
 #ifdef SND_LIB_WINDSOUND
     if (windsound_procs.sound_init_nhsound)
@@ -155,7 +213,7 @@ ma_init_nhsound(void)
             for (v = 1; v <= MA_MAXVAR; v++) {
                 Snprintf(path, sizeof path, "%s%s_%d.wav", ma.dir,
                          ma_group_names[g], v);
-                if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+                if (!ma_file_exists(path))
                     break;
             }
             ma.nvar[g] = v - 1;
@@ -188,8 +246,8 @@ ma_exit_nhsound(const char *reason)
 static void
 ma_play_group(enum ma_group g, float volume, float pitch, float pan)
 {
-    char path[MAX_PATH + 32], note[MAX_PATH + 96];
-    DWORD now = GetTickCount();
+    char path[MA_PATHMAX + 32], note[MA_PATHMAX + 96];
+    ma_ms now = ma_ticks();
     int started;
 
     if (!ma.ok || !ma.nvar[g] || !iflags.sounds || Deaf) {
@@ -218,7 +276,7 @@ ma_play_group(enum ma_group g, float volume, float pitch, float pan)
 static struct {
     const char *name;
     int nvar;
-    DWORD last;
+    ma_ms last;
 } ma_named[MA_MAXNAMED];
 static int ma_nnamed = 0;
 
@@ -227,7 +285,7 @@ static int ma_nnamed = 0;
 static int
 ma_named_find(const char *name)
 {
-    char path[MAX_PATH + 64];
+    char path[MA_PATHMAX + 64];
     int i, n;
 
     for (i = 0; i < ma_nnamed; i++)
@@ -237,7 +295,7 @@ ma_named_find(const char *name)
         return -1;
     for (n = 1; n <= MA_MAXVAR; n++) {
         Snprintf(path, sizeof path, "%s%s_%d.wav", ma.dir, name, n);
-        if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+        if (!ma_file_exists(path))
             break;
     }
     ma_named[i].name = name; /* callers pass string literals */
@@ -259,9 +317,9 @@ ma_named_count(const char *name)
 static void
 ma_play_named(const char *name, float volume, float pitch, float pan)
 {
-    char path[MAX_PATH + 64];
+    char path[MA_PATHMAX + 64];
     int i;
-    DWORD now = GetTickCount();
+    ma_ms now = ma_ticks();
 
     if (!ma.ok || !iflags.sounds || Deaf)
         return;
@@ -273,7 +331,7 @@ ma_play_named(const char *name, float volume, float pitch, float pan)
     Snprintf(path, sizeof path, "%s%s_%u.wav", ma.dir, name,
              1 + ma_rand((unsigned) ma_named[i].nvar));
     {
-        char note[MAX_PATH + 96];
+        char note[MA_PATHMAX + 96];
         int started = nhma_play(path, volume, pitch, pan);
 
         Snprintf(note, sizeof note, "miniaudio: play %s vol=%.2f -> %s",
@@ -451,7 +509,7 @@ ma_pickup(int oclass, int otyp, boolean drop, int weight)
 {
     const char *name;
     float pitch = ma_frand(0.95f, 1.08f);
-    static DWORD drop_window;
+    static ma_ms drop_window;
     static int drop_count;
 
     switch (oclass) {
@@ -602,7 +660,7 @@ ma_pickup(int oclass, int otyp, boolean drop, int weight)
         break;
     }
     if (drop) {
-        DWORD now = GetTickCount();
+        ma_ms now = ma_ticks();
 
         /* dropping many things at once: a few sounds, not a pile-up */
         if (now - drop_window > 150)
@@ -992,7 +1050,7 @@ static struct ma_msgsnd {
     const char *pat;
     const char *snd;    /* sample set: <snd>_N.wav */
     float vol, pitch;
-    DWORD last;         /* per-pattern cooldown */
+    ma_ms last;         /* per-pattern cooldown */
 } ma_msgsnds[] = {
     /* death */
     { "You die*", "msg_death", 0.9f, 1.0f, 0 },
@@ -1190,7 +1248,7 @@ static struct ma_msgsnd {
 static void
 ma_message(const char *text)
 {
-    DWORD now = GetTickCount();
+    ma_ms now = ma_ticks();
     int i;
 
     if (!ma.ok || !text)
@@ -1439,7 +1497,7 @@ ma_engrave(const struct fx_event *ev)
     boolean first = (ev->otyp != 0);
 
     /* the message that goes with it ("You hear drilling!") is covered */
-    ma.last_se = GetTickCount();
+    ma.last_se = ma_ticks();
     switch (ev->adtyp) {
     case FXG_STROKE: {
         float v = first ? 0.6f : 0.45f;
@@ -1625,7 +1683,7 @@ ma_level_ambience(float *vol)
 static void
 ma_ambience_update(unsigned fade_ms)
 {
-    char path[MAX_PATH + 64];
+    char path[MA_PATHMAX + 64];
     const char *name;
     float vol;
 
@@ -1637,7 +1695,7 @@ ma_ambience_update(unsigned fade_ms)
     }
     name = ma_level_ambience(&vol);
     Snprintf(path, sizeof path, "%s%s.flac", ma.dir, name);
-    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) {
+    if (!ma_file_exists(path)) {
         nhma_ambience((const char *) 0, 0.0f, 1500);
         return;
     }
@@ -1649,7 +1707,7 @@ ma_ambience_update(unsigned fade_ms)
 static void
 ma_death_music(void)
 {
-    char path[MAX_PATH + 64];
+    char path[MA_PATHMAX + 64];
 
     if (!ma.ok)
         return;
@@ -1657,7 +1715,7 @@ ma_death_music(void)
     if (!iflags.fx_death_music || !iflags.sounds)
         return;
     Snprintf(path, sizeof path, "%smusic_death.mp3", ma.dir);
-    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+    if (!ma_file_exists(path))
         return;
     nhma_music(path, 0.7f, 1500, 0);
 }
@@ -1903,8 +1961,8 @@ ma_fx_event(const struct fx_event *ev)
     case FXE_APPEAR:
         if (ev->mndx == PM_WIZARD_OF_YENDOR) {
             /* he teleports constantly; don't let it become a laugh track */
-            static DWORD last_laugh = 0;
-            DWORD now = GetTickCount();
+            static ma_ms last_laugh = 0;
+            ma_ms now = ma_ticks();
 
             if (!last_laugh || now - last_laugh > 8000) {
                 last_laugh = now;
@@ -2030,7 +2088,7 @@ ma_fx_event(const struct fx_event *ev)
     case FXE_UNIHORN:
         /* cured / nothing / cursed; the cure messages that follow
            ("You feel somewhat better") don't play over it */
-        ma.last_se = GetTickCount();
+        ma.last_se = ma_ticks();
         if (ev->amount > 0)
             ma_play_named("unihorn_cure", 0.55f, ma_frand(0.97f, 1.03f), 0.0f);
         else if (ev->amount == 0)
@@ -2118,7 +2176,7 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
     case se_door_open:
     case se_door_unlock_and_open:
         if (ma.ok && ma.nvar[MAG_DOOR_OPEN]) {
-            ma.last_se = GetTickCount();
+            ma.last_se = ma_ticks();
             ma_play_group(MAG_DOOR_OPEN, max(vol, 0.6f),
                           ma_frand(0.95f, 1.05f), 0.0f);
             return;
@@ -2126,7 +2184,7 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
         break;
     case se_door_close:
         if (ma.ok && ma.nvar[MAG_DOOR_CLOSE]) {
-            ma.last_se = GetTickCount();
+            ma.last_se = ma_ticks();
             ma_play_group(MAG_DOOR_CLOSE, max(vol, 0.6f),
                           ma_frand(0.95f, 1.05f), 0.0f);
             return;
@@ -2138,14 +2196,14 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
     /* any other effect with a se_<name>_N.wav sample of its own */
     if (ma.ok && seid > se_zero_invalid && seid < number_of_se_entries
         && iflags.sounds && !Deaf) {
-        char path[MAX_PATH + 64];
+        char path[MA_PATHMAX + 64];
         int n;
 
         if (ma.se_nvar[seid] < 0) {
             for (n = 1; n <= MA_MAXVAR; n++) {
                 Snprintf(path, sizeof path, "%sse_%s_%d.wav", ma.dir,
                          ma_se_names[seid].name, n);
-                if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+                if (!ma_file_exists(path))
                     break;
             }
             ma.se_nvar[seid] = (signed char) (n - 1);
@@ -2154,9 +2212,9 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
             Snprintf(path, sizeof path, "%sse_%s_%u.wav", ma.dir,
                      ma_se_names[seid].name,
                      1 + ma_rand((unsigned) ma.se_nvar[seid]));
-            ma.last_se = GetTickCount();
+            ma.last_se = ma_ticks();
             {
-                char note[MAX_PATH + 96];
+                char note[MA_PATHMAX + 96];
                 int started = nhma_play(path, max(vol, 0.3f),
                                         ma_frand(0.95f, 1.05f), 0.0f);
 

@@ -111,7 +111,10 @@ main(int argc, char *argv[])
      * activate_chosen_soundlib() gets called. Qt will place its own
      * hint if qt_init_nhwindow() is invoked.
      */
-#if defined(SND_LIB_MACSOUND)
+#if defined(SND_LIB_MINIAUDIO)
+    soundlibchoice = soundlib_miniaudio; /* NetHack Modern */
+    assign_soundlib(soundlibchoice);
+#elif defined(SND_LIB_MACSOUND)
     soundlibchoice = soundlib_macsound;
     assign_soundlib(soundlibchoice);
 #endif

@@ -19,6 +19,25 @@
 #LFLAGS += -lm
 #endif   # WANT_TESTSOUND
 
+# NetHack Modern: the miniaudio soundlib (sound/miniaudio/), the same one
+# NetHackW uses.  miniaudio finds ALSA/PulseAudio/PipeWire (or CoreAudio)
+# at run time, so no audio development packages are needed to build it.
+# The samples in sound/modern/ are installed to $(INSTDIR)/sounds/.
+ifdef WANT_MINIAUDIO
+HAVE_SNDLIB = 1
+NEEDS_SND_USERSOUNDS = 1
+NEEDS_SND_SEAUTOMAP = 1
+SNDCFLAGS+= -DSND_LIB_MINIAUDIO -I../sound/miniaudio
+MASOUNDOBJ = masound.o nhminiaudio.o
+SNDLIBOBJ += $(MASOUNDOBJ)
+LIBS += -lpthread -lm -ldl
+ifdef MAKEFILE_TOP
+POSTINSTALL+= mkdir -p $(INSTDIR)/sounds && \
+		cp sound/modern/*.wav sound/modern/*.flac sound/modern/*.mp3 \
+		   sound/modern/attributions.txt $(INSTDIR)/sounds/;
+endif   # MAKEFILE_TOP
+endif   # WANT_MINIAUDIO
+
 ifeq "$(HAVE_SNDLIB)" "1"
 ifeq "$(WANT_SPEECH)" "1"
 SNDCFLAGS+= -DSND_SPEECH

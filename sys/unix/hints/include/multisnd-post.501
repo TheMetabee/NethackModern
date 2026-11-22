@@ -8,8 +8,20 @@ ifeq "$(HAVE_SNDLIB)" "1"
 #	in Objective-C; this relies on $(CC) recognizing the filename suffix
 #	and knowing how to handle that; clang on MacOS does, both when
 #	masquerading as gcc and when invoked as itself
-$(TARGETPFX)$(SNDLIBOBJ): $(SNDLIBSRC) $(HACK_H)
+ifdef SNDLIBSRC
+$(TARGETPFX)$(filter-out $(MASOUNDOBJ),$(SNDLIBOBJ)): $(SNDLIBSRC) $(HACK_H)
 	$(CC) $(CFLAGS) -c -o $@ $(SNDLIBSRC)
+endif  # SNDLIBSRC
+
+ifdef WANT_MINIAUDIO
+$(TARGETPFX)masound.o: ../sound/miniaudio/masound.c \
+		../sound/miniaudio/nhminiaudio.h $(HACK_H)
+	$(CC) $(CFLAGS) -c -o $@ ../sound/miniaudio/masound.c
+# third-party miniaudio: built with its own defaults, no warnings
+$(TARGETPFX)nhminiaudio.o: ../sound/miniaudio/nhminiaudio.c \
+		../sound/miniaudio/nhminiaudio.h ../sound/miniaudio/miniaudio.h
+	$(CC) $(CFLAGS) -w -c -o $@ ../sound/miniaudio/nhminiaudio.c
+endif  # WANT_MINIAUDIO
 
 ifeq "$(NEEDS_WAV)" "1"
 
