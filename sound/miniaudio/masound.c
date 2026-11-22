@@ -482,7 +482,8 @@ ma_pickup(int oclass, int otyp, boolean drop, int weight)
         pitch = ma_frand(1.2f, 1.4f);
         break;
     case WEAPON_CLASS:
-        name = "pickup_weapon";
+        /* a mattock is a pick-axe for two hands */
+        name = (otyp == DWARVISH_MATTOCK) ? "pickup_pick" : "pickup_weapon";
         break;
     case ARMOR_CLASS:
         name = "pickup_armor";
@@ -491,6 +492,8 @@ ma_pickup(int oclass, int otyp, boolean drop, int weight)
         name = "pickup_food";
         break;
     case TOOL_CLASS:
+        /* each kind of tool sounds like what it's made of; tools much
+           alike share a sound */
         switch (otyp) {
         case SACK:
         case OILSKIN_SACK:
@@ -504,6 +507,90 @@ ma_pickup(int oclass, int otyp, boolean drop, int weight)
         case SADDLE:
             name = "pickup_food"; /* the leather pouch sound */
             pitch = ma_frand(0.85f, 0.95f);
+            break;
+        case LARGE_BOX:
+        case CHEST:
+        case ICE_BOX:
+            name = "pickup_box"; /* a heavy wooden case */
+            pitch = ma_frand(0.96f, 1.04f);
+            break;
+        case SKELETON_KEY:
+        case LOCK_PICK:
+        case TIN_OPENER:
+        case STETHOSCOPE:
+        case TIN_WHISTLE:
+        case MAGIC_WHISTLE:
+            name = "pickup_key"; /* a jingle of small metal */
+            break;
+        case CREDIT_CARD:
+        case EXPENSIVE_CAMERA:
+        case MAGIC_MARKER:
+            name = "pickup_gadget"; /* light plastic */
+            break;
+        case TALLOW_CANDLE:
+        case WAX_CANDLE:
+            name = "pickup_candle"; /* soft wax */
+            break;
+        case BRASS_LANTERN:
+        case OIL_LAMP:
+        case MAGIC_LAMP:
+        case CANDELABRUM_OF_INVOCATION:
+            name = "pickup_lamp"; /* a metal handle */
+            break;
+        case MIRROR:
+        case LENSES:
+            name = "pickup_glass";
+            break;
+        case CRYSTAL_BALL:
+            name = "pickup_crystal"; /* a heavy glass sphere */
+            pitch = ma_frand(0.97f, 1.03f);
+            break;
+        case TINNING_KIT:
+        case CAN_OF_GREASE:
+            name = "pickup_tin";
+            break;
+        case FIGURINE:
+            name = "pickup_figurine"; /* a little stone piece */
+            break;
+        case LAND_MINE:
+        case BEARTRAP:
+            name = "pickup_trap"; /* heavy iron and chain */
+            pitch = ma_frand(0.97f, 1.03f);
+            break;
+        case WOODEN_FLUTE:
+        case MAGIC_FLUTE:
+            name = "pickup_flute"; /* hollow wood */
+            break;
+        case WOODEN_HARP:
+        case MAGIC_HARP:
+            name = "pickup_harp"; /* a wooden frame, strings brushed */
+            pitch = 1.0f; /* keep the strings in tune */
+            break;
+        case TOOLED_HORN:
+        case FROST_HORN:
+        case FIRE_HORN:
+        case HORN_OF_PLENTY:
+        case UNICORN_HORN:
+            name = "pickup_horn"; /* bone, dull and hollow */
+            break;
+        case BUGLE:
+            name = "pickup_brass";
+            break;
+        case BELL:
+        case BELL_OF_OPENING:
+            name = "pickup_bell"; /* a small chime */
+            pitch = ma_frand(0.98f, 1.02f);
+            break;
+        case LEATHER_DRUM:
+        case DRUM_OF_EARTHQUAKE:
+            name = "pickup_drum"; /* taut skin and a low boom */
+            break;
+        case PICK_AXE:
+            name = "pickup_pick"; /* a heavy haft and iron head */
+            pitch = ma_frand(0.97f, 1.03f);
+            break;
+        case GRAPPLING_HOOK:
+            name = "pickup_hook"; /* iron, and the rope after it */
             break;
         default:
             name = "pickup_tool";

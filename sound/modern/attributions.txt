@@ -42,6 +42,37 @@ RPG Audio by Kenney Vleugels (www.kenney.nl)
   pickup_armor_1..2.wav  <- clothBelt.ogg, clothBelt2.ogg
   pickup_food_1..2.wav   <- handleSmallLeather.ogg, handleSmallLeather2.ogg
   pickup_tool_1..3.wav   <- metalPot1..3.ogg
+  pickup_pick_1..2.wav   <- pickup_weapon_1..2 (beltHandle1..2.ogg) mixed
+                            with Kenney Impact Sounds impactWood_medium_001,
+                            003 and impactMetal_heavy_002, 004 (CC0),
+                            pitched down and muffled: lifting a pick-axe
+  pickup_<tool>_1..2.wav <- one sound per kind of tool, mixed from Kenney
+                            Impact Sounds (CC0; impact*_000..004 as
+                            noted) with some of the RPG Audio sounds
+                            above, pitched, filtered and levelled
+                            (scratchpad script toolsnd.py):
+     box       impactWood_heavy + impactPlank_medium (boxes, chests)
+     key       impactMetal_light x2 + metalClick (keys, lock picks,
+               tin openers, stethoscopes, whistles)
+     gadget    impactPlate_light + impactGeneric_light (credit card,
+               camera, magic marker)
+     candle    impactSoft_medium + impactWood_light (candles)
+     lamp      metalLatch + impactMetal_medium (lamps, lanterns,
+               the Candelabrum)
+     glass     impactGlass_light + impactSoft_medium (mirror, lenses)
+     crystal   impactGlass_heavy + impactSoft_heavy (crystal ball)
+     tin       impactTin_medium (tinning kit, can of grease)
+     figurine  impactPlate_medium + impactMining
+     trap      impactMetal_heavy + impactMetal_light x2 (beartrap,
+               land mine)
+     flute     impactWood_light, with a short echo
+     harp      impactWood_medium + three synthesized plucked strings
+     horn      impactWood_medium, low-passed, short echo (horns,
+               unicorn horn)
+     brass     impactMetal_medium with a short ring (bugle)
+     bell      impactBell_heavy, pitched up (bell, Bell of Opening)
+     drum      impactSoft_heavy + a synthesized low boom (drums)
+     hook      impactMetal_medium + cloth (grappling hook)
   pickup_bag_1..4.wav    <- cloth1..4.ogg (low-passed; bags, sacks,
                             towels, blindfolds)
   pickup_1.wav           <- dropLeather.ogg
