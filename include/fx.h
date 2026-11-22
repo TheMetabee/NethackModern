@@ -16,7 +16,7 @@
 #define FX_H
 
 /* the NetHack Modern release, shown on the title screen and in About */
-#define MODERN_VERSION_STRING "0.1.4"
+#define MODERN_VERSION_STRING "0.1.5"
 
 /* one-shot events */
 enum fx_event_type {
