@@ -6,7 +6,7 @@ name: modern-linux
 
 on:
   push:
-    branches: [ main, linux-build ]
+    branches: [ '**' ]
   pull_request:
   workflow_dispatch:
 
