@@ -63,6 +63,9 @@ level ambience, lighting, tilesets and pointing projectiles.
 - Build a new **SDL** front end that draws with the GPU and reads the
   same event stream, for smooth scaling, blending and lighting at any
   tile size. Qt is the fallback.
+- **Linux and macOS ports are a work in progress.** Today everything is
+  in the Windows tiles interface. The SDL front end is the way to bring
+  the same effects and sound to Linux and macOS.
 
 [`docs/modern/ROADMAP.md`](docs/modern/ROADMAP.md) has the full history
 and design notes.
@@ -227,7 +230,9 @@ in the Game menu and as options.
 
 ## Playing
 
-NetHack Modern is Windows-only for now. Download the release zip, unpack
+NetHack Modern runs on Windows for now; Linux and macOS ports are a work
+in progress (see [Status and plans](#status-and-plans)). Download the
+release zip, unpack
 it anywhere and run **`NetHackW.exe`**. Keep the `sounds` folder next to
 the exe: that's where the game looks for its sounds.
 
