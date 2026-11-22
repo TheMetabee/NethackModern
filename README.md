@@ -239,6 +239,19 @@ the exe: that's where the game looks for its sounds.
 Everything else plays like NetHack. The [NetHack Guidebook](doc/) and
 the in-game help (`?`) cover the game itself.
 
+### Keys
+
+| Key | What it does |
+|---|---|
+| Ctrl+= or Ctrl+numpad + | zoom the map in |
+| Ctrl+- or Ctrl+numpad - | zoom the map out |
+| Ctrl+mouse wheel | zoom in or out |
+| Ctrl+0 | back to the default zoom, which fits the whole level |
+| Ctrl+P | scroll back through earlier messages |
+
+Every other key is NetHack's own. The menu bar lists each command with
+its key, so it doubles as a key reference.
+
 ### Remembered settings
 
 Any `fx_` option you change while playing, from the menu bar or the
