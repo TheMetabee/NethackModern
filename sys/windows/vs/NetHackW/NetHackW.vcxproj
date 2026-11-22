@@ -278,6 +278,7 @@
     <ClCompile Include="$(WinWin32Dir)mhinput.c" />
     <ClCompile Include="$(WinWin32Dir)mhmain.c" />
     <ClCompile Include="$(WinWin32Dir)mhmap.c" />
+    <ClCompile Include="$(WinShareDir)fxview.c" />
     <ClCompile Include="$(WinWin32Dir)mhmenu.c" />
     <ClCompile Include="$(WinWin32Dir)mhmsgwnd.c" />
     <ClCompile Include="$(WinWin32Dir)mhrip.c" />

@@ -19,6 +19,7 @@
 #include "mhtheme.h"
 #include "mhmsgwnd.h"
 #include "mhend.h"
+#include "fxview.h"
 
 #define NHMAP_FONT_NAME TEXT("Terminal")
 #define NHMAP_TTFONT_NAME TEXT("Consolas")
@@ -61,7 +62,6 @@ static const double fx_zooms[] = { 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0 };
 #define FX_LUNGE_MS 150     /* out ~40%, back ~60% */
 #define FX_LUNGE_GAP 110    /* successive lunges in one turn queue up */
 #define FX_SHAKE_MS 220
-#define FX_MAXPART 1000     /* particles alive at once */
 
 #define TILEBMP_X(ntile) \
     ((ntile % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X)
@@ -145,18 +145,7 @@ typedef struct mswin_nethack_map_window {
     boolean fxTimerOn;
     DWORD shakeStart, shakeDur; /* screen shake (0 dur = none) */
     int shakeStrength;          /* 1..100 */
-    /* NetHack Modern: particles for rays and explosions, in map squares
-       (so scrolling carries them along) */
-    struct fx_part {
-        float x, y;             /* position, squares (centre = +0.5) */
-        float vx, vy;           /* squares per second */
-        float grav;             /* added to vy per second (< 0 rises) */
-        float drag;             /* fraction of speed kept per second */
-        float size;             /* radius, fraction of a tile */
-        COLORREF c0, c1;        /* colour when born, when it dies */
-        DWORD start, life;
-    } parts[FX_MAXPART];
-    int nparts;
+    /* particles for rays and explosions are shared: fxv.parts[] */
     boolean auraTimerOn;        /* lasting effects are being animated */
     boolean zoomSet;            /* the player chose zoomLevel (else auto) */
     int zoomLevel;              /* index into fx_zooms[] */
@@ -203,24 +192,6 @@ static void setGlyph(PNHMapWindow data, int i, int j,
 static void clearAll(PNHMapWindow data);
 static void mswin_fx_event(const struct fx_event *ev);
 static void fx_tick(PNHMapWindow data);
-static void fx_ray_particles(PNHMapWindow, int, int, int, int);
-static void fx_chain_sparks(PNHMapWindow, float, float, int, DWORD);
-static DWORD fx_chain_until; /* chain lightning is being cast */
-struct fx_pstyle;
-static struct fx_part *fx_spawn_at(PNHMapWindow, const struct fx_pstyle *,
-                                  boolean, float, float, float, float,
-                                  DWORD);
-static void fx_burst_particles(PNHMapWindow, int, int, int, int);
-static void fx_impact_particles(PNHMapWindow, int, int, boolean);
-static void fx_wand_particles(PNHMapWindow, const struct fx_event *);
-static void fx_dig_particles(PNHMapWindow, int, int);
-static void fx_teleport_particles(PNHMapWindow, const struct fx_event *);
-static void fx_summon_particles(PNHMapWindow, const struct fx_event *);
-static void fx_engrave_particles(PNHMapWindow, const struct fx_event *);
-static void fx_quaff_particles(PNHMapWindow, const struct fx_event *);
-static void fx_detect_particles(PNHMapWindow, const struct fx_event *);
-static void fx_scroll_particles(PNHMapWindow, const struct fx_event *);
-static void fx_cast_particles(PNHMapWindow, const struct fx_event *);
 COLORREF nhcolor_to_RGB(int);
 static void fx_paint_particles(PNHMapWindow, HDC);
 static void fx_paint_messages(PNHMapWindow, HDC);
@@ -918,9 +889,9 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
                 || msg_data->glyphinfo.glyph == cmap_to_glyph(S_cloud)))
             fx_aura_timer(data, TRUE); /* lasting effects, drifting gas */
         if (msg_data->glyphinfo.glyph == cmap_to_glyph(S_digbeam))
-            fx_dig_particles(data, msg_data->x, msg_data->y);
+            fxv_dig_particles(msg_data->x, msg_data->y);
         if (glyph_is_cmap_zap(msg_data->glyphinfo.glyph))
-            fx_ray_particles(data, msg_data->x, msg_data->y,
+            fxv_ray_particles(msg_data->x, msg_data->y,
                              (msg_data->glyphinfo.glyph - GLYPH_ZAP_OFF) >> 2,
                              (msg_data->glyphinfo.glyph - GLYPH_ZAP_OFF) & 3);
     } break;
@@ -1052,6 +1023,25 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
     } /* end switch(wParam) */
 }
 
+/* what the shared effects (fxview.h) need from this window: the clock,
+   and a repaint timer while something is moving */
+static void fx_start_timer(PNHMapWindow);
+
+static fxv_ms
+mswin_fxv_now(void)
+{
+    return (fxv_ms) GetTickCount();
+}
+
+static void
+mswin_fxv_start_timer(void)
+{
+    PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
+
+    if (data)
+        fx_start_timer(data);
+}
+
 /* on WM_CREATE */
 void
 onCreate(HWND hWnd, WPARAM wParam, LPARAM lParam)
@@ -1069,6 +1059,15 @@ onCreate(HWND hWnd, WPARAM wParam, LPARAM lParam)
     ZeroMemory(data, sizeof(NHMapWindow));
 
     data->hWnd = hWnd;
+
+    /* the shared effects (win/share/fxview.c) start empty too */
+    {
+        static const struct fxv_hooks hooks = { mswin_fxv_now,
+                                                mswin_fxv_start_timer };
+
+        fxv.nparts = 0;
+        fxv_init(&hooks);
+    }
 
     data->bAsciiMode = FALSE;
     data->cursorOn = TRUE;
@@ -1787,36 +1786,36 @@ mswin_fx_event(const struct fx_event *ev)
         InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
     fx_shake_event(data, ev);  /* the whole view */
     if (ev->type == FXE_EXPLODE && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
-        fx_burst_particles(data, ev->x, ev->y, ev->adtyp, ev->amount);
+        fxv_burst_particles(ev->x, ev->y, ev->adtyp, ev->amount);
     if (ev->type == FXE_WAND && !(ev->flags & FXF_BULK))
-        fx_wand_particles(data, ev);
+        fxv_wand_particles(ev);
     if (ev->type == FXE_TELEPORT && !(ev->flags & FXF_BULK))
-        fx_teleport_particles(data, ev);
+        fxv_teleport_particles(ev);
     if (ev->type == FXE_SUMMON)
-        fx_summon_particles(data, ev);
+        fxv_summon_particles(ev);
     if (ev->type == FXE_ENGRAVE)
-        fx_engrave_particles(data, ev);
+        fxv_engrave_particles(ev);
     if (ev->type == FXE_QUAFF && !(ev->flags & FXF_UNSEEN))
-        fx_quaff_particles(data, ev);
+        fxv_quaff_particles(ev);
     if (ev->type == FXE_READ && ev->adtyp == 1 && !(ev->flags & FXF_BULK))
-        fx_scroll_particles(data, ev);
+        fxv_scroll_particles(ev);
     if (ev->type == FXE_CAST && ev->otyp == SPE_CHAIN_LIGHTNING)
-        fx_chain_until = (ev->adtyp == 0) ? now + 4000 : 0;
+        fxv_chain_until = (ev->adtyp == 0) ? now + 4000 : 0;
     if (ev->type == FXE_CAST && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
-        fx_cast_particles(data, ev);
-    if (ev->type == FXE_DAMAGE && ev->adtyp == AD_ELEC && now < fx_chain_until
+        fxv_cast_particles(ev);
+    if (ev->type == FXE_DAMAGE && ev->adtyp == AD_ELEC && now < fxv_chain_until
         && iflags.fx_particles && isok(ev->x, ev->y)) {
         /* a creature caught in the chain: a burst of sparks on it */
-        fx_chain_sparks(data, ev->x + 0.5f, ev->y + 0.5f, 40, 0);
-        fx_chain_sparks(data, ev->x + 0.5f, ev->y + 0.5f, 18, 150);
-        fx_chain_sparks(data, ev->x + 0.5f, ev->y + 0.5f, 10, 320);
+        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 40, 0);
+        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 18, 150);
+        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 10, 320);
         fx_start_timer(data);
     }
     if ((ev->type == FXE_DETECT || ev->type == FXE_UNIHORN)
         && !(ev->flags & FXF_UNSEEN))
-        fx_detect_particles(data, ev);
+        fxv_detect_particles(ev);
     if (ev->type == FXE_IMPACT && !(ev->flags & FXF_BULK))
-        fx_impact_particles(data, ev->x, ev->y,
+        fxv_impact_particles(ev->x, ev->y,
                             (ev->flags & FXF_RESISTED) != 0);
     if (ev->type == FXE_STATUS) {
         if (iflags.fx_status_text)
@@ -2348,7 +2347,7 @@ mswin_map_fx_pump(int ms)
     DWORD start = GetTickCount();
 
     if (!data || (!data->nanims && !data->nfloaters && !data->shakeDur
-                  && !data->nparts)) {
+                  && !fxv.nparts)) {
         Sleep(ms);
         return;
     }
@@ -2365,1423 +2364,8 @@ mswin_map_fx_pump(int ms)
 
 /* ---- particles ---------------------------------------------------- */
 
-/* private generator: the game's RNG is never touched */
-static float
-fx_prand(void)
-{
-    static unsigned long seed = 0;
-
-    if (!seed)
-        seed = (unsigned long) GetTickCount() | 1UL;
-    seed = seed * 1103515245UL + 12345UL;
-    return (float) ((seed >> 8) & 0xFFFF) / 65535.0f;
-}
-
-static float
-fx_prange(float lo, float hi)
-{
-    return lo + (hi - lo) * fx_prand();
-}
-
-/* the look of one element's particles */
-struct fx_pstyle {
-    COLORREF c0, c1, c2;   /* two birth colours to pick between, death */
-    float speed;           /* squares/second */
-    float grav;            /* < 0 rises (embers), > 0 falls (frost, acid) */
-    float drag;
-    float size;
-    int life_lo, life_hi;  /* ms */
-};
-
-static const struct fx_pstyle *
-fx_part_style(int kind)
-{
-    static const struct fx_pstyle
-        fire = { RGB(255, 200, 70), RGB(255, 120, 20), RGB(90, 10, 0),
-                 1.3f, -1.6f, 0.25f, 0.075f, 380, 800 },
-        cold = { RGB(235, 250, 255), RGB(130, 200, 255), RGB(0, 30, 80),
-                 1.0f, 0.7f, 0.3f, 0.06f, 420, 850 },
-        elec = { RGB(255, 255, 210), RGB(255, 235, 60), RGB(60, 50, 0),
-                 3.2f, 0.0f, 0.05f, 0.045f, 160, 340 },
-        sleep = { RGB(210, 190, 255), RGB(150, 120, 255), RGB(30, 10, 70),
-                  0.6f, -0.3f, 0.4f, 0.065f, 500, 900 },
-        death = { RGB(150, 60, 170), RGB(90, 90, 90), RGB(10, 0, 15),
-                  0.9f, 0.0f, 0.3f, 0.07f, 400, 800 },
-        poison = { RGB(160, 230, 70), RGB(90, 170, 40), RGB(10, 35, 0),
-                   0.5f, -0.25f, 0.45f, 0.11f, 600, 1100 },
-        acid = { RGB(220, 255, 70), RGB(170, 230, 30), RGB(30, 45, 0),
-                 0.9f, 1.8f, 0.4f, 0.06f, 400, 800 },
-        magic = { RGB(255, 170, 255), RGB(190, 110, 255), RGB(40, 0, 60),
-                  1.4f, 0.0f, 0.2f, 0.055f, 300, 650 };
-
-    switch (kind) {
-    case AD_FIRE:
-        return &fire;
-    case AD_COLD:
-        return &cold;
-    case AD_ELEC:
-        return &elec;
-    case AD_SLEE:
-        return &sleep;
-    case AD_DISN:
-    case AD_DRLI:
-        return &death;
-    case AD_DRST:
-        return &poison;
-    case AD_ACID:
-        return &acid;
-    default:
-        return &magic;
-    }
-}
-
-static struct fx_part *
-fx_new_part(PNHMapWindow data)
-{
-    if (data->nparts >= FX_MAXPART) {
-        /* full: recycle the oldest */
-        memmove(&data->parts[0], &data->parts[1],
-                (FX_MAXPART - 1) * sizeof data->parts[0]);
-        data->nparts--;
-    }
-    return &data->parts[data->nparts++];
-}
-
-static void
-fx_spawn(PNHMapWindow data, const struct fx_pstyle *st, float x, float y,
-         float speed, float sizemul, float lifemul)
-{
-    struct fx_part *p = fx_new_part(data);
-    float ang = fx_prange(0.0f, 6.2831853f), v = speed * fx_prange(0.25f, 1.0f);
-
-    p->x = x, p->y = y;
-    p->vx = v * (float) cos(ang);
-    p->vy = v * (float) sin(ang);
-    p->grav = st->grav;
-    p->drag = st->drag;
-    p->size = st->size * sizemul * fx_prange(0.7f, 1.3f);
-    p->c0 = (fx_prand() < 0.5f) ? st->c0 : st->c1;
-    p->c1 = st->c2;
-    p->start = GetTickCount();
-    p->life = (DWORD) (lifemul * fx_prange((float) st->life_lo,
-                                           (float) st->life_hi));
-}
-
-/* zap glyph type -> damage kind (ZT_* order in zap.c) */
-static int
-fx_zap_kind(int zt)
-{
-    static const int kinds[NUM_ZAP] = { AD_MAGM, AD_FIRE, AD_COLD, AD_SLEE,
-                                        AD_DISN, AD_ELEC, AD_DRST, AD_ACID };
-
-    return (zt >= 0 && zt < NUM_ZAP) ? kinds[zt] : AD_MAGM;
-}
-
-/* a ray (wand, spell or breath) is being drawn through <x,y>; 'dir' is
-   the beam's shape: 0 |, 1 -, 2 \, 3 / */
-static void
-fx_ray_particles(PNHMapWindow data, int x, int y, int zt, int dir)
-{
-    /* unit vector across the beam, for each shape */
-    static const float across[4][2] = { { 1.0f, 0.0f }, { 0.0f, 1.0f },
-                                        { 0.7071f, -0.7071f },
-                                        { 0.7071f, 0.7071f } };
-    const struct fx_pstyle *st;
-    int i, n;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    st = fx_part_style(fx_zap_kind(zt));
-    n = (st == fx_part_style(AD_ELEC)) ? 8 : 6;
-    for (i = 0; i < n; i++) {
-        float along = fx_prange(-0.5f, 0.5f);
-        float side = (fx_prand() < 0.5f) ? -1.0f : 1.0f;
-        float sp = fx_prange(1.1f, 2.4f) * (0.6f + 0.4f * st->speed);
-        struct fx_part *p;
-
-        /* born on the beam's line, anywhere along this square */
-        fx_spawn(data, st,
-                 x + 0.5f + along * across[dir & 3][1],
-                 y + 0.5f - along * across[dir & 3][0], 0.0f, 1.0f, 1.2f);
-        p = &data->parts[data->nparts - 1];
-        /* thrown out to one side, with a little scatter */
-        p->vx = side * across[dir & 3][0] * sp + fx_prange(-0.3f, 0.3f);
-        p->vy = side * across[dir & 3][1] * sp + fx_prange(-0.3f, 0.3f);
-    }
-    if (st == fx_part_style(AD_ELEC) && GetTickCount() < fx_chain_until) {
-        /* chain lightning: the bolt keeps crackling while it's drawn */
-        DWORD at;
-
-        fx_chain_sparks(data, x + 0.5f, y + 0.5f, 12, 0);
-        for (at = 90; at <= 630; at += 90)
-            fx_chain_sparks(data, x + 0.5f + fx_prange(-0.4f, 0.4f),
-                            y + 0.5f + fx_prange(-0.4f, 0.4f), 3, at);
-    }
-    fx_start_timer(data);
-}
-
-/* chain lightning sparks: 'n' white-hot sparks flying off <fx,fy> in
-   every direction, 'delay' ms from now */
-static void
-fx_chain_sparks(PNHMapWindow data, float fx, float fy, int n, DWORD delay)
-{
-    const struct fx_pstyle *st = fx_part_style(AD_ELEC);
-    int i;
-
-    for (i = 0; i < n; i++) {
-        float a = fx_prange(0.0f, 6.2831853f), sp = fx_prange(2.5f, 5.5f);
-        struct fx_part *p = fx_spawn_at(data, st, FALSE, fx, fy, 0.0f, 0.7f,
-                                        delay);
-
-        p->c0 = (i % 3 == 0) ? RGB(255, 255, 255)
-                : (i % 3 == 1) ? RGB(150, 215, 255) : p->c0;
-        p->size = fx_prange(0.07f, 0.12f);
-        p->vx = sp * (float) cos(a);
-        p->vy = sp * (float) sin(a);
-        p->drag = 0.02f;
-        p->grav = 1.5f;
-        p->life = (DWORD) fx_prange(140, 300);
-    }
-}
-
-/* an explosion centred on <x,y>: a burst over its 3x3 area, more for
-   bigger blasts */
-static void
-fx_burst_particles(PNHMapWindow data, int x, int y, int kind, int dam)
-{
-    const struct fx_pstyle *st;
-    int i, n;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    st = fx_part_style(kind);
-    n = 70 + min(dam, 60) * 2;
-    for (i = 0; i < n; i++) {
-        /* most from the middle flying outward, some from the edges */
-        float r = fx_prange(0.0f, 0.6f), a = fx_prange(0.0f, 6.2831853f);
-
-        fx_spawn(data, st, x + 0.5f + r * (float) cos(a),
-                 y + 0.5f + r * (float) sin(a), st->speed * 1.9f, 1.15f,
-                 1.1f);
-    }
-    fx_start_timer(data);
-}
-
-/* a force strike (wand of striking, force bolt): a quick puff of pale
-   specks and a ring snapping outward; smaller and greyer when it bounced
-   off ("Boing!") */
-static void
-fx_impact_particles(PNHMapWindow data, int x, int y, boolean resisted)
-{
-    static const struct fx_pstyle
-        force = { RGB(245, 250, 255), RGB(170, 210, 255), RGB(10, 25, 60),
-                  5.5f, 0.0f, 0.02f, 0.075f, 260, 480 },
-        bounce = { RGB(210, 215, 225), RGB(150, 165, 190), RGB(15, 18, 25),
-                   3.2f, 0.0f, 0.02f, 0.06f, 200, 340 };
-    const struct fx_pstyle *st = resisted ? &bounce : &force;
-    int i, nspeck = resisted ? 18 : 48, nring = resisted ? 24 : 40;
-    float ringv = resisted ? 4.0f : 7.0f; /* reaches ~0.7 / ~1.3 squares */
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    /* a bright flash at the point of impact */
-    for (i = 0; i < (resisted ? 2 : 4); i++) {
-        struct fx_part *p;
-
-        fx_spawn(data, st, x + 0.5f, y + 0.5f, 0.0f, 1.0f, 1.0f);
-        p = &data->parts[data->nparts - 1];
-        p->vx = p->vy = 0.0f;
-        p->size = resisted ? 0.2f : 0.32f;
-        p->c0 = RGB(255, 255, 255);
-        p->life = resisted ? 110 : 150;
-    }
-    /* scattered specks */
-    for (i = 0; i < nspeck; i++)
-        fx_spawn(data, st, x + 0.5f + fx_prange(-0.15f, 0.15f),
-                 y + 0.5f + fx_prange(-0.15f, 0.15f), st->speed, 1.0f, 1.0f);
-    /* the ring: evenly spaced, all at the same speed, stopping short */
-    for (i = 0; i < nring; i++) {
-        struct fx_part *p;
-        float a = (6.2831853f * i) / nring + fx_prange(-0.05f, 0.05f);
-
-        fx_spawn(data, st, x + 0.5f, y + 0.5f, 0.0f, 0.8f, 1.0f);
-        p = &data->parts[data->nparts - 1];
-        p->vx = ringv * (float) cos(a);
-        p->vy = ringv * (float) sin(a);
-        p->drag = 0.004f; /* snaps out, then hangs */
-        p->c0 = st->c0;
-        p->size = st->size * 1.1f;
-        p->life = resisted ? 300 : 420;
-    }
-    fx_start_timer(data);
-}
-
-/* ---- wand effects ----------------------------------------------- */
-
-/* a bright colour of random hue (polymorph, wishing) */
-static COLORREF
-fx_rainbow(void)
-{
-    float h = fx_prange(0.0f, 6.0f), f = h - (float) (int) h;
-    int q = (int) (255 * (1.0f - f)), t = (int) (255 * f);
-
-    switch ((int) h) {
-    case 0:
-        return RGB(255, t, 60);
-    case 1:
-        return RGB(q, 255, 60);
-    case 2:
-        return RGB(60, 255, t);
-    case 3:
-        return RGB(60, q, 255);
-    case 4:
-        return RGB(t, 60, 255);
-    default:
-        return RGB(255, 60, q);
-    }
-}
-
-/* the look of each wand; 0 is an unidentified wand (plain) */
-static const struct fx_pstyle *
-fx_wand_style(int look, boolean *rainbow)
-{
-    static const struct fx_pstyle
-        plain = { RGB(225, 228, 238), RGB(175, 185, 205), RGB(20, 22, 30),
-                  0.8f, 0.0f, 0.2f, 0.05f, 250, 450 },
-        striking = { RGB(245, 250, 255), RGB(170, 210, 255), RGB(10, 25, 60),
-                     1.0f, 0.0f, 0.2f, 0.05f, 250, 450 },
-        locking = { RGB(215, 185, 120), RGB(160, 160, 178), RGB(30, 25, 15),
-                    1.0f, 0.8f, 0.25f, 0.055f, 300, 550 },
-        opening = { RGB(255, 225, 130), RGB(255, 190, 70), RGB(60, 35, 0),
-                    1.0f, -0.8f, 0.25f, 0.055f, 300, 600 },
-        invis = { RGB(240, 248, 255), RGB(190, 212, 238), RGB(0, 0, 0),
-                  0.7f, 0.0f, 0.1f, 0.045f, 200, 400 },
-        probing = { RGB(140, 255, 240), RGB(70, 200, 255), RGB(0, 30, 40),
-                    1.6f, 0.0f, 0.15f, 0.045f, 220, 420 },
-        slow = { RGB(110, 140, 255), RGB(70, 90, 210), RGB(5, 10, 40),
-                 0.5f, 0.4f, 0.4f, 0.06f, 600, 1000 },
-        speed = { RGB(230, 255, 130), RGB(255, 255, 185), RGB(40, 50, 0),
-                  2.8f, 0.0f, 0.05f, 0.045f, 180, 340 },
-        undead = { RGB(255, 250, 225), RGB(255, 230, 160), RGB(60, 50, 20),
-                   0.9f, -1.2f, 0.3f, 0.06f, 400, 750 },
-        cancel = { RGB(185, 105, 235), RGB(115, 75, 155), RGB(0, 0, 0),
-                   0.9f, 0.0f, 0.25f, 0.06f, 350, 650 },
-        poly = { RGB(255, 120, 120), RGB(120, 255, 120), RGB(20, 20, 20),
-                 1.2f, 0.0f, 0.2f, 0.055f, 350, 650 },
-        tele = { RGB(255, 120, 235), RGB(180, 100, 255), RGB(30, 0, 50),
-                 1.4f, 0.0f, 0.2f, 0.055f, 300, 600 },
-        dig = { RGB(195, 165, 125), RGB(145, 125, 100), RGB(30, 25, 20),
-                1.0f, 1.2f, 0.3f, 0.06f, 350, 700 },
-        light = { RGB(255, 248, 210), RGB(255, 222, 145), RGB(70, 50, 10),
-                  0.4f, -0.4f, 0.3f, 0.06f, 600, 1100 },
-        secret = { RGB(160, 225, 255), RGB(95, 175, 255), RGB(0, 20, 50),
-                   0.5f, 0.0f, 0.3f, 0.055f, 500, 900 },
-        create = { RGB(175, 145, 195), RGB(115, 105, 135), RGB(15, 10, 20),
-                   1.2f, -0.2f, 0.3f, 0.12f, 600, 1000 },
-        enlight = { RGB(255, 235, 150), RGB(255, 255, 215), RGB(60, 40, 0),
-                    0.4f, -1.6f, 0.5f, 0.055f, 700, 1300 },
-        wish = { RGB(255, 225, 120), RGB(255, 255, 255), RGB(40, 30, 0),
-                 1.0f, 3.0f, 0.5f, 0.06f, 700, 1300 },
-        stasis = { RGB(205, 238, 255), RGB(155, 195, 225), RGB(20, 30, 40),
-                   0.15f, 0.0f, 0.5f, 0.055f, 900, 1500 },
-        /* spells no wand does */
-        drain = { RGB(150, 60, 200), RGB(70, 20, 110), RGB(0, 0, 0),
-                  0.9f, 0.6f, 0.3f, 0.06f, 400, 750 },
-        heal = { RGB(170, 255, 170), RGB(235, 255, 225), RGB(0, 40, 10),
-                 0.8f, -1.2f, 0.3f, 0.055f, 450, 800 },
-        flesh = { RGB(175, 170, 165), RGB(255, 175, 150), RGB(60, 20, 15),
-                  0.9f, -0.3f, 0.3f, 0.06f, 400, 750 };
-
-    *rainbow = FALSE;
-    switch (look) {
-    case WAN_STRIKING:
-        return &striking;
-    case WAN_LOCKING:
-        return &locking;
-    case WAN_OPENING:
-        return &opening;
-    case WAN_MAKE_INVISIBLE:
-        return &invis;
-    case WAN_PROBING:
-        return &probing;
-    case WAN_SLOW_MONSTER:
-        return &slow;
-    case WAN_SPEED_MONSTER:
-        return &speed;
-    case WAN_UNDEAD_TURNING:
-        return &undead;
-    case WAN_CANCELLATION:
-        return &cancel;
-    case WAN_POLYMORPH:
-        *rainbow = TRUE;
-        return &poly;
-    case WAN_TELEPORTATION:
-        return &tele;
-    case WAN_DIGGING:
-        return &dig;
-    case WAN_LIGHT:
-        return &light;
-    case WAN_SECRET_DOOR_DETECTION:
-        return &secret;
-    case WAN_CREATE_MONSTER:
-        return &create;
-    case WAN_ENLIGHTENMENT:
-        return &enlight;
-    case WAN_WISHING:
-        *rainbow = TRUE;
-        return &wish;
-    case WAN_STASIS:
-        return &stasis;
-    case SPE_DRAIN_LIFE:
-        return &drain;
-    case SPE_HEALING:
-    case SPE_EXTRA_HEALING:
-        return &heal;
-    case SPE_STONE_TO_FLESH:
-        return &flesh;
-    default:
-        return &plain;
-    }
-}
-
-/* spawn one particle of style 'st', 'delay' ms from now */
-static struct fx_part *
-fx_spawn_at(PNHMapWindow data, const struct fx_pstyle *st, boolean rainbow,
-            float x, float y, float speed, float sizemul, DWORD delay)
-{
-    struct fx_part *p;
-
-    fx_spawn(data, st, x, y, speed, sizemul, 1.0f);
-    p = &data->parts[data->nparts - 1];
-    if (rainbow)
-        p->c0 = fx_rainbow();
-    p->start += delay;
-    return p;
-}
-
-/* a ring of 'n' particles centred on square <x,y>, reaching 'radius'
-   squares; 'drag' sets how sharply it stops (small = snaps out) */
-static void
-fx_ring(PNHMapWindow data, const struct fx_pstyle *st, boolean rainbow,
-        int x, int y, int n, float radius, float drag, DWORD life,
-        DWORD delay)
-{
-    int i;
-    float v = radius * (float) -log(drag);
-
-    for (i = 0; i < n; i++) {
-        float a = (6.2831853f * i) / n + fx_prange(-0.04f, 0.04f);
-        struct fx_part *p = fx_spawn_at(data, st, rainbow, x + 0.5f,
-                                        y + 0.5f, 0.0f, 1.0f, delay);
-
-        p->vx = v * (float) cos(a);
-        p->vy = v * (float) sin(a);
-        p->drag = drag;
-        p->grav = 0.0f;
-        p->life = life;
-    }
-}
-
-/* the digging beam: rock dust kicked up along its path */
-static void
-fx_dig_particles(PNHMapWindow data, int x, int y)
-{
-    boolean rb;
-    const struct fx_pstyle *st = fx_wand_style(WAN_DIGGING, &rb);
-    int i;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    for (i = 0; i < 7; i++)
-        (void) fx_spawn_at(data, st, FALSE, x + fx_prange(0.2f, 0.8f),
-                           y + fx_prange(0.2f, 0.8f), st->speed, 1.0f, 0);
-    fx_start_timer(data);
-}
-
-static void
-fx_wand_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    boolean rb;
-    const struct fx_pstyle *st;
-    int i, x = ev->x, y = ev->y, look = ev->otyp;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    if (Hallucination && look)
-        look = WAN_POLYMORPH; /* everything's a rainbow */
-    st = fx_wand_style(look, &rb);
-
-    switch (ev->adtyp) {
-    case FXW_BEAM: {
-        /* a short streak on each square, timed so the beam travels */
-        DWORD delay = (DWORD) (ev->amount * 22);
-
-        for (i = 0; i < (look ? 5 : 3); i++)
-            (void) fx_spawn_at(data, st, rb, x + fx_prange(0.25f, 0.75f),
-                               y + fx_prange(0.25f, 0.75f),
-                               st->speed * 0.35f, 0.9f, delay);
-        break;
-    }
-    case FXW_HIT:
-        /* a burst where it strikes, and a small ring once identified */
-        for (i = 0; i < (look ? 28 : 14); i++)
-            (void) fx_spawn_at(data, st, rb, x + 0.5f, y + 0.5f,
-                               st->speed * 1.4f + 0.6f, 1.0f, 0);
-        if (look)
-            fx_ring(data, st, rb, x, y, 18, 0.8f, 0.01f, 380, 0);
-        break;
-    case FXW_SELF:
-        switch (look) {
-        case WAN_LIGHT:
-            /* a wave of light rolling out, then warm motes hanging */
-            fx_ring(data, st, FALSE, x, y, 90, 5.0f, 0.02f, 750, 0);
-            for (i = 0; i < 70; i++) {
-                float r = fx_prange(0.3f, 4.5f), a = fx_prange(0, 6.283f);
-
-                (void) fx_spawn_at(data, st, FALSE,
-                                   x + 0.5f + r * (float) cos(a),
-                                   y + 0.5f + r * (float) sin(a) * 0.8f,
-                                   st->speed, 1.0f, (DWORD) (r * 70));
-            }
-            break;
-        case WAN_SECRET_DOOR_DETECTION:
-            /* two searching pulses */
-            fx_ring(data, st, FALSE, x, y, 90, 7.0f, 0.03f, 850, 0);
-            fx_ring(data, st, FALSE, x, y, 70, 5.0f, 0.03f, 750, 180);
-            break;
-        case WAN_CREATE_MONSTER:
-            /* dark smoke swirling out from you */
-            for (i = 0; i < 55; i++)
-                (void) fx_spawn_at(data, st, FALSE,
-                                   x + 0.5f + fx_prange(-0.3f, 0.3f),
-                                   y + 0.5f + fx_prange(-0.3f, 0.3f),
-                                   st->speed * 1.6f, 1.0f,
-                                   (DWORD) fx_prange(0, 160));
-            break;
-        case WAN_ENLIGHTENMENT:
-            /* golden motes rising all around you */
-            for (i = 0; i < 70; i++)
-                (void) fx_spawn_at(data, st, FALSE,
-                                   x + 0.5f + fx_prange(-1.2f, 1.2f),
-                                   y + 0.6f + fx_prange(-0.4f, 0.8f),
-                                   st->speed, 1.0f,
-                                   (DWORD) fx_prange(0, 350));
-            fx_ring(data, st, FALSE, x, y, 40, 1.6f, 0.02f, 600, 0);
-            break;
-        case WAN_WISHING: {
-            /* a fountain of coloured sparks and a golden ring */
-            for (i = 0; i < 110; i++) {
-                struct fx_part *p = fx_spawn_at(
-                    data, st, TRUE, x + 0.5f + fx_prange(-0.15f, 0.15f),
-                    y + 0.5f, 0.0f, 1.0f, (DWORD) fx_prange(0, 300));
-
-                p->vx = fx_prange(-1.4f, 1.4f);
-                p->vy = fx_prange(-5.5f, -3.0f);
-            }
-            fx_ring(data, st, FALSE, x, y, 50, 2.0f, 0.02f, 700, 0);
-            break;
-        }
-        case WAN_DIGGING:
-            break; /* its dust is drawn along the beam */
-        case WAN_STASIS:
-            /* time stills: a slow ring, and motes that barely move */
-            fx_ring(data, st, FALSE, x, y, 60, 3.0f, 0.15f, 1300, 0);
-            for (i = 0; i < 50; i++) {
-                float r = fx_prange(0.2f, 2.6f), a = fx_prange(0, 6.283f);
-
-                (void) fx_spawn_at(data, st, FALSE,
-                                   x + 0.5f + r * (float) cos(a),
-                                   y + 0.5f + r * (float) sin(a),
-                                   st->speed, 1.0f, 0);
-            }
-            break;
-        default:
-            /* unidentified: a plain shimmer */
-            fx_ring(data, st, FALSE, x, y, 36, 1.5f, 0.02f, 500, 0);
-            break;
-        }
-        break;
-    }
-    fx_start_timer(data);
-}
-
-/* teleporting: sparks rush in and the creature is gone; at the other
-   end a flash and a burst as it appears */
-static void
-fx_teleport_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    static const struct fx_pstyle
-        tele = { RGB(255, 140, 240), RGB(190, 120, 255), RGB(40, 0, 60),
-                 1.6f, 0.0f, 0.2f, 0.06f, 300, 500 };
-    int i;
-
-    if (!iflags.fx_particles)
-        return;
-    if ((ev->amount & 1) && isok(ev->sx, ev->sy)) {
-        /* departure: a ring collapsing inward, and a column rising */
-        for (i = 0; i < 36; i++) {
-            float a = (6.2831853f * i) / 36, r = fx_prange(0.75f, 1.0f);
-            struct fx_part *p = fx_spawn_at(
-                data, &tele, FALSE, ev->sx + 0.5f + r * (float) cos(a),
-                ev->sy + 0.5f + r * (float) sin(a), 0.0f, 1.0f, 0);
-
-            p->drag = 0.01f; /* ends just at the middle */
-            p->vx = -r * 4.6f * (float) cos(a);
-            p->vy = -r * 4.6f * (float) sin(a);
-            p->life = 380;
-        }
-        for (i = 0; i < 18; i++) {
-            struct fx_part *p = fx_spawn_at(
-                data, &tele, FALSE, ev->sx + 0.5f + fx_prange(-0.2f, 0.2f),
-                ev->sy + fx_prange(0.4f, 0.9f), 0.0f, 0.8f,
-                (DWORD) fx_prange(80, 260));
-
-            p->vx = 0.0f;
-            p->vy = fx_prange(-2.6f, -1.4f);
-            p->life = 420;
-        }
-    }
-    if ((ev->amount & 2) && isok(ev->x, ev->y)) {
-        /* arrival, a moment later: a flash, a burst and a ring */
-        DWORD at = (ev->amount & 1) ? 260 : 0;
-
-        for (i = 0; i < 3; i++) {
-            struct fx_part *p = fx_spawn_at(data, &tele, FALSE,
-                                            ev->x + 0.5f, ev->y + 0.5f, 0.0f,
-                                            1.0f, at);
-
-            p->vx = p->vy = 0.0f;
-            p->size = 0.3f;
-            p->c0 = RGB(255, 235, 255);
-            p->life = 160;
-        }
-        for (i = 0; i < 30; i++)
-            (void) fx_spawn_at(data, &tele, FALSE, ev->x + 0.5f, ev->y + 0.5f,
-                               tele.speed * 1.6f, 1.0f, at);
-        fx_ring(data, &tele, FALSE, ev->x, ev->y, 26, 0.9f, 0.01f, 400, at);
-    }
-    fx_start_timer(data);
-}
-
-/* 'n' particles of style 'st' born around the hero's feet on <x,y>,
-   thrown at 'speed' (upward if 'up'), 'delay' ms from now */
-static void
-fx_engr_spray(PNHMapWindow data, const struct fx_pstyle *st, boolean rainbow,
-              int x, int y, int n, float speed, boolean up, DWORD delay)
-{
-    int i;
-
-    for (i = 0; i < n; i++) {
-        struct fx_part *p = fx_spawn_at(
-            data, st, rainbow, x + 0.5f + fx_prange(-0.3f, 0.3f),
-            y + fx_prange(0.6f, 0.85f), speed, 1.0f,
-            delay + (DWORD) fx_prange(0, 120));
-
-        if (up) {
-            p->vx = fx_prange(-0.9f, 0.9f) * speed;
-            p->vy = -fx_prange(0.6f, 1.3f) * speed;
-        }
-    }
-}
-
-/* engraving: motes of whatever is being written in, and the wand clues */
-static void
-fx_engrave_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    static const struct fx_pstyle
-        dust = { RGB(200, 185, 160), RGB(160, 150, 130), RGB(30, 28, 24),
-                 0.5f, 0.5f, 0.3f, 0.04f, 350, 650 },
-        frost = { RGB(240, 250, 255), RGB(190, 220, 245), RGB(20, 40, 60),
-                  0.5f, 0.4f, 0.3f, 0.04f, 350, 650 },
-        chips = { RGB(185, 185, 190), RGB(130, 130, 138), RGB(25, 25, 28),
-                  1.0f, 4.0f, 0.6f, 0.045f, 300, 550 },
-        splinters = { RGB(190, 140, 90), RGB(140, 100, 60), RGB(30, 20, 10),
-                      1.0f, 4.0f, 0.6f, 0.045f, 300, 550 },
-        smoke = { RGB(120, 115, 110), RGB(90, 88, 85), RGB(15, 15, 15),
-                  0.25f, -0.9f, 0.5f, 0.07f, 600, 1000 },
-        ink = { RGB(60, 70, 120), RGB(40, 45, 80), RGB(10, 10, 20),
-                0.3f, 0.3f, 0.3f, 0.03f, 300, 500 },
-        blood = { RGB(170, 25, 25), RGB(120, 15, 15), RGB(30, 0, 0),
-                  0.3f, 0.6f, 0.3f, 0.035f, 300, 550 },
-        fade = { RGB(175, 175, 185), RGB(140, 140, 150), RGB(0, 0, 0),
-                 0.5f, -0.7f, 0.4f, 0.045f, 600, 1000 },
-        ice = { RGB(240, 250, 255), RGB(175, 215, 255), RGB(40, 70, 110),
-                0.2f, 7.0f, 0.9f, 0.06f, 380, 480 },
-        bugs = { RGB(70, 62, 52), RGB(45, 40, 35), RGB(10, 10, 10),
-                 1.2f, 0.0f, 0.004f, 0.03f, 900, 1200 },
-        flash = { RGB(255, 255, 255), RGB(255, 255, 220), RGB(120, 120, 60),
-                  0.0f, 0.0f, 0.5f, 0.9f, 140, 200 };
-    const struct fx_pstyle *st;
-    boolean rb;
-    int i, x = ev->x, y = ev->y;
-
-    if (!iflags.fx_particles || !isok(x, y) || (ev->flags & FXF_UNSEEN))
-        return;
-    switch (ev->adtyp) {
-    case FXG_STROKE:
-        switch (ev->amount) {
-        case ENGRAVE:
-        case HEADSTONE:
-            st = (ev->ttyp == FXG_SURF_WOOD) ? &splinters
-                 : (ev->ttyp == FXG_SURF_ICE) ? &frost : &chips;
-            fx_engr_spray(data, st, FALSE, x, y, 6, 1.6f, TRUE, 0);
-            break;
-        case BURN:
-            fx_engr_spray(data, fx_part_style(AD_FIRE), FALSE, x, y, 8, 0.8f,
-                          TRUE, 0);
-            fx_engr_spray(data, &smoke, FALSE, x, y, 5, 0.3f, FALSE, 120);
-            break;
-        case MARK:
-            fx_engr_spray(data, &ink, FALSE, x, y, 3, 0.3f, FALSE, 0);
-            break;
-        case ENGR_BLOOD:
-            fx_engr_spray(data, &blood, FALSE, x, y, 4, 0.3f, FALSE, 0);
-            break;
-        default: /* DUST */
-            fx_engr_spray(data, (ev->ttyp == FXG_SURF_ICE) ? &frost : &dust,
-                          FALSE, x, y, 6, 0.5f, FALSE, 0);
-            break;
-        }
-        break;
-    case FXG_VANISH:
-        /* the old writing lifts off as grey motes and is gone */
-        for (i = 0; i < 26; i++)
-            (void) fx_spawn_at(data, &fade, FALSE,
-                               x + 0.5f + fx_prange(-0.4f, 0.4f),
-                               y + fx_prange(0.55f, 0.9f), fade.speed, 1.0f,
-                               (DWORD) fx_prange(0, 250));
-        break;
-    case FXG_ICE:
-        /* a few ice cubes tumbling from the wand to the floor */
-        for (i = 0; i < 5; i++) {
-            struct fx_part *p = fx_spawn_at(
-                data, &ice, FALSE, x + 0.5f + fx_prange(-0.25f, 0.25f),
-                y + fx_prange(0.1f, 0.3f), 0.0f, fx_prange(0.8f, 1.3f),
-                (DWORD) (i * 70));
-
-            p->vx = fx_prange(-0.4f, 0.4f);
-            p->vy = fx_prange(-0.5f, 0.0f);
-        }
-        break;
-    case FXG_BUGS_STOP:
-        /* tiny specks scurry, then stop dead */
-        for (i = 0; i < 12; i++)
-            (void) fx_spawn_at(data, &bugs, FALSE,
-                               x + 0.5f + fx_prange(-0.35f, 0.35f),
-                               y + fx_prange(0.55f, 0.9f), bugs.speed, 1.0f,
-                               0);
-        break;
-    case FXG_GRAVEL:
-        st = (ev->ttyp == FXG_SURF_WOOD) ? &splinters
-             : (ev->ttyp == FXG_SURF_ICE) ? &frost : &chips;
-        fx_engr_spray(data, st, FALSE, x, y, 22, 3.0f, TRUE, 0);
-        fx_dig_particles(data, x, y);
-        break;
-    case FXG_FLAMES:
-        fx_engr_spray(data, fx_part_style(AD_FIRE), FALSE, x, y, 30, 1.6f,
-                      TRUE, 0);
-        fx_engr_spray(data, &smoke, FALSE, x, y, 8, 0.3f, FALSE, 200);
-        break;
-    case FXG_LIGHTNING:
-        /* a blinding flash and sparks crackling out */
-        for (i = 0; i < 3; i++) {
-            struct fx_part *p = fx_spawn_at(data, &flash, FALSE, x + 0.5f,
-                                            y + 0.5f, 0.0f, 1.0f + i * 0.6f,
-                                            0);
-
-            p->vx = p->vy = 0.0f;
-        }
-        st = fx_part_style(AD_ELEC);
-        for (i = 0; i < 40; i++)
-            (void) fx_spawn_at(data, st, FALSE, x + 0.5f, y + 0.6f,
-                               st->speed * 1.3f, 1.0f, 0);
-        break;
-    case FXG_BULLETS: {
-        /* small puffs popping up across the square, timed with the shots */
-        static const DWORD at[6] = { 0, 75, 140, 225, 285, 350 };
-
-        st = fx_part_style(AD_MAGM);
-        for (i = 0; i < 6; i++) {
-            float px = x + fx_prange(0.15f, 0.85f),
-                  py = y + fx_prange(0.4f, 0.9f);
-            int k;
-
-            for (k = 0; k < 6; k++)
-                (void) fx_spawn_at(data, st, FALSE, px, py, 1.2f, 0.8f,
-                                   at[i]);
-        }
-        break;
-    }
-    case FXG_POLY:
-        st = fx_wand_style(WAN_POLYMORPH, &rb);
-        fx_engr_spray(data, st, TRUE, x, y, 24, 0.9f, FALSE, 0);
-        fx_ring(data, st, TRUE, x, y, 16, 0.6f, 0.01f, 380, 0);
-        break;
-    case FXG_SLOW:
-        st = fx_wand_style(WAN_SLOW_MONSTER, &rb);
-        fx_engr_spray(data, st, FALSE, x, y, 14, 0.3f, FALSE, 0);
-        break;
-    case FXG_SPEED:
-        st = fx_wand_style(WAN_SPEED_MONSTER, &rb);
-        fx_engr_spray(data, st, FALSE, x, y, 16, 2.2f, FALSE, 0);
-        break;
-    case FXG_STRUGGLE:
-        fx_impact_particles(data, x, y, TRUE);
-        return; /* (starts its own timer) */
-    case FXG_CRUMBLE:
-        for (i = 0; i < 30; i++)
-            (void) fx_spawn_at(data, &dust, FALSE,
-                               x + 0.5f + fx_prange(-0.15f, 0.15f),
-                               y + 0.5f + fx_prange(-0.15f, 0.15f), 1.0f,
-                               1.4f, (DWORD) fx_prange(0, 150));
-        break;
-    case FXG_WIPE: {
-        /* the writing swept aside */
-        float dir = (fx_prand() < 0.5f) ? -1.0f : 1.0f;
-
-        st = (ev->ttyp == FXG_SURF_ICE) ? &frost
-             : (ev->amount == ENGR_BLOOD) ? &blood
-             : (ev->amount == MARK) ? &ink : &dust;
-        for (i = 0; i < 16; i++) {
-            struct fx_part *p = fx_spawn_at(
-                data, st, FALSE, x + 0.5f + fx_prange(-0.35f, 0.35f),
-                y + fx_prange(0.6f, 0.85f), 0.0f, 1.0f,
-                (DWORD) fx_prange(0, 180));
-
-            p->vx = dir * fx_prange(0.8f, 1.8f);
-            p->vy = fx_prange(-0.2f, 0.1f);
-        }
-        break;
-    }
-    case FXG_WORN:
-    default:
-        return;
-    }
-    fx_start_timer(data);
-}
-
-/* a summoned monster appearing: a spiral drawing in to its square, a
-   flash and a ring; each of a group a little after the one before */
-static void
-fx_summon_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    static const struct fx_pstyle styles[4] = {
-        /* arcane: violet */
-        { RGB(235, 170, 255), RGB(160, 110, 255), RGB(30, 0, 60),
-          1.4f, 0.0f, 0.22f, 0.06f, 350, 600 },
-        /* demonic: fire and embers */
-        { RGB(255, 190, 80), RGB(240, 70, 30), RGB(50, 0, 0),
-          1.4f, -0.5f, 0.22f, 0.07f, 400, 700 },
-        /* holy: gold-white */
-        { RGB(255, 250, 215), RGB(255, 215, 110), RGB(60, 40, 0),
-          1.3f, -0.3f, 0.2f, 0.06f, 400, 700 },
-        /* swarm: dusty green-brown */
-        { RGB(200, 220, 120), RGB(150, 130, 70), RGB(20, 25, 0),
-          1.8f, 0.4f, 0.25f, 0.05f, 250, 450 },
-    };
-    const struct fx_pstyle *st;
-    DWORD at;
-    float cx, cy;
-    int i, k = ev->adtyp;
-
-    if (!iflags.fx_particles || !isok(ev->x, ev->y))
-        return;
-    k = (k < 0 || k > 3) ? 0 : k;
-    st = &styles[k];
-    at = (DWORD) min(ev->amount, 12) * 120; /* one after another */
-    cx = ev->x + 0.5f, cy = ev->y + 0.5f;
-    if (k != FXS_SWARM) {
-        /* a spiral of motes drawing in to the middle */
-        for (i = 0; i < 28; i++) {
-            float a = (6.2831853f * i) / 14, r = 0.55f + 0.5f * (i / 28.0f);
-            struct fx_part *p = fx_spawn_at(data, st, FALSE,
-                                            cx + r * (float) cos(a),
-                                            cy + r * (float) sin(a), 0.0f,
-                                            0.9f, at + (DWORD) (i * 9));
-
-            /* inward, and around */
-            p->vx = (float) (-cos(a) * 2.2f - sin(a) * 2.6f) * r;
-            p->vy = (float) (-sin(a) * 2.2f + cos(a) * 2.6f) * r;
-            p->drag = 0.04f;
-            p->life = 330;
-        }
-    }
-    /* the moment it's there: a flash, a burst and a ring */
-    at += (k == FXS_SWARM) ? 0 : 280;
-    for (i = 0; i < 3; i++) {
-        struct fx_part *p = fx_spawn_at(data, st, FALSE, cx, cy, 0.0f, 1.0f,
-                                        at);
-
-        p->vx = p->vy = 0.0f;
-        p->size = 0.32f;
-        p->c0 = (k == FXS_DEMONIC) ? RGB(255, 230, 160) : RGB(255, 250, 255);
-        p->life = 170;
-    }
-    for (i = 0; i < 24; i++)
-        (void) fx_spawn_at(data, st, FALSE, cx, cy, st->speed * 1.5f, 1.0f,
-                           at);
-    fx_ring(data, st, FALSE, ev->x, ev->y, 22, 0.8f, 0.01f, 380, at);
-    if (k == FXS_DEMONIC) {
-        /* a curl of smoke rising after */
-        static const struct fx_pstyle smoke = {
-            RGB(90, 80, 80), RGB(60, 55, 55), RGB(10, 10, 10),
-            0.3f, -1.2f, 0.35f, 0.03f, 700, 1100 };
-
-        for (i = 0; i < 10; i++)
-            (void) fx_spawn_at(data, &smoke, FALSE,
-                               cx + fx_prange(-0.3f, 0.3f),
-                               cy + fx_prange(-0.1f, 0.3f), 0.3f, 1.0f,
-                               at + 60);
-    }
-    fx_start_timer(data);
-}
-
-/* drinking a potion: first a swirl of its own colour rising around the
-   hero (what anyone could see); then, if its type is known, its effect */
-static void
-fx_quaff_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    static const struct fx_pstyle
-        swirl = { RGB(255, 255, 255), RGB(255, 255, 255), RGB(10, 10, 10),
-                  0.0f, -0.6f, 0.4f, 0.06f, 500, 850 },
-        heal = { RGB(200, 255, 200), RGB(110, 240, 120), RGB(0, 40, 0),
-                 0.5f, -1.3f, 0.45f, 0.06f, 600, 1100 },
-        energy = { RGB(190, 215, 255), RGB(110, 150, 255), RGB(0, 10, 50),
-                   0.5f, -1.3f, 0.45f, 0.06f, 600, 1100 },
-        gold = { RGB(255, 235, 150), RGB(255, 200, 80), RGB(50, 30, 0),
-                 0.4f, -1.8f, 0.45f, 0.06f, 700, 1300 },
-        acid = { RGB(220, 255, 70), RGB(170, 230, 30), RGB(30, 45, 0),
-                 1.4f, -0.4f, 0.3f, 0.05f, 300, 600 },
-        sick = { RGB(170, 210, 60), RGB(120, 160, 40), RGB(15, 25, 0),
-                 0.5f, -0.6f, 0.4f, 0.08f, 600, 1000 },
-        booze = { RGB(255, 200, 110), RGB(230, 160, 60), RGB(40, 20, 0),
-                  0.4f, -0.9f, 0.4f, 0.06f, 600, 1000 },
-        holy = { RGB(255, 252, 230), RGB(255, 235, 170), RGB(60, 50, 20),
-                 0.5f, -1.4f, 0.4f, 0.06f, 600, 1100 },
-        unholy = { RGB(200, 40, 40), RGB(120, 20, 40), RGB(20, 0, 5),
-                   0.5f, -0.9f, 0.4f, 0.06f, 600, 1000 },
-        detect = { RGB(220, 170, 255), RGB(160, 110, 255), RGB(25, 0, 50),
-                   0.5f, 0.0f, 0.3f, 0.055f, 500, 900 };
-    const struct fx_pstyle *st = 0;
-    boolean rb = FALSE;
-    int i, x = ev->x, y = ev->y, n = 50;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-
-    if (ev->adtyp == 0) {
-        /* a spiral of the potion's colour rising round the hero */
-        COLORREF c = nhcolor_to_RGB(ev->amount);
-
-        if (GetRValue(c) + GetGValue(c) + GetBValue(c) < 200)
-            c = RGB(110, 110, 135); /* inky or black: still visible */
-        for (i = 0; i < 26; i++) {
-            float a = (6.2831853f * i) / 13.0f;
-            struct fx_part *p = fx_spawn_at(
-                data, &swirl, Hallucination, x + 0.5f + 0.42f * (float) cos(a),
-                y + 0.85f, 0.0f, 1.0f, (DWORD) (i * 22));
-
-            if (!Hallucination)
-                p->c0 = c;
-            p->vx = -0.9f * (float) sin(a);
-            p->vy = -1.1f;
-        }
-        fx_start_timer(data);
-        return;
-    }
-
-    switch (ev->otyp) {
-    case POT_HEALING:
-        st = &heal, n = 35;
-        break;
-    case POT_EXTRA_HEALING:
-        st = &heal, n = 55;
-        break;
-    case POT_FULL_HEALING:
-        st = &heal, n = 85;
-        break;
-    case POT_GAIN_ENERGY:
-        st = &energy;
-        break;
-    case POT_GAIN_LEVEL:
-    case POT_GAIN_ABILITY:
-    case POT_RESTORE_ABILITY:
-        st = &gold, n = (ev->otyp == POT_GAIN_LEVEL) ? 80 : 50;
-        break;
-    case POT_ACID:
-        st = &acid, n = 40;
-        break;
-    case POT_SICKNESS:
-        st = &sick, n = 30;
-        break;
-    case POT_BOOZE:
-        st = &booze, n = 30;
-        break;
-    case POT_POLYMORPH:
-        st = &booze, rb = TRUE, n = 60;
-        break;
-    case POT_MONSTER_DETECTION:
-    case POT_OBJECT_DETECTION:
-        fx_ring(data, &detect, FALSE, x, y, 80, 6.0f, 0.03f, 800, 0);
-        fx_start_timer(data);
-        return;
-    case POT_ENLIGHTENMENT:
-        st = &gold, n = 60;
-        break;
-    case POT_WATER:
-        if (ev->mndx > 0)
-            st = &holy;
-        else if (ev->mndx < 0)
-            st = &unholy;
-        break;
-    default:
-        break;
-    }
-    if (!st)
-        return;
-    /* motes rising from all around the hero, and a soft ring */
-    for (i = 0; i < n; i++)
-        (void) fx_spawn_at(data, st, rb, x + 0.5f + fx_prange(-0.9f, 0.9f),
-                           y + 0.7f + fx_prange(-0.3f, 0.5f), st->speed,
-                           1.0f, (DWORD) fx_prange(0, 300));
-    fx_ring(data, st, rb, x, y, 32, 1.3f, 0.02f, 550, 0);
-    fx_start_timer(data);
-}
-
-/* detection: each thing found flashes briefly where it appears, in a
-   ripple spreading out from the hero; a unicorn horn that cured
-   something sparkles clean around the hero */
-static void
-fx_detect_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    static const struct fx_pstyle
-        mon = { RGB(255, 140, 170), RGB(220, 90, 255), RGB(40, 0, 30),
-                1.4f, -0.4f, 0.2f, 0.055f, 350, 650 },
-        obj = { RGB(255, 235, 140), RGB(140, 230, 255), RGB(30, 30, 10),
-                1.4f, -0.4f, 0.2f, 0.055f, 350, 650 },
-        cure = { RGB(235, 250, 255), RGB(150, 230, 255), RGB(0, 30, 40),
-                 0.6f, -1.6f, 0.4f, 0.06f, 500, 950 };
-    int i, x = ev->x, y = ev->y;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    if (ev->type == FXE_UNIHORN) {
-        if (ev->amount <= 0)
-            return;
-        for (i = 0; i < 45; i++)
-            (void) fx_spawn_at(data, &cure, FALSE,
-                               x + 0.5f + fx_prange(-0.7f, 0.7f),
-                               y + 0.6f + fx_prange(-0.3f, 0.5f), cure.speed,
-                               1.0f, (DWORD) fx_prange(0, 250));
-        fx_ring(data, &cure, FALSE, x, y, 30, 1.2f, 0.02f, 500, 0);
-        fx_start_timer(data);
-        return;
-    }
-    if (ev->flags & FXF_HERO_TARGET)
-        return; /* the summary is for the sound */
-    {
-        const struct fx_pstyle *st = (ev->adtyp == FXD_MONSTER) ? &mon : &obj;
-        DWORD at = (DWORD) (ev->amount * 45); /* the ripple spreading out */
-
-        for (i = 0; i < 3; i++) {
-            struct fx_part *p = fx_spawn_at(data, st, FALSE, x + 0.5f,
-                                            y + 0.5f, 0.0f, 1.0f, at);
-
-            p->vx = p->vy = 0.0f;
-            p->size = 0.22f;
-            p->c0 = RGB(255, 255, 255);
-            p->life = 160;
-        }
-        for (i = 0; i < 12; i++)
-            (void) fx_spawn_at(data, st, FALSE, x + 0.5f, y + 0.5f,
-                               st->speed, 1.0f, at);
-        fx_ring(data, st, FALSE, x, y, 14, 0.7f, 0.01f, 420, at);
-    }
-    fx_start_timer(data);
-}
-
-/* a scroll whose type is known has taken effect: its look around the hero
-   (teleportation, fire and the detection scrolls have their own) */
-static void
-fx_scroll_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    static const struct fx_pstyle
-        wpn = { RGB(200, 230, 255), RGB(110, 170, 255), RGB(0, 15, 50),
-                0.4f, -2.0f, 0.4f, 0.055f, 600, 1000 },
-        armor = { RGB(255, 235, 150), RGB(255, 200, 80), RGB(50, 30, 0),
-                  0.6f, -0.9f, 0.4f, 0.06f, 600, 1100 },
-        holy = { RGB(255, 252, 230), RGB(255, 235, 170), RGB(60, 50, 20),
-                 0.5f, -1.4f, 0.4f, 0.06f, 700, 1200 },
-        ident = { RGB(170, 255, 250), RGB(90, 210, 255), RGB(0, 30, 40),
-                  1.4f, -0.3f, 0.25f, 0.05f, 400, 700 },
-        mapping = { RGB(200, 240, 255), RGB(120, 200, 255), RGB(0, 20, 40),
-                    0.0f, 0.0f, 0.1f, 0.055f, 900, 900 },
-        earth = { RGB(195, 165, 125), RGB(145, 125, 100), RGB(30, 25, 20),
-                  2.2f, 1.4f, 0.2f, 0.07f, 450, 850 },
-        taming = { RGB(255, 170, 210), RGB(255, 120, 180), RGB(60, 0, 25),
-                   0.5f, -1.0f, 0.4f, 0.065f, 700, 1200 },
-        genocide = { RGB(210, 30, 40), RGB(120, 0, 30), RGB(15, 0, 5),
-                     0.0f, 0.0f, 0.1f, 0.07f, 1000, 1000 },
-        charging = { RGB(255, 255, 200), RGB(140, 200, 255), RGB(20, 20, 50),
-                     3.0f, 0.0f, 0.05f, 0.045f, 160, 360 },
-        scare = { RGB(170, 90, 230), RGB(90, 40, 150), RGB(10, 0, 20),
-                  0.0f, 0.0f, 0.1f, 0.07f, 800, 800 },
-        shards = { RGB(200, 200, 205), RGB(140, 140, 150), RGB(20, 20, 25),
-                   1.6f, 2.4f, 0.3f, 0.05f, 450, 800 },
-        fog = { RGB(150, 150, 165), RGB(110, 110, 125), RGB(10, 10, 15),
-                0.4f, 0.0f, 0.4f, 0.12f, 900, 1500 },
-        confuse = { RGB(255, 110, 120), RGB(200, 90, 230), RGB(40, 0, 30),
-                    0.4f, -0.6f, 0.4f, 0.055f, 600, 1000 },
-        punish = { RGB(160, 160, 170), RGB(110, 110, 120), RGB(15, 15, 20),
-                   1.4f, 0.8f, 0.2f, 0.06f, 400, 700 };
-    boolean rb;
-    int i, x = ev->x, y = ev->y;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    switch (ev->otyp) {
-    case SCR_ENCHANT_WEAPON:
-        /* blue sparks climbing as the weapon glows */
-        for (i = 0; i < 45; i++)
-            (void) fx_spawn_at(data, &wpn, FALSE,
-                               x + 0.5f + fx_prange(-0.35f, 0.35f),
-                               y + 0.8f, wpn.speed, 1.0f,
-                               (DWORD) fx_prange(0, 350));
-        fx_ring(data, &wpn, FALSE, x, y, 24, 0.9f, 0.02f, 450, 0);
-        break;
-    case SCR_ENCHANT_ARMOR:
-        /* a golden shimmer all over */
-        for (i = 0; i < 60; i++)
-            (void) fx_spawn_at(data, &armor, FALSE,
-                               x + 0.5f + fx_prange(-0.55f, 0.55f),
-                               y + 0.5f + fx_prange(-0.5f, 0.5f),
-                               armor.speed, 1.0f, (DWORD) fx_prange(0, 300));
-        fx_ring(data, &armor, FALSE, x, y, 32, 1.1f, 0.02f, 550, 0);
-        break;
-    case SCR_REMOVE_CURSE:
-        for (i = 0; i < 60; i++)
-            (void) fx_spawn_at(data, &holy, FALSE,
-                               x + 0.5f + fx_prange(-1.0f, 1.0f),
-                               y + 0.7f + fx_prange(-0.3f, 0.5f), holy.speed,
-                               1.0f, (DWORD) fx_prange(0, 400));
-        fx_ring(data, &holy, FALSE, x, y, 40, 1.6f, 0.02f, 650, 0);
-        break;
-    case SCR_IDENTIFY:
-        for (i = 0; i < 30; i++)
-            (void) fx_spawn_at(data, &ident, FALSE, x + 0.5f, y + 0.4f,
-                               ident.speed, 1.0f, (DWORD) fx_prange(0, 150));
-        fx_ring(data, &ident, FALSE, x, y, 24, 0.9f, 0.01f, 400, 0);
-        break;
-    case SCR_MAGIC_MAPPING:
-        /* the level drawing itself out from you */
-        fx_ring(data, &mapping, FALSE, x, y, 120, 12.0f, 0.15f, 1300, 0);
-        fx_ring(data, &mapping, FALSE, x, y, 90, 8.0f, 0.15f, 1100, 200);
-        break;
-    case SCR_LIGHT:
-        /* the same wave of light as the wand */
-        {
-            struct fx_event le = *ev;
-
-            le.type = FXE_WAND;
-            le.adtyp = FXW_SELF;
-            le.otyp = WAN_LIGHT;
-            fx_wand_particles(data, &le);
-        }
-        return;
-    case SCR_CREATE_MONSTER:
-    case SCR_STINKING_CLOUD:
-        {
-            struct fx_event le = *ev;
-
-            le.type = FXE_WAND;
-            le.adtyp = FXW_SELF;
-            le.otyp = WAN_CREATE_MONSTER; /* a puff of smoke */
-            fx_wand_particles(data, &le);
-        }
-        return;
-    case SCR_EARTH:
-        /* dust thrown up all around as the boulders land */
-        for (i = 0; i < 70; i++) {
-            float r = fx_prange(0.6f, 1.6f), a = fx_prange(0, 6.283f);
-
-            (void) fx_spawn_at(data, &earth, FALSE,
-                               x + 0.5f + r * (float) cos(a),
-                               y + 0.5f + r * (float) sin(a), earth.speed,
-                               1.0f, (DWORD) fx_prange(0, 200));
-        }
-        break;
-    case SCR_TAMING:
-        for (i = 0; i < 40; i++)
-            (void) fx_spawn_at(data, &taming, FALSE,
-                               x + 0.5f + fx_prange(-1.2f, 1.2f),
-                               y + 0.6f + fx_prange(-0.6f, 0.6f),
-                               taming.speed, 1.0f, (DWORD) fx_prange(0, 400));
-        fx_ring(data, &taming, FALSE, x, y, 40, 1.8f, 0.03f, 700, 0);
-        break;
-    case SCR_GENOCIDE:
-        /* a dark red pulse rolling out, twice */
-        fx_ring(data, &genocide, FALSE, x, y, 90, 7.0f, 0.1f, 1200, 0);
-        fx_ring(data, &genocide, FALSE, x, y, 70, 4.5f, 0.1f, 1000, 250);
-        break;
-    case SCR_CHARGING:
-        for (i = 0; i < 50; i++)
-            (void) fx_spawn_at(data, &charging, FALSE,
-                               x + 0.5f + fx_prange(-0.3f, 0.3f),
-                               y + 0.5f + fx_prange(-0.3f, 0.3f),
-                               charging.speed, 0.9f,
-                               (DWORD) fx_prange(0, 400));
-        break;
-    case SCR_SCARE_MONSTER:
-        fx_ring(data, &scare, FALSE, x, y, 80, 5.0f, 0.08f, 1000, 0);
-        break;
-    case SCR_DESTROY_ARMOR:
-        for (i = 0; i < 40; i++)
-            (void) fx_spawn_at(data, &shards, FALSE,
-                               x + 0.5f + fx_prange(-0.4f, 0.4f),
-                               y + 0.4f + fx_prange(-0.3f, 0.3f),
-                               shards.speed, 1.0f, (DWORD) fx_prange(0, 150));
-        break;
-    case SCR_AMNESIA:
-        for (i = 0; i < 40; i++)
-            (void) fx_spawn_at(data, &fog, FALSE,
-                               x + 0.5f + fx_prange(-1.0f, 1.0f),
-                               y + 0.5f + fx_prange(-0.8f, 0.8f), fog.speed,
-                               1.0f, (DWORD) fx_prange(0, 500));
-        break;
-    case SCR_CONFUSE_MONSTER:
-        /* the hands glowing */
-        for (i = 0; i < 30; i++)
-            (void) fx_spawn_at(data, &confuse, FALSE,
-                               x + 0.5f + ((i & 1) ? 0.35f : -0.35f)
-                                   + fx_prange(-0.1f, 0.1f),
-                               y + 0.65f, confuse.speed, 1.0f,
-                               (DWORD) fx_prange(0, 400));
-        break;
-    case SCR_PUNISHMENT:
-        for (i = 0; i < 26; i++)
-            (void) fx_spawn_at(data, &punish, FALSE, x + 0.5f, y + 0.95f,
-                               punish.speed, 1.0f, (DWORD) fx_prange(0, 100));
-        break;
-    default:
-        return;
-    }
-    (void) rb;
-    fx_start_timer(data);
-}
-
-/* casting a spell: motes of its school's colour drawn in to the hero's
-   hands and a small ring as it's released; then, for the spells that act
-   like a scroll or potion (or have nothing else to show), its look */
-static void
-fx_cast_particles(PNHMapWindow data, const struct fx_event *ev)
-{
-    static const struct fx_pstyle school[7] = {
-        /* attack */
-        { RGB(255, 140, 80), RGB(255, 70, 60), RGB(50, 0, 0),
-          0.0f, 0.0f, 0.2f, 0.05f, 380, 380 },
-        /* healing */
-        { RGB(160, 255, 160), RGB(225, 255, 210), RGB(0, 40, 10),
-          0.0f, 0.0f, 0.2f, 0.05f, 380, 380 },
-        /* divination */
-        { RGB(140, 240, 255), RGB(90, 180, 255), RGB(0, 20, 50),
-          0.0f, 0.0f, 0.2f, 0.05f, 380, 380 },
-        /* enchantment */
-        { RGB(255, 140, 220), RGB(200, 110, 255), RGB(40, 0, 40),
-          0.0f, 0.0f, 0.2f, 0.05f, 380, 380 },
-        /* clerical */
-        { RGB(255, 245, 200), RGB(255, 220, 130), RGB(60, 45, 10),
-          0.0f, 0.0f, 0.2f, 0.05f, 380, 380 },
-        /* escape */
-        { RGB(220, 240, 255), RGB(170, 200, 255), RGB(20, 30, 50),
-          0.0f, 0.0f, 0.2f, 0.05f, 380, 380 },
-        /* matter */
-        { RGB(230, 190, 120), RGB(190, 150, 100), RGB(40, 25, 10),
-          0.0f, 0.0f, 0.2f, 0.05f, 380, 380 },
-    };
-    static const struct fx_pstyle
-        haste = { RGB(230, 255, 130), RGB(255, 255, 200), RGB(40, 50, 0),
-                  0.0f, 0.0f, 0.1f, 0.07f, 380, 600 },
-        airy = { RGB(225, 240, 255), RGB(180, 215, 255), RGB(10, 20, 40),
-                 0.3f, -0.9f, 0.4f, 0.055f, 700, 1100 },
-        shield = { RGB(255, 230, 140), RGB(255, 210, 90), RGB(60, 40, 0),
-                   0.0f, 0.0f, 0.1f, 0.06f, 900, 900 },
-        dust = { RGB(195, 175, 145), RGB(150, 135, 115), RGB(25, 20, 15),
-                 1.4f, -0.2f, 0.25f, 0.075f, 450, 800 },
-        vision = { RGB(170, 240, 255), RGB(120, 190, 255), RGB(0, 20, 45),
-                   0.0f, 0.0f, 0.1f, 0.055f, 1100, 1100 };
-    struct fx_event le = *ev;
-    boolean rb;
-    int i, x = ev->x, y = ev->y;
-
-    if (!iflags.fx_particles || !isok(x, y))
-        return;
-    if (ev->adtyp == 0) {
-        int k = ev->amount - P_ATTACK_SPELL;
-        const struct fx_pstyle *st = &school[(k < 0 || k > 6) ? 0 : k];
-
-        for (i = 0; i < 26; i++) {
-            float a = (6.2831853f * i) / 26, r = fx_prange(0.8f, 1.1f);
-            struct fx_part *p = fx_spawn_at(
-                data, st, Hallucination, x + 0.5f + r * (float) cos(a),
-                y + 0.5f + r * (float) sin(a), 0.0f, 0.9f,
-                (DWORD) fx_prange(0, 90));
-
-            p->drag = 0.01f; /* comes to rest at the hands */
-            p->vx = -r * 4.4f * (float) cos(a);
-            p->vy = -r * 4.4f * (float) sin(a);
-            p->life = 360;
-        }
-        fx_ring(data, st, Hallucination, x, y, 22, 0.9f, 0.02f, 380, 300);
-        fx_start_timer(data);
-        return;
-    }
-
-    switch (ev->otyp) {
-    /* like scrolls */
-    case SPE_REMOVE_CURSE:
-        le.otyp = SCR_REMOVE_CURSE;
-        break;
-    case SPE_IDENTIFY:
-        le.otyp = SCR_IDENTIFY;
-        break;
-    case SPE_MAGIC_MAPPING:
-        le.otyp = SCR_MAGIC_MAPPING;
-        break;
-    case SPE_CONFUSE_MONSTER:
-        le.otyp = SCR_CONFUSE_MONSTER;
-        break;
-    case SPE_CHARM_MONSTER:
-        le.otyp = SCR_TAMING;
-        break;
-    case SPE_CAUSE_FEAR:
-        le.otyp = SCR_SCARE_MONSTER;
-        break;
-    /* like potions */
-    case SPE_DETECT_MONSTERS:
-        le.type = FXE_QUAFF, le.otyp = POT_MONSTER_DETECTION;
-        break;
-    case SPE_DETECT_TREASURE:
-    case SPE_DETECT_FOOD:
-        le.type = FXE_QUAFF, le.otyp = POT_OBJECT_DETECTION;
-        break;
-    case SPE_RESTORE_ABILITY:
-        le.type = FXE_QUAFF, le.otyp = POT_RESTORE_ABILITY;
-        break;
-    /* like a unicorn horn that cured something */
-    case SPE_CURE_BLINDNESS:
-    case SPE_CURE_SICKNESS:
-        le.type = FXE_UNIHORN, le.amount = 1;
-        fx_detect_particles(data, &le);
-        return;
-    case SPE_HASTE_SELF:
-        /* streaks whipping past on both sides */
-        for (i = 0; i < 64; i++) {
-            float side = (i & 1) ? 1.0f : -1.0f;
-            struct fx_part *p = fx_spawn_at(
-                data, &haste, FALSE, x + 0.5f + side * fx_prange(0.3f, 0.6f),
-                y + fx_prange(0.1f, 0.9f), 0.0f, 0.8f,
-                (DWORD) fx_prange(0, 300));
-
-            p->vx = side * fx_prange(-0.5f, 0.5f);
-            p->vy = fx_prange(-5.5f, -3.5f);
-        }
-        fx_ring(data, &haste, FALSE, x, y, 24, 1.0f, 0.01f, 350, 0);
-        break;
-    case SPE_INVISIBILITY: {
-        /* a pale shimmer gathering and fading out */
-        const struct fx_pstyle *st = fx_wand_style(WAN_MAKE_INVISIBLE, &rb);
-
-        for (i = 0; i < 50; i++)
-            (void) fx_spawn_at(data, st, FALSE,
-                               x + 0.5f + fx_prange(-0.45f, 0.45f),
-                               y + 0.5f + fx_prange(-0.5f, 0.5f), 0.3f, 1.0f,
-                               (DWORD) fx_prange(0, 450));
-        fx_ring(data, st, FALSE, x, y, 30, 1.2f, 0.02f, 550, 0);
-        break;
-    }
-    case SPE_LEVITATION:
-        /* air swirling up from under the hero's feet */
-        for (i = 0; i < 40; i++) {
-            float a = (6.2831853f * i) / 14.0f;
-            struct fx_part *p = fx_spawn_at(
-                data, &airy, FALSE, x + 0.5f + 0.5f * (float) cos(a),
-                y + 0.95f, 0.0f, 1.0f, (DWORD) (i * 18));
-
-            p->vx = -1.2f * (float) sin(a);
-            p->vy = -0.9f;
-        }
-        break;
-    case SPE_PROTECTION:
-        /* a golden haze closing round the hero, then hanging there */
-        for (i = 0; i < 44; i++) {
-            float a = (6.2831853f * i) / 44, r = fx_prange(1.3f, 1.6f);
-            struct fx_part *p = fx_spawn_at(
-                data, &shield, FALSE, x + 0.5f + r * (float) cos(a),
-                y + 0.5f + r * (float) sin(a), 0.0f, 1.0f, 0);
-
-            p->drag = 0.02f;
-            p->vx = -(r - 0.75f) * 3.9f * (float) cos(a);
-            p->vy = -(r - 0.75f) * 3.9f * (float) sin(a);
-        }
-        for (i = 0; i < 40; i++) {
-            float a = fx_prange(0, 6.283f), r = fx_prange(0.4f, 0.8f);
-
-            (void) fx_spawn_at(data, &shield, FALSE,
-                               x + 0.5f + r * (float) cos(a),
-                               y + 0.5f + r * (float) sin(a), 0.1f, 0.8f,
-                               (DWORD) fx_prange(250, 650));
-        }
-        break;
-    case SPE_JUMPING:
-        /* dust kicked up where the hero left and where they land */
-        if (ev->sx == x && ev->sy == y)
-            return;
-        for (i = 0; i < 26; i++) {
-            if (isok(ev->sx, ev->sy))
-                (void) fx_spawn_at(data, &dust, FALSE,
-                                   ev->sx + 0.5f + fx_prange(-0.4f, 0.4f),
-                                   ev->sy + 0.9f, dust.speed, 1.0f, 0);
-            (void) fx_spawn_at(data, &dust, FALSE,
-                               x + 0.5f + fx_prange(-0.4f, 0.4f), y + 0.9f,
-                               dust.speed * 1.3f, 1.0f, 0);
-        }
-        break;
-    case SPE_CLAIRVOYANCE:
-        /* sight reaching out over the surroundings */
-        fx_ring(data, &vision, FALSE, x, y, 110, 8.0f, 0.12f, 1200, 0);
-        for (i = 0; i < 60; i++) {
-            float r = fx_prange(1.0f, 8.0f), a = fx_prange(0, 6.283f);
-
-            (void) fx_spawn_at(data, &vision, FALSE,
-                               x + 0.5f + r * (float) cos(a),
-                               y + 0.5f + r * (float) sin(a) * 0.6f, 0.2f,
-                               0.8f, (DWORD) (r * 90));
-        }
-        break;
-    default:
-        return;
-    }
-    if (le.type == FXE_QUAFF) {
-        le.adtyp = 1;
-        fx_quaff_particles(data, &le);
-        return;
-    }
-    if (le.otyp != ev->otyp) {
-        le.type = FXE_READ;
-        le.adtyp = 1;
-        fx_scroll_particles(data, &le);
-        return;
-    }
-    fx_start_timer(data);
-}
-
-static COLORREF
-fx_lerp_color(COLORREF a, COLORREF b, float t)
-{
-    return RGB((int) (GetRValue(a) + (GetRValue(b) - GetRValue(a)) * t),
-               (int) (GetGValue(a) + (GetGValue(b) - GetGValue(a)) * t),
-               (int) (GetBValue(a) + (GetBValue(b) - GetBValue(a)) * t));
-}
+/* what spawns them and how they move is shared with the other front ends
+   (win/share/fxview.c); only drawing them is here */
 
 /* particles are drawn as soft dots on a black layer, which is then OR-ed
    onto the map: light adds, so they glow over whatever is underneath */
@@ -3794,26 +2378,21 @@ fx_paint_particles(PNHMapWindow data, HDC hdc)
     HGDIOBJ oldBrush, oldPen;
     RECT box;
 
-    if (!data->nparts)
+    if (!fxv.nparts)
         return;
     ox = data->map_orig.x - data->xPos * data->xFrontTile;
     oy = data->map_orig.y - data->yPos * data->yFrontTile;
     tw = data->xFrontTile, th = data->yFrontTile;
     fx_part_layer(data, hdc);
     /* where they are this frame */
-    for (i = 0; i < data->nparts; i++) {
-        struct fx_part *p = &data->parts[i];
-        float s = (float) (long) (now - p->start) / 1000.0f;
-        float keep = (float) pow(p->drag, s), dist;
+    for (i = 0; i < fxv.nparts; i++) {
+        struct fxv_part *p = &fxv.parts[i];
+        float sx, sy, k;
         double px, py, rad;
 
-        if (s < 0)
-            s = 0;
-        /* integrate v*drag^t: distance = v*(drag^t - 1)/ln(drag) */
-        dist = (p->drag > 0.0f && p->drag < 1.0f)
-                   ? (float) ((keep - 1.0f) / log(p->drag)) : s;
-        px = ox + (p->x + p->vx * dist) * tw;
-        py = oy + (p->y + p->vy * dist + 0.5f * p->grav * s * s) * th;
+        fxv_part_at(p, now, &sx, &sy, &k);
+        px = ox + sx * tw;
+        py = oy + sy * th;
         rad = p->size * tw;
         l = min(l, (int) (px - rad * 2.2) - 1);
         t = min(t, (int) (py - rad * 2.2) - 1);
@@ -3827,26 +2406,23 @@ fx_paint_particles(PNHMapWindow data, HDC hdc)
     FillRect(data->partDC, &box, (HBRUSH) GetStockObject(BLACK_BRUSH));
     oldBrush = SelectObject(data->partDC, GetStockObject(DC_BRUSH));
     oldPen = SelectObject(data->partDC, GetStockObject(NULL_PEN));
-    for (i = 0; i < data->nparts; i++) {
-        struct fx_part *p = &data->parts[i];
-        float s = (float) (long) (now - p->start) / 1000.0f;
-        float k = (float) (long) (now - p->start) / (float) p->life;
-        float keep = (float) pow(p->drag, s), dist;
+    for (i = 0; i < fxv.nparts; i++) {
+        struct fxv_part *p = &fxv.parts[i];
+        float sx, sy, k;
         double px, py, rad;
         COLORREF c;
         int ir;
 
+        fxv_part_at(p, now, &sx, &sy, &k);
         if (k < 0 || k >= 1)
             continue;
-        dist = (p->drag > 0.0f && p->drag < 1.0f)
-                   ? (float) ((keep - 1.0f) / log(p->drag)) : s;
-        px = ox + (p->x + p->vx * dist) * tw;
-        py = oy + (p->y + p->vy * dist + 0.5f * p->grav * s * s) * th;
+        px = ox + sx * tw;
+        py = oy + sy * th;
         rad = p->size * tw * (1.0 - 0.55 * k);
-        c = fx_lerp_color(p->c0, p->c1, k);
+        c = fxv_lerp_color(p->c0, p->c1, k);
         /* faint glow around it (added on as light) */
         ir = (int) (rad * 2.2 + 0.5);
-        SetDCBrushColor(data->partDC, fx_lerp_color(RGB(0, 0, 0), c, 0.35f));
+        SetDCBrushColor(data->partDC, fxv_lerp_color(RGB(0, 0, 0), c, 0.35f));
         Ellipse(data->partDC, (int) px - ir, (int) py - ir, (int) px + ir + 1,
                 (int) py + ir + 1);
     }
@@ -3858,23 +2434,20 @@ fx_paint_particles(PNHMapWindow data, HDC hdc)
     /* ...and a solid core on top, so it shows even over a bright ray */
     oldBrush = SelectObject(hdc, GetStockObject(DC_BRUSH));
     oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
-    for (i = 0; i < data->nparts; i++) {
-        struct fx_part *p = &data->parts[i];
-        float s = (float) (long) (now - p->start) / 1000.0f;
-        float k = (float) (long) (now - p->start) / (float) p->life;
-        float keep = (float) pow(p->drag, s), dist;
+    for (i = 0; i < fxv.nparts; i++) {
+        struct fxv_part *p = &fxv.parts[i];
+        float sx, sy, k;
         double px, py, rad;
         int ir;
 
+        fxv_part_at(p, now, &sx, &sy, &k);
         if (k < 0 || k >= 1)
             continue;
-        dist = (p->drag > 0.0f && p->drag < 1.0f)
-                   ? (float) ((keep - 1.0f) / log(p->drag)) : s;
-        px = ox + (p->x + p->vx * dist) * tw;
-        py = oy + (p->y + p->vy * dist + 0.5f * p->grav * s * s) * th;
+        px = ox + sx * tw;
+        py = oy + sy * th;
         rad = p->size * tw * (1.0 - 0.55 * k);
         ir = max(1, (int) (rad + 0.5));
-        SetDCBrushColor(hdc, fx_lerp_color(p->c0, p->c1, k));
+        SetDCBrushColor(hdc, fxv_lerp_color(p->c0, p->c1, k));
         Ellipse(hdc, (int) px - ir, (int) py - ir, (int) px + ir + 1,
                 (int) py + ir + 1);
     }
@@ -4065,7 +2638,7 @@ fx_paint_auras(PNHMapWindow data, HDC hdc)
                     COLORREF c;
 
                     if (hallu)
-                        c = fx_lerp_color(RGB(255, 80, 80), RGB(80, 160, 255),
+                        c = fxv_lerp_color(RGB(255, 80, 80), RGB(80, 160, 255),
                                           (float) fmod(spin * 3 + i * 0.3, 1.0));
                     else if (stun)
                         c = RGB(255, 230, 90);
@@ -4980,11 +3553,8 @@ fx_tick(PNHMapWindow data)
     if (data->shakeDur
         && (long) (now - data->shakeStart) >= (long) data->shakeDur)
         data->shakeDur = 0;
-    for (i = j = 0; i < data->nparts; i++)
-        if ((long) (now - data->parts[i].start) < (long) data->parts[i].life)
-            data->parts[j++] = data->parts[i];
-    data->nparts = j;
-    if (!data->nfloaters && !data->nanims && !data->shakeDur && !data->nparts
+    fxv_expire_parts(now);
+    if (!data->nfloaters && !data->nanims && !data->shakeDur && !fxv.nparts
         && data->fxTimerOn) {
         KillTimer(data->hWnd, FX_TIMER_ID);
         data->fxTimerOn = FALSE;
