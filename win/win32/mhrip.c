@@ -8,6 +8,7 @@
 #include "mhrip.h"
 #include "mhmsg.h"
 #include "mhfont.h"
+#include "mhend.h"
 
 #define RIP_WIDTH 400
 #define RIP_HEIGHT 200
@@ -76,6 +77,13 @@ mswin_display_RIP_window(HWND hWnd)
     win10_monitor_info(hWnd, &monitorInfo);
 
     data = (PNHRIPWindow) GetWindowLongPtr(hWnd, GWLP_USERDATA);
+
+    /* NetHack Modern: a full-window death screen in place of this one */
+    if (mswin_death_screen(data->rip_text, data->window_text)) {
+        mswin_window_mark_dead(mswin_winid_from_handle(hWnd));
+        DestroyWindow(hWnd);
+        return;
+    }
 
     data->x = (int)(RIP_OFFSET_X * monitorInfo.scale);
     data->y = (int)(RIP_OFFSET_Y * monitorInfo.scale);

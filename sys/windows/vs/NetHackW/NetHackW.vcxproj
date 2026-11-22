@@ -283,6 +283,7 @@
     <ClCompile Include="$(WinWin32Dir)mhrip.c" />
     <ClCompile Include="$(WinWin32Dir)mhsplash.c" />
     <ClCompile Include="$(WinWin32Dir)mhcharsel.c" />
+    <ClCompile Include="$(WinWin32Dir)mhend.c" />
     <ClCompile Include="$(WinWin32Dir)mhstatus.c" />
     <ClCompile Include="$(WinWin32Dir)mhtext.c" />
     <ClCompile Include="$(WinWin32Dir)mswproc.c" />
@@ -306,6 +307,7 @@
     <ClInclude Include="$(WinWin32Dir)mhrip.h" />
     <ClInclude Include="$(WinWin32Dir)mhsplash.h" />
     <ClInclude Include="$(WinWin32Dir)mhcharsel.h" />
+    <ClInclude Include="$(WinWin32Dir)mhend.h" />
     <ClInclude Include="$(WinWin32Dir)mhstatus.h" />
     <ClInclude Include="$(WinWin32Dir)mhtext.h" />
     <ClInclude Include="$(WinWin32Dir)winMS.h" />

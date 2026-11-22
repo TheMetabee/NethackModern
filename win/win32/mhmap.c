@@ -18,6 +18,7 @@
 #endif
 #include "mhtheme.h"
 #include "mhmsgwnd.h"
+#include "mhend.h"
 
 #define NHMAP_FONT_NAME TEXT("Terminal")
 #define NHMAP_TTFONT_NAME TEXT("Consolas")
@@ -1775,6 +1776,8 @@ mswin_fx_event(const struct fx_event *ev)
 
     int i;
 
+    if (ev->type == FXE_UI && ev->text && !strcmp(ev->text, "death"))
+        mswin_end_snapshot(); /* the death screen's last words */
     if (!data)
         return;
     fx_motion_event(data, ev); /* lunges and shakes */

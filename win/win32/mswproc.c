@@ -22,6 +22,7 @@
 #include "mhmenu.h"
 #include "mhsplash.h"
 #include "mhcharsel.h"
+#include "mhend.h"
 #include "mhmsg.h"
 #include "mhinput.h"
 #include "mhaskyn.h"
@@ -934,6 +935,9 @@ void
 mswin_display_nhwindow(winid wid, boolean block)
 {
     logDebug("mswin_display_nhwindow(%d, %d)\n", wid, block);
+    /* NetHack Modern: the score list as a table of its own */
+    if (wid != WIN_ERR && wid == gt.toptenwin && mswin_scores_screen())
+        return;
     if (GetNHApp()->windowlist[wid].win != NULL) {
         ShowWindow(GetNHApp()->windowlist[wid].win, SW_SHOW);
         mswin_layout_main_window(GetNHApp()->windowlist[wid].win);
@@ -1010,6 +1014,8 @@ void
 mswin_destroy_nhwindow(winid wid)
 {
     logDebug("mswin_destroy_nhwindow(%d)\n", wid);
+    if (wid != WIN_ERR && wid == gt.toptenwin)
+        mswin_scores_clear(); /* NetHack Modern */
 
     if ((GetNHApp()->windowlist[wid].type == NHW_MAP)
         || (GetNHApp()->windowlist[wid].type == NHW_MESSAGE)
@@ -1082,6 +1088,8 @@ mswin_putstr(winid wid, int attr, const char *text)
 void
 mswin_putstr_ex(winid wid, int attr, const char *text, int app)
 {
+    if (wid != WIN_ERR && wid == gt.toptenwin)
+        mswin_scores_add(attr, text); /* NetHack Modern: for the table */
     if ((wid >= 0) && (wid < MAXWINDOWS)) {
         if (GetNHApp()->windowlist[wid].win == NULL
             && GetNHApp()->windowlist[wid].type == NHW_MENU) {

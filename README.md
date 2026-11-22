@@ -224,6 +224,19 @@ light, medium, dark or deep.
 
 ![The character screen: an elven Wizard, with lawful dimmed and the note "Elven Wizards can't be lawful."](docs/modern/media/character-creation.png)
 
+- **Death screen and high scores.** When your hero dies, a full-window
+  screen takes the place of the old tombstone pop-up. It shows a
+  weathered gravestone, your final words (the messages of your last
+  turn) and how far you got: points, gold, turns, experience level,
+  maximum HP and deepest level. The score list after it is a table, with
+  medals for the top three and your own entry picked out in gold. Each
+  entry gives the hero, cause of death and place. Scroll it with the
+  wheel or the arrow keys.
+
+![The death screen: a gravestone for an Archeologist killed by a falling object, with the last messages and the tally](docs/modern/media/death-screen.png)
+
+![The high score list, with the newest hero highlighted](docs/modern/media/high-scores.png)
+
 ### Tilesets
 
 The View menu can switch between the built-in tiles and any tile image
