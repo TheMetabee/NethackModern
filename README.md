@@ -118,6 +118,8 @@ and feel better while the game underneath stays vanilla.
   on. Bad ones are red or purple, good ones gold or green. Also "Miss",
   "Killed" and "Died", "Level N!" in gold, and "+N XP".
 
+![A Wizard fighting hill orcs with Magicbane: damage numbers, "Fleeing", "Killed" and "+15 XP" float up](docs/modern/media/combat-magicbane.gif)
+
 ### Animation
 
 - **Lunges.** Attackers nudge toward their target and back.
@@ -142,6 +144,8 @@ monster that is summoned or created in sight arrives with a spiral, a
 flash and a ring, coloured by where it came from: violet for create
 monster, fire and smoke for demons, gold for angels, a dusty burst for
 insects and snakes. Gas clouds billow.
+
+![A volley of fireballs bursting among a ring of orcs, with orange fire damage numbers](docs/modern/media/fireball.gif)
 
 ### Lasting status effects (auras)
 
@@ -170,6 +174,8 @@ reach, with a warm tint. Candles, oil lamps and fire creatures flicker;
 lanterns and glowing weapons stay steady. Remembered squares are dimmed
 and solid rock stays dark. How dark out-of-sight areas get can be set to
 light, medium, dark or deep.
+
+![A lit room going dark from a cursed scroll of light, then a lamp lit in the dark casting a warm, flickering glow](docs/modern/media/darkness-and-lamplight.gif)
 
 ### Interface
 
