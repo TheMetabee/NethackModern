@@ -39,9 +39,9 @@ fxv_start_timer(void)
         (*hooks.start_timer)();
 }
 
-/* drop the particles whose life is over */
+/* drop the particles and floaters whose life is over */
 void
-fxv_expire_parts(fxv_ms now)
+fxv_expire(fxv_ms now)
 {
     int i, j;
 
@@ -49,6 +49,10 @@ fxv_expire_parts(fxv_ms now)
         if ((long) (now - fxv.parts[i].start) < (long) fxv.parts[i].life)
             fxv.parts[j++] = fxv.parts[i];
     fxv.nparts = j;
+    for (i = j = 0; i < fxv.nfloaters; i++)
+        if (now - fxv.floaters[i].start < fxv.floaters[i].life)
+            fxv.floaters[j++] = fxv.floaters[i];
+    fxv.nfloaters = j;
 }
 
 /* where a particle is now: it moves at v slowed by drag (distance =
@@ -1489,4 +1493,306 @@ fxv_lerp_color(fxv_color a, fxv_color b, float t)
     return FXV_RGB((int) (FXV_R(a) + (FXV_R(b) - FXV_R(a)) * t),
                (int) (FXV_G(a) + (FXV_G(b) - FXV_G(a)) * t),
                (int) (FXV_B(a) + (FXV_B(b) - FXV_B(a)) * t));
+}
+
+/* ---- floating text ------------------------------------------------ */
+
+/* damage and heal numbers, "Miss", "Killed", status names, "+20 XP",
+   "Level 5!": each floats up off its square and fades */
+
+static struct fxv_floater *fxv_add_floater(const struct fx_event *, int,
+                                           const char *, fxv_color);
+static void fxv_status_floaters(const struct fx_event *);
+
+static fxv_color
+fxv_kind_color(const struct fx_event *ev)
+{
+    if (ev->type == FXE_HEAL)
+        return FXV_RGB(90, 255, 90);
+    switch (ev->adtyp) {
+    case AD_FIRE:
+        return FXV_RGB(255, 150, 40);
+    case AD_COLD:
+        return FXV_RGB(120, 200, 255);
+    case AD_ELEC:
+        return FXV_RGB(255, 240, 80);
+    case AD_DRST:
+    case AD_DRDX:
+    case AD_DRCO:
+        return FXV_RGB(140, 230, 60);
+    case AD_ACID:
+        return FXV_RGB(200, 255, 60);
+    case AD_MAGM:
+        return FXV_RGB(230, 120, 255);
+    case AD_SLEE:
+        return FXV_RGB(170, 140, 255);
+    case AD_DISN:
+        return FXV_RGB(190, 190, 190);
+    case AD_DRLI:
+        return FXV_RGB(190, 80, 210);
+    }
+    /* physical or unknown: red when it's you getting hurt */
+    return (ev->flags & FXF_HERO_TARGET) ? FXV_RGB(255, 70, 70)
+                                         : FXV_RGB(255, 255, 255);
+}
+
+/* start a floater over ev's square: a number, or text if not null */
+static struct fxv_floater *
+fxv_add_floater(const struct fx_event *ev, int amount,
+               const char *text, fxv_color color)
+{
+    struct fxv_floater *f;
+    fxv_ms now = fxv_now();
+    int i, stack = 0;
+
+    /* raise above floaters still young on the same square */
+    for (i = 0; i < fxv.nfloaters; i++) {
+        f = &fxv.floaters[i];
+        if (f->x == ev->x && f->y == ev->y && now - f->start < FXV_STACK_MS
+            && f->stack >= stack)
+            stack = f->stack + 1;
+    }
+
+    if (fxv.nfloaters >= FXV_MAXFLOAT) {
+        /* drop the oldest */
+        memmove(&fxv.floaters[0], &fxv.floaters[1],
+                (FXV_MAXFLOAT - 1) * sizeof fxv.floaters[0]);
+        fxv.nfloaters--;
+    }
+    f = &fxv.floaters[fxv.nfloaters++];
+    f->x = ev->x, f->y = ev->y;
+    f->target = ev->target_id;
+    f->type = ev->type;
+    f->amount = amount;
+    f->text[0] = '\0';
+    if (text)
+        Strcpy(f->text, text);
+    f->life = text ? FXV_TEXT_MS : FXV_FLOAT_MS;
+    f->low = FALSE;
+    f->stack = min(stack, 4);
+    {
+        /* jitter sideways so repeated numbers don't sit exactly on top of
+           each other; a private generator, never the game's RNG */
+        static unsigned long seed = 0;
+
+        if (!seed)
+            seed = (unsigned long) now | 1UL;
+        seed = seed * 1103515245UL + 12345UL;
+        f->xoff = (int) ((seed >> 16) % 61UL) - 30; /* -30..+30 */
+    }
+    f->big = FALSE;
+    f->color = color;
+    f->start = now;
+
+    fxv_start_timer();
+    return f;
+}
+
+/* status names, ToME style: "Confused" floats up when it lands */
+#define FXS_GOOD FXV_RGB(255, 215, 90)
+#define FXS_BAD FXV_RGB(255, 95, 85)
+#define FXS_MIND FXV_RGB(205, 130, 255)
+#define FXS_BODY FXV_RGB(160, 225, 80)
+#define FXS_LOST FXV_RGB(175, 175, 175)
+static const struct fxv_status_name {
+    unsigned long bit;
+    const char *name;
+    fxv_color color;
+} fxv_status_names[] = {
+    { FXA_VERYFAST, "Very fast", FXS_GOOD },
+    { FXA_FAST, "Fast", FXS_GOOD },
+    { FXA_SLOW, "Slowed", FXS_BAD },
+    { FXA_INVIS, "Invisible", FXS_GOOD },
+    { FXA_LEVITATE, "Levitating", FXS_GOOD },
+    { FXA_FLYING, "Flying", FXS_GOOD },
+    { FXA_REFLECT, "Reflecting", FXS_GOOD },
+    { FXA_PROTECT, "Protected", FXS_GOOD },
+    { FXA_CONFUSED, "Confused", FXS_MIND },
+    { FXA_STUNNED, "Stunned", FXS_MIND },
+    { FXA_HALLU, "Hallucinating", FXS_MIND },
+    { FXA_STONING, "Stoning!", FXS_BAD },
+    { FXA_SLIMED, "Slimed!", FXS_BODY },
+    { FXA_SICK, "Sick", FXS_BODY },
+    { FXA_BLIND, "Blinded", FXS_BAD },
+    { FXA_FLEEING, "Fleeing", FXS_BAD },
+    { FXA_CANCELLED, "Cancelled", FXS_BAD },
+    { FXA_HELPLESS, "Paralyzed", FXS_BAD },
+    { FXA_ASLEEP, "Asleep", FXS_MIND },
+    { FXA_CONFLICT, "Conflict", FXS_BAD },
+};
+
+static void
+fxv_status_floaters(const struct fx_event *ev)
+{
+    unsigned long gain = ev->st_gain, lose = ev->st_lose;
+    char buf[32];
+    int i;
+
+    /* speeding up from fast to very fast isn't losing "Fast" */
+    if ((gain & FXA_VERYFAST) && (lose & FXA_FAST))
+        lose &= ~FXA_FAST;
+    if ((lose & FXA_VERYFAST) && (gain & FXA_FAST))
+        gain &= ~FXA_FAST; /* "-Very fast" says enough */
+    if (ev->flags & FXF_BULK)
+        lose = 0UL; /* while running, only news that matters */
+    /* a pet "flees" for a few turns when the game makes it step out of
+       the hero's way ("You stop.  Your dog is in the way!"); that isn't
+       fear, so don't announce it */
+    if (ev->flags & FXF_TARGET_PET) {
+        gain &= ~FXA_FLEEING;
+        lose &= ~FXA_FLEEING;
+    }
+    /* monsters drift in and out of Conflict's reach as they move; their
+       red aura shows it, so only the hero's own gets a name */
+    if (!(ev->flags & FXF_HERO_TARGET)) {
+        gain &= ~FXA_CONFLICT;
+        lose &= ~FXA_CONFLICT;
+    }
+    for (i = 0; i < SIZE(fxv_status_names); i++) {
+        const struct fxv_status_name *s = &fxv_status_names[i];
+
+        if (gain & s->bit)
+            (void) fxv_add_floater(ev, 0, s->name, s->color);
+        if (lose & s->bit) {
+            Snprintf(buf, sizeof buf, "-%s", s->name);
+            (void) fxv_add_floater(ev, 0, buf, FXS_LOST);
+        }
+    }
+}
+
+/* the floating text an fx event makes, if any */
+void
+fxv_floater_event(const struct fx_event *ev)
+{
+    struct fxv_floater *f;
+    fxv_ms now = fxv_now();
+    int i;
+
+    if (ev->type == FXE_STATUS) {
+        if (iflags.fx_status_text)
+            fxv_status_floaters(ev);
+        return;
+    }
+    if (ev->type == FXE_EXP) {
+        /* "+20 XP" in light blue over the hero */
+        if (iflags.fx_exp_text) {
+            char buf[32];
+
+            Snprintf(buf, sizeof buf, "+%d XP", ev->amount);
+            f = fxv_add_floater(ev, 0, buf, FXV_RGB(120, 200, 255));
+            f->xoff = 0;
+        }
+        return;
+    }
+    if (ev->type == FXE_LEVEL) {
+        /* "Level 5!" in big gold letters that linger above the hero */
+        if (iflags.fx_status_text) {
+            char buf[32];
+            boolean up = (ev->flags & FXF_HIT) != 0;
+
+            Snprintf(buf, sizeof buf, up ? "Level %d!" : "Level %d",
+                     ev->amount);
+            f = fxv_add_floater(ev, 0, buf,
+                               up ? FXV_RGB(255, 205, 60) : FXV_RGB(170, 120, 210));
+            f->big = TRUE;
+            f->life = FXV_LEVEL_MS;
+            f->xoff = 0; /* centred over the hero */
+        }
+        return;
+    }
+    if (!iflags.fx_damage_numbers)
+        return;
+    if (ev->type == FXE_DEATH) {
+        /* "Killed" where the health bar was (pets: a grey "Died") */
+        boolean pet = (ev->flags & FXF_TARGET_PET) != 0;
+
+        f = fxv_add_floater(ev, 0, pet ? "Died" : "Killed",
+                           pet ? FXV_RGB(170, 170, 170) : FXV_RGB(235, 60, 50));
+        f->life = FXV_KILL_MS;
+        f->low = TRUE;
+        f->xoff = 0;
+        f->stack = 0;
+        return;
+    }
+    if (ev->type == FXE_MISS) {
+        /* "Miss" floats up off whoever dodged */
+        (void) fxv_add_floater(ev, 0, "Miss", FXV_RGB(190, 190, 190));
+        return;
+    }
+    if (ev->type != FXE_DAMAGE && ev->type != FXE_HEAL)
+        return;
+    if (ev->amount <= 0)
+        return;
+    /* small heals are almost always regeneration; showing every one
+       would be noise */
+    if (ev->type == FXE_HEAL && ev->amount < max(2, ev->hpmax / 10))
+        return;
+
+    /* while running/travelling/occupied, keep one running total per
+       creature instead of a pile of numbers */
+    if (ev->flags & FXF_BULK) {
+        for (i = 0; i < fxv.nfloaters; i++) {
+            f = &fxv.floaters[i];
+            if (f->target == ev->target_id && f->type == ev->type) {
+                f->amount += ev->amount;
+                f->x = ev->x, f->y = ev->y;
+                f->start = now;
+                f->color = fxv_kind_color(ev);
+                return;
+            }
+        }
+    }
+
+    f = fxv_add_floater(ev, ev->amount, (const char *) 0,
+                       fxv_kind_color(ev));
+    f->big = (ev->type == FXE_DAMAGE
+              && (ev->hp <= 0 || ev->amount * 4 >= max(ev->hpmax, 1)));
+}
+
+/* where a floater is at 'now': its centre in squares, and how bright
+   (1 = full, falling to 0 as it fades out); FALSE once it's gone */
+boolean
+fxv_floater_at(const struct fxv_floater *f, fxv_ms now, float *cx,
+               float *cy, float *bright)
+{
+    fxv_ms age = now - f->start;
+    double t, rise, fadefrom;
+
+    if (age >= f->life)
+        return FALSE;
+    t = (double) age / f->life; /* 0..1 */
+    if (f->low) {
+        /* "Killed": starts at the health bar, drifts up a little */
+        rise = 0.35 * (1.0 - (1.0 - t) * (1.0 - t)) - 0.6;
+        fadefrom = 0.6;
+    } else if (f->life == FXV_LEVEL_MS) {
+        /* level messages rise in the first third, hang above the hero,
+           then fade only over the last quarter */
+        double tr = min(1.0, t / 0.33);
+
+        rise = 1.3 * (1.0 - (1.0 - tr) * (1.0 - tr));
+        fadefrom = 0.75;
+    } else {
+        /* rise fast, then ease out */
+        rise = 0.9 * (1.0 - (1.0 - t) * (1.0 - t));
+        fadefrom = 0.66;
+    }
+    *cx = (float) f->x + 0.5f + (float) f->xoff / 100.0f;
+    *cy = (float) f->y + 1.0f / 3.0f - (float) rise - (float) f->stack * 0.45f;
+    *bright = (t > fadefrom)
+                  ? (float) (1.0 - (t - fadefrom) / (1.0 - fadefrom)) : 1.0f;
+    return TRUE;
+}
+
+/* what a floater says: its text, or its number ("-5" when the hero is
+   hurt, "+12" for a heal) */
+void
+fxv_floater_text(const struct fxv_floater *f, char *buf, size_t bufsz)
+{
+    if (f->text[0])
+        Snprintf(buf, bufsz, "%s", f->text);
+    else
+        Snprintf(buf, bufsz, "%s%d",
+                 f->type == FXE_HEAL ? "+" : f->target == 0 ? "-" : "",
+                 f->amount);
 }

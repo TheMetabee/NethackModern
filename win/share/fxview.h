@@ -3,11 +3,12 @@
 
 /*
  * The effects every tiles front end shows (NetHackW now, SDL next),
- * kept apart from how any one of them draws. This part is the
- * particles: sparks, rays, bursts, swirls and the like, spawned from
- * the fx event stream (fx.h) and moving by themselves. A front end
- * draws fxv.parts[] where fxv_part_at() says, and keeps a frame timer
- * running while there are any.
+ * kept apart from how any one of them draws. So far: particles (sparks,
+ * rays, bursts, swirls) and floating text (damage numbers, status
+ * names), made from the fx event stream (fx.h) and moving by
+ * themselves. A front end draws fxv.parts[] and fxv.floaters[] where
+ * fxv_part_at() and fxv_floater_at() say, keeps a frame timer running
+ * while there are any, and calls fxv_expire() on each frame.
  *
  * Positions are in map squares (a square's centre is +0.5), times in
  * milliseconds, colours 0x00BBGGRR (the same layout as a Win32
@@ -42,9 +43,34 @@ struct fxv_part {
     fxv_ms start, life;
 };
 
+/* floating text: numbers, "Miss", "Killed", status names, "Level 5!" */
+#define FXV_MAXFLOAT 64
+#define FXV_FLOAT_MS 900     /* lifetime of one number */
+#define FXV_TEXT_MS 1400     /* lifetime of a status name */
+#define FXV_LEVEL_MS 2600    /* lifetime of "Level N!" */
+#define FXV_KILL_MS 1100     /* lifetime of "Killed" */
+#define FXV_STACK_MS 400     /* a new number on a square this young stacks */
+
+struct fxv_floater {
+    int x, y;               /* map square */
+    unsigned target;        /* m_id, 0 = hero */
+    int type;               /* FXE_DAMAGE, FXE_HEAL or FXE_STATUS */
+    int amount;
+    char text[24];          /* status name; empty for numbers */
+    fxv_ms life;            /* how long it floats, ms */
+    int stack;              /* raised this many slots to avoid overlap */
+    int xoff;               /* sideways jitter, percent of a tile */
+    boolean low;            /* starts at the health bar, rises less */
+    boolean big;            /* large hit: drawn bigger */
+    fxv_color color;
+    fxv_ms start;           /* when (re)started */
+};
+
 struct fxv_state {
     struct fxv_part parts[FXV_MAXPART];
     int nparts;
+    struct fxv_floater floaters[FXV_MAXFLOAT];
+    int nfloaters;
 };
 extern struct fxv_state fxv;
 
@@ -57,8 +83,18 @@ void fxv_init(const struct fxv_hooks *);
 fxv_ms fxv_now(void);
 void fxv_start_timer(void);
 
+/* drop the particles and floaters that are done */
+void fxv_expire(fxv_ms now);
+
+/* floating text: made from fx events; drawn by the front end at
+   fxv_floater_at() (centre, squares; brightness 0..1), saying
+   fxv_floater_text(), big if ->big, smaller if it's text */
+void fxv_floater_event(const struct fx_event *);
+boolean fxv_floater_at(const struct fxv_floater *, fxv_ms now, float *cx,
+                       float *cy, float *bright);
+void fxv_floater_text(const struct fxv_floater *, char *buf, size_t bufsz);
+
 /* the particles' life */
-void fxv_expire_parts(fxv_ms now);
 /* where a particle is at 'now', in squares, and how far through its
    life (0..1; outside that range it isn't showing) */
 void fxv_part_at(const struct fxv_part *, fxv_ms now, float *x, float *y,
