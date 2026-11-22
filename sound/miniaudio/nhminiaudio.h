@@ -25,5 +25,10 @@ void nhma_set_volumes(float effects, float ambience);
    (resuming where it was stopped, if it's the same track); NULL fades it
    out. */
 void nhma_music(const char *path, float volume, unsigned fade_ms, int loop);
+/* NetHack Modern: for the effects log. The audio device and the buffer
+   it actually got, as text; and how long the last nhma_play() took to
+   load and start its sound, in microseconds */
+const char *nhma_describe(void);
+unsigned long nhma_last_play_us(void);
 
 #endif /* NHMINIAUDIO_H */

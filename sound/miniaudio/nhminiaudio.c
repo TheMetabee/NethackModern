@@ -12,6 +12,32 @@
 #include "miniaudio.h"
 #include "nhminiaudio.h"
 
+#include <stdio.h>
+#ifndef _WIN32
+#include <time.h>
+#endif
+
+static unsigned long last_play_us; /* see nhma_last_play_us() */
+
+/* a microsecond clock, for timing how long a sound takes to start */
+static unsigned long
+nhma_now_us(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER f, c;
+
+    if (!QueryPerformanceFrequency(&f) || !QueryPerformanceCounter(&c))
+        return 0;
+    return (unsigned long) (c.QuadPart * 1000000 / f.QuadPart);
+#else
+    struct timespec ts;
+
+    (void) clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long) ts.tv_sec * 1000000UL
+           + (unsigned long) (ts.tv_nsec / 1000);
+#endif
+}
+
 #define NHMA_VOICES 32 /* sounds that can play at once */
 
 static ma_engine engine;
@@ -71,8 +97,9 @@ nhma_set_master_volume(float volume)
         (void) ma_engine_set_volume(&engine, volume);
 }
 
-int
-nhma_play(const char *path, float volume, float pitch, float pan)
+/* the body of nhma_play(), which times it */
+static int
+nhma_play_sound(const char *path, float volume, float pitch, float pan)
 {
     int i, slot = -1;
 
@@ -102,6 +129,46 @@ nhma_play(const char *path, float volume, float pitch, float pan)
         return 0;
     }
     return 1;
+}
+
+int
+nhma_play(const char *path, float volume, float pitch, float pan)
+{
+    unsigned long t0 = nhma_now_us();
+    int ok = nhma_play_sound(path, volume, pitch, pan);
+
+    last_play_us = nhma_now_us() - t0;
+    return ok;
+}
+
+unsigned long
+nhma_last_play_us(void)
+{
+    return last_play_us;
+}
+
+/* NetHack Modern: the device and the buffer it actually got (the sound
+   server can give a bigger one than asked for), for the effects log */
+const char *
+nhma_describe(void)
+{
+    static char buf[MA_MAX_DEVICE_NAME_LENGTH + 160];
+    ma_device *dev;
+    ma_uint32 rate, frames, periods;
+
+    if (!engine_ok || !(dev = ma_engine_get_device(&engine)))
+        return "no device";
+    rate = dev->playback.internalSampleRate;
+    frames = dev->playback.internalPeriodSizeInFrames;
+    periods = dev->playback.internalPeriods;
+    snprintf(buf, sizeof buf,
+             "backend=%s device=\"%s\" rate=%u period=%u frames"
+             " (%.1f ms) x %u = %.1f ms buffer",
+             ma_get_backend_name(dev->pContext->backend), dev->playback.name,
+             (unsigned) rate, (unsigned) frames,
+             rate ? 1000.0 * frames / rate : 0.0, (unsigned) periods,
+             rate ? 1000.0 * frames * periods / rate : 0.0);
+    return buf;
 }
 
 /* NetHack Modern: one looping ambience at a time, streamed from disk.

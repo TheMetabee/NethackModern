@@ -226,6 +226,8 @@ ma_init_nhsound(void)
              ma.dir, ma.nvar[MAG_HIT], ma.nvar[MAG_HURT], ma.nvar[MAG_MISS],
              ma.nvar[MAG_DEATH]);
     fx_debug_log(path);
+    Snprintf(path, sizeof path, "miniaudio: %s", nhma_describe());
+    fx_debug_log(path);
 }
 
 static void
@@ -266,8 +268,10 @@ ma_play_group(enum ma_group g, float volume, float pitch, float pan)
     Snprintf(path, sizeof path, "%s%s_%u.wav", ma.dir, ma_group_names[g],
              1 + ma_rand((unsigned) ma.nvar[g]));
     started = nhma_play(path, volume, pitch, pan);
-    Snprintf(note, sizeof note, "miniaudio: play %s vol=%.2f -> %s", path,
-             (double) volume, started ? "started" : "FAILED");
+    Snprintf(note, sizeof note,
+             "miniaudio: play %s vol=%.2f -> %s in %lu us", path,
+             (double) volume, started ? "started" : "FAILED",
+             nhma_last_play_us());
     fx_debug_log(note);
 }
 
@@ -334,8 +338,10 @@ ma_play_named(const char *name, float volume, float pitch, float pan)
         char note[MA_PATHMAX + 96];
         int started = nhma_play(path, volume, pitch, pan);
 
-        Snprintf(note, sizeof note, "miniaudio: play %s vol=%.2f -> %s",
-                 path, (double) volume, started ? "started" : "FAILED");
+        Snprintf(note, sizeof note,
+                 "miniaudio: play %s vol=%.2f -> %s in %lu us", path,
+                 (double) volume, started ? "started" : "FAILED",
+                 nhma_last_play_us());
         fx_debug_log(note);
     }
 }
@@ -2218,8 +2224,10 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
                 int started = nhma_play(path, max(vol, 0.3f),
                                         ma_frand(0.95f, 1.05f), 0.0f);
 
-                Snprintf(note, sizeof note, "miniaudio: play %s -> %s", path,
-                         started ? "started" : "FAILED");
+                Snprintf(note, sizeof note,
+                         "miniaudio: play %s -> %s in %lu us", path,
+                         started ? "started" : "FAILED",
+                         nhma_last_play_us());
                 fx_debug_log(note);
             }
             return;
