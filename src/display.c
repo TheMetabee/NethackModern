@@ -1193,6 +1193,8 @@ tmp_at(coordxy x, coordxy y)
         tglyph->sidx = 0;
         tglyph->style = x;
         tglyph->glyph = y;
+        if (x == DISP_FLASH || x == DISP_ALWAYS || x == DISP_TETHER)
+            fx_flight_begin(y); /* NetHack Modern: a missile's heading */
         flush_screen(0); /* flush buffered glyphs */
         return;
 
@@ -1218,6 +1220,10 @@ tmp_at(coordxy x, coordxy y)
             break;
 
         case DISP_END:
+            /* NetHack Modern: landed; its square is drawn plain again */
+            if (tglyph->style == DISP_FLASH || tglyph->style == DISP_ALWAYS
+                || tglyph->style == DISP_TETHER)
+                fx_flight_end();
             if (tglyph->style == DISP_BEAM || tglyph->style == DISP_ALL) {
                 int i;
 
@@ -1236,6 +1242,8 @@ tmp_at(coordxy x, coordxy y)
                             newsym(tglyph->saved[i].x, tglyph->saved[i].y);
                             tglyph->shown_on_map[i] = FALSE;
                         }
+                        fx_flight_step(tglyph->saved[i - 1].x,
+                                       tglyph->saved[i - 1].y);
                         if (cansee(tglyph->saved[i - 1].x,
                                    tglyph->saved[i - 1].y)) {
                             tglyph->shown_on_map[i - 1] = TRUE;
@@ -1269,6 +1277,10 @@ tmp_at(coordxy x, coordxy y)
         default: /* do it */
             if (!isok(x, y))
                 break;
+            /* NetHack Modern: the missile moves on before its last square
+               is put back, so that square is drawn plain again */
+            if (tglyph->style != DISP_BEAM && tglyph->style != DISP_ALL)
+                fx_flight_step(x, y);
             if (tglyph->style == DISP_BEAM || tglyph->style == DISP_ALL) {
                 if (tglyph->sidx >= TMP_AT_MAX_GLYPHS)
                     break; /* too many locations */

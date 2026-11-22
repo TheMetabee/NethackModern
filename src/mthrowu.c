@@ -656,8 +656,10 @@ m_throw(
     if (sym) {
         if (!tethered_weapon) {
             tmp_at(DISP_FLASH, obj_to_glyph(singleobj, rn2_on_display_rng));
+            fx_flight_hint(dx, dy); /* NetHack Modern */
         } else {
             tmp_at(DISP_TETHER, obj_to_glyph(singleobj, rn2_on_display_rng));
+            fx_flight_hint(dx, dy); /* NetHack Modern */
             /*
              * Considerations for a tethered object based on throwit()/bhit() :
              * - wall of water/lava will stop items, and triggers return.
@@ -874,6 +876,7 @@ return_from_mtoss(
 
             if (x != magr->mx || y != magr->my) {
                 tmp_at(DISP_FLASH, obj_to_glyph(otmp, rn2_on_display_rng));
+                fx_flight_hint(-dx, -dy); /* NetHack Modern: coming back */
                 while (isok(x, y) && (x != magr->mx || y != magr->my)) {
                     tmp_at(x, y);
                     nh_delay_output();

@@ -1451,6 +1451,7 @@ sho_obj_return_to_u(struct obj *obj)
         int x = gb.bhitpos.x - u.dx, y = gb.bhitpos.y - u.dy;
 
         tmp_at(DISP_FLASH, obj_to_glyph(obj, rn2_on_display_rng));
+        fx_flight_hint(-u.dx, -u.dy); /* NetHack Modern: coming back */
         while (isok(x,y) && (x != u.ux || y != u.uy)) {
             tmp_at(x, y);
             nh_delay_output();
@@ -1879,6 +1880,7 @@ throwit(
                but we want to force breakage even when location IS_SOFT() */
             || obj->oclass == VENOM_CLASS) {
             tmp_at(DISP_FLASH, obj_to_glyph(obj, rn2_on_display_rng));
+            fx_flight_hint(u.dx, u.dy); /* NetHack Modern */
             tmp_at(gb.bhitpos.x, gb.bhitpos.y);
             nh_delay_output();
             tmp_at(DISP_END, 0);

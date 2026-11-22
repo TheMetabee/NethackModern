@@ -227,6 +227,7 @@ static void fx_paint_translucent(PNHMapWindow, HDC);
 static short fx_floor_tile(PNHMapWindow, int, int);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect);
+static int fx_spun_x = -1, fx_spun_y = -1; /* a missile was drawn turned */
 
 #if (VERSION_MAJOR < 4) && (VERSION_MINOR < 4) && (PATCHLEVEL < 2)
 static void nhglyph2charcolor(short glyph, uchar *ch, int *color);
@@ -895,6 +896,12 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
         PMSNHMsgPrintGlyph msg_data = (PMSNHMsgPrintGlyph) lParam;
         setGlyph(data, msg_data->x, msg_data->y,
             &msg_data->glyphinfo, &msg_data->bkglyphinfo);
+        if (msg_data->x == fx_spun_x && msg_data->y == fx_spun_y) {
+            /* NetHack Modern: a missile was drawn turned here */
+            fx_spun_x = fx_spun_y = -1;
+            data->locDirty[msg_data->x][msg_data->y] = TRUE;
+            data->mapDirty = TRUE;
+        }
         if (iflags.fx_auras
             && ((msg_data->glyphinfo.fxauras & FX_AURA_MASK)
                 || msg_data->glyphinfo.glyph == cmap_to_glyph(S_poisoncloud)
@@ -1073,6 +1080,247 @@ onCreate(HWND hWnd, WPARAM wParam, LPARAM lParam)
 
 }
 
+/* NetHack Modern: a thrown or fired object in flight is turned to point
+   the way it's going.  Which way the tile's own picture points is
+   measured from the picture: the long axis of what's drawn, with the tip
+   taken as its upper end (weapon art points up) or, when it lies flat,
+   its right end.  Things that aren't long and thin (rocks, potions,
+   boulders) are left as they are. */
+#define FX_PI 3.14159265358979
+
+static boolean
+fx_paint_spun(PNHMapWindow data, int i, int j, int tile, const RECT *rect,
+              int hdx, int hdy, boolean overbk)
+{
+    static HDC srcDC, dstDC;
+    static HBITMAP srcBmp, dstBmp;
+    static DWORD *src, *dst;
+    static int sw, sh, dw, dh;
+    int tw = GetNHApp()->mapTile_X, th = GetNHApp()->mapTile_Y;
+    int w = data->xBackTile, h = data->yBackTile;
+    boolean builtin = (GetNHApp()->bmpMapTiles == GetNHApp()->bmpTiles);
+    int x, y, n = 0, margin;
+    double sx = 0, sy = 0, cxx = 0, cyy = 0, cxy = 0, cx, cy, a, l1, l2,
+           tr, det, ux, uy, rad = 0, rot, scale, cr, sr;
+    static unsigned char *mask;
+    static int masksz;
+    BLENDFUNCTION bf;
+    int fx_spin_floor;
+    glyph_info floorgi;
+
+    if (tw < 4 || th < 4 || w < 4 || h < 4)
+        return FALSE;
+    /* a bare room floor: what tile sets that draw everything on a floor
+       drew this one on */
+    map_glyphinfo(i, j, cmap_to_glyph(S_room), 0, &floorgi);
+    fx_spin_floor = floorgi.gm.tileidx;
+    /* the tile (and a bare floor below it) as plain pixels */
+    if (!srcDC || sw != tw || sh != th * 2) {
+        BITMAPINFO bi;
+
+        if (!srcDC)
+            srcDC = CreateCompatibleDC(data->backBufferDC);
+        if (srcBmp)
+            DeleteObject(srcBmp);
+        ZeroMemory(&bi, sizeof bi);
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = tw;
+        bi.bmiHeader.biHeight = -(th * 2);
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        srcBmp = CreateDIBSection(srcDC, &bi, DIB_RGB_COLORS,
+                                  (void **) &src, NULL, 0);
+        if (!srcBmp)
+            return FALSE;
+        SelectObject(srcDC, srcBmp);
+        sw = tw, sh = th * 2;
+    }
+    if (masksz < tw * th) {
+        free(mask);
+        mask = (unsigned char *) malloc(tw * th);
+        masksz = mask ? tw * th : 0;
+        if (!mask)
+            return FALSE;
+    }
+    BitBlt(srcDC, 0, 0, tw, th, data->tileDC, TILEBMP_X(tile),
+           TILEBMP_Y(tile), SRCCOPY);
+    if (!builtin && fx_spin_floor >= 0)
+        BitBlt(srcDC, 0, th, tw, th, data->tileDC, TILEBMP_X(fx_spin_floor),
+               TILEBMP_Y(fx_spin_floor), SRCCOPY);
+    GdiFlush();
+
+    /* what's drawn: not the see-through colour, and (for tile sets that
+       draw everything on a floor) not the floor; their frame is left out */
+    margin = builtin ? 0 : tw / 12;
+    for (y = 0; y < th; y++)
+        for (x = 0; x < tw; x++) {
+            DWORD p = src[y * tw + x];
+            int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+            boolean on = !(r == 71 && g == 108 && b == 108);
+
+            if (on && !builtin) {
+                if (x < margin || y < margin || x >= tw - margin
+                    || y >= th - margin) {
+                    on = FALSE;
+                } else if (fx_spin_floor >= 0) {
+                    DWORD q = src[(th + y) * tw + x];
+                    int d = max(abs(r - (int) ((q >> 16) & 255)),
+                                max(abs(g - (int) ((q >> 8) & 255)),
+                                    abs(b - (int) (q & 255))));
+
+                    on = (d > 28);
+                }
+            }
+            mask[y * tw + x] = (unsigned char) on;
+            if (on) {
+                n++, sx += x, sy += y;
+                cxx += (double) x * x, cyy += (double) y * y,
+                cxy += (double) x * y;
+            }
+        }
+    if (n < 6)
+        return FALSE;
+    cx = sx / n, cy = sy / n;
+    cxx = cxx / n - cx * cx, cyy = cyy / n - cy * cy, cxy = cxy / n - cx * cy;
+    tr = cxx + cyy, det = cxx * cyy - cxy * cxy;
+    l1 = tr / 2 + sqrt(max(0.0, tr * tr / 4 - det));
+    l2 = tr / 2 - sqrt(max(0.0, tr * tr / 4 - det));
+    if (l1 < 3.0 * max(l2, 0.01))
+        return FALSE; /* not long and thin */
+    a = 0.5 * atan2(2 * cxy, cxx - cyy); /* the long axis (y down) */
+    ux = cos(a), uy = sin(a);
+    {
+        /* which end is the tip: the steel one (blade, point, arrowhead:
+           bright and colourless) where that's clear, else the narrower
+           one (feathers, flights and hilts are wide), else the upper one
+           (weapon art points up), or the right one if it lies flat.
+           (ux, uy) points to the 'h' end; 'l' is the other. */
+        double tmax = 0, sh = 0, sl = 0, wh = 0, wl = 0;
+        int nh = 0, nl = 0;
+        boolean flip;
+
+        for (y = 0; y < th; y++)
+            for (x = 0; x < tw; x++)
+                if (mask[y * tw + x])
+                    tmax = max(tmax, fabs((x - cx) * ux + (y - cy) * uy));
+        for (y = 0; y < th; y++)
+            for (x = 0; x < tw; x++)
+                if (mask[y * tw + x]) {
+                    double t = (x - cx) * ux + (y - cy) * uy,
+                           s = fabs(-(x - cx) * uy + (y - cy) * ux);
+                    DWORD p = src[y * tw + x];
+                    int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+                    int hi = max(r, max(g, b)), lo = min(r, min(g, b));
+                    double steel = (hi / 255.0)
+                                   * (1.0 - (double) (hi - lo) / max(hi, 1));
+
+                    if (t > tmax / 2)
+                        sh += steel, wh += s, nh++;
+                    else if (t < -tmax / 2)
+                        sl += steel, wl += s, nl++;
+                }
+        if (nh)
+            sh /= nh, wh /= nh;
+        if (nl)
+            sl /= nl, wl /= nl;
+        if (fabs(sh - sl) > 0.08)
+            flip = (sl > sh);
+        else if (fabs(wh - wl) > 0.15 * max(wh, wl))
+            flip = (wl < wh);
+        else
+            flip = (fabs(uy) > 0.26) ? (uy > 0) : (ux < 0);
+        if (flip)
+            a += FX_PI;
+    }
+    /* now 'a' is the way the picture points; turn it to the heading */
+    rot = atan2((double) hdy, (double) hdx) - a;
+    rot = fmod(rot + 3 * FX_PI, 2 * FX_PI) - FX_PI;
+    if (fabs(rot) < 0.05)
+        return FALSE; /* already points that way */
+
+    /* shrink it if turning it would take it past the square's edge */
+    for (y = 0; y < th; y++)
+        for (x = 0; x < tw; x++)
+            if (mask[y * tw + x])
+                rad = max(rad, sqrt((x + 0.5 - cx) * (x + 0.5 - cx)
+                                    + (y + 0.5 - cy) * (y + 0.5 - cy)));
+    scale = min(1.0, (min(tw, th) * 0.5) / max(rad, 1.0));
+
+    if (!dstDC || dw != w || dh != h) {
+        BITMAPINFO bi;
+
+        if (!dstDC)
+            dstDC = CreateCompatibleDC(data->backBufferDC);
+        if (dstBmp)
+            DeleteObject(dstBmp);
+        ZeroMemory(&bi, sizeof bi);
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = w;
+        bi.bmiHeader.biHeight = -h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        dstBmp = CreateDIBSection(dstDC, &bi, DIB_RGB_COLORS,
+                                  (void **) &dst, NULL, 0);
+        if (!dstBmp)
+            return FALSE;
+        SelectObject(dstDC, dstBmp);
+        dw = w, dh = h;
+    }
+    /* each pixel of the square, back through the turn to the picture
+       (smoothly between its pixels), premultiplied for AlphaBlend */
+    cr = cos(-rot), sr = sin(-rot);
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            double qx = ((x + 0.5) * tw / w - tw * 0.5) / scale,
+                   qy = ((y + 0.5) * th / h - th * 0.5) / scale;
+            double px = cx + 0.5 + qx * cr - qy * sr - 0.5,
+                   py = cy + 0.5 + qx * sr + qy * cr - 0.5;
+            int x0 = (int) floor(px), y0 = (int) floor(py), k;
+            double fx = px - x0, fy = py - y0, acc[4] = { 0, 0, 0, 0 };
+
+            for (k = 0; k < 4; k++) {
+                int xx = x0 + (k & 1), yy = y0 + (k >> 1);
+                double wgt = ((k & 1) ? fx : 1 - fx) * ((k >> 1) ? fy : 1 - fy);
+                DWORD p;
+
+                if (xx < 0 || yy < 0 || xx >= tw || yy >= th
+                    || !mask[yy * tw + xx])
+                    continue;
+                p = src[yy * tw + xx];
+                acc[0] += wgt * ((p >> 16) & 255);
+                acc[1] += wgt * ((p >> 8) & 255);
+                acc[2] += wgt * (p & 255);
+                acc[3] += wgt;
+            }
+            dst[y * w + x] = ((DWORD) (acc[3] * 255 + 0.5) << 24)
+                             | ((DWORD) (acc[0] + 0.5) << 16)
+                             | ((DWORD) (acc[1] + 0.5) << 8)
+                             | (DWORD) (acc[2] + 0.5);
+        }
+    GdiFlush();
+    if (!overbk) {
+        /* nothing under it was sent (it's in flight): the floor there */
+        int bk = fx_floor_tile(data, i, j);
+
+        if (bk >= 0)
+            StretchBlt(data->backBufferDC, rect->left, rect->top, w, h,
+                       data->tileDC, TILEBMP_X(bk), TILEBMP_Y(bk), tw, th,
+                       SRCCOPY);
+        else
+            FillRect(data->backBufferDC, rect,
+                     (HBRUSH) GetStockObject(BLACK_BRUSH));
+    }
+    fx_spun_x = i, fx_spun_y = j;
+    bf.BlendOp = AC_SRC_OVER;
+    bf.BlendFlags = 0;
+    bf.SourceConstantAlpha = 255;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+    return GdiAlphaBlend(data->backBufferDC, rect->left, rect->top, w, h,
+                         dstDC, 0, 0, w, h, bf);
+}
+
 static void
 paintTile(PNHMapWindow data, int i, int j, RECT * rect)
 {
@@ -1109,13 +1357,21 @@ paintTile(PNHMapWindow data, int i, int j, RECT * rect)
             layer++;
         }
         if (glyph != bkglyph) {
+            int fdx, fdy;
+
             /* rely on tileidx provided by NetHack core */
             ntile = data->map[i][j].gm.tileidx;
             t_x = TILEBMP_X(ntile);
             t_y = TILEBMP_Y(ntile);
 
+            if (iflags.fx_theme && iflags.fx_turn_missiles
+                && glyph_is_object(glyph)
+                && fx_flight_at(i, j, &fdx, &fdy)
+                && fx_paint_spun(data, i, j, ntile, rect, fdx, fdy,
+                                 layer > 0 && bkglyph != GLYPH_UNEXPLORED)) {
+                ; /* NetHack Modern: a missile, pointing where it's going */
             /* Don't use all black GLYPH_UNEXPLORED tile as a background */
-            if (layer > 0 && bkglyph != GLYPH_UNEXPLORED) {
+            } else if (layer > 0 && bkglyph != GLYPH_UNEXPLORED) {
                 (*GetNHApp()->lpfnTransparentBlt)(
                     data->backBufferDC, rect->left, rect->top,
                     data->xBackTile, data->yBackTile, data->tileDC, t_x,

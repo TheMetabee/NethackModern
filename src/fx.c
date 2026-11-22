@@ -1490,3 +1490,57 @@ fx_light_map(unsigned char bright[COLNO][ROWNO],
 #undef FX_MAXLIGHTS
     return flickering;
 }
+
+/* NetHack Modern: a thrown or fired object in flight (shown by tmp_at),
+   so the window port can turn it to point the way it's going.  The
+   direction comes from its last step, or before the first step from a
+   hint given by whoever launched it. */
+static struct {
+    boolean on, placed;
+    coordxy x, y;
+    schar dx, dy;
+} fx_fly;
+
+void
+fx_flight_begin(int glyph)
+{
+    fx_fly.on = glyph_is_object(glyph);
+    fx_fly.placed = FALSE;
+    fx_fly.dx = fx_fly.dy = 0;
+}
+
+void
+fx_flight_hint(int dx, int dy)
+{
+    if (fx_fly.on && !fx_fly.placed)
+        fx_fly.dx = (schar) sgn(dx), fx_fly.dy = (schar) sgn(dy);
+}
+
+void
+fx_flight_step(coordxy x, coordxy y)
+{
+    if (!fx_fly.on)
+        return;
+    if (fx_fly.placed && (x != fx_fly.x || y != fx_fly.y))
+        fx_fly.dx = (schar) sgn(x - fx_fly.x),
+        fx_fly.dy = (schar) sgn(y - fx_fly.y);
+    fx_fly.x = x, fx_fly.y = y;
+    fx_fly.placed = TRUE;
+}
+
+void
+fx_flight_end(void)
+{
+    fx_fly.on = FALSE;
+}
+
+/* is the object shown at x,y in flight?  if so, which way */
+boolean
+fx_flight_at(coordxy x, coordxy y, int *dx, int *dy)
+{
+    if (!fx_fly.on || !fx_fly.placed || x != fx_fly.x || y != fx_fly.y
+        || (!fx_fly.dx && !fx_fly.dy))
+        return FALSE;
+    *dx = fx_fly.dx, *dy = fx_fly.dy;
+    return TRUE;
+}

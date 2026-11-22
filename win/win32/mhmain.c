@@ -1495,6 +1495,7 @@ nh_compose_unicode_screenshot(void)
 #define TB_SHADE 9    /* arg: fx_shade 0..3, or 4 for lighting off */
 #define TB_MSGPOS 10  /* arg: fx_msg_pos 0..5 */
 #define TB_TILES 11   /* arg: 0 built-in tiles, 1 pick a tile file */
+#define TB_MISSILES 12 /* missiles point where they fly, or not */
 
 extern void ma_apply_volumes(void);  /* masound.c */
 extern void ma_volume_preview(void);
@@ -1553,6 +1554,7 @@ static const struct tb_item tb_view[] = {
     TBSEP,
     { "Tiles: built-in", "", TB_TILES, NULL, 0 },
     { "Tiles: from file...", "", TB_TILES, NULL, 1 },
+    { "Projectiles point where they fly", "", TB_MISSILES, NULL, 0 },
     TBSEP,
     TBC("Tiles", "", IDM_MAP_TILES),
     TBC("ASCII", "", IDM_MAP_ASCII12X16),
@@ -1824,6 +1826,16 @@ tb_run(const struct tb_item *it)
     }
     case TB_TILES:
         tb_pick_tiles(it->arg);
+        break;
+    case TB_MISSILES:
+        iflags.fx_turn_missiles = !iflags.fx_turn_missiles;
+        Sprintf(tb_toast, "Pointing projectiles %s",
+                iflags.fx_turn_missiles ? "on" : "off");
+        cfg_remember_option("fx_turn_missiles", iflags.fx_turn_missiles
+                                                    ? "fx_turn_missiles"
+                                                    : "!fx_turn_missiles");
+        SetTimer(tb_hwnd, 1, 1800, NULL);
+        InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
     case TB_MSGPOS: {
         static const char *const nm[] = { "top-left", "top-centre",
@@ -2163,6 +2175,8 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                           ? "in use"
                       : (it->kind == TB_BARBORDER)
                           ? (iflags.fx_bar_border ? "on" : "off")
+                      : (it->kind == TB_MISSILES)
+                          ? (iflags.fx_turn_missiles ? "on" : "off")
                           : it->hint,
                       -1, &r,
                       DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);

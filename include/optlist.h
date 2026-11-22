@@ -393,6 +393,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_lighting, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_lighting, Term_False,
            "NetHackW: soft light on the map; remembered squares dimmed")
+    NHOPTB(fx_turn_missiles, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_turn_missiles, Term_False,
+           "NetHackW: thrown and fired things point the way they fly")
     NHOPTB(fx_hero_frame_light, Advanced, 0, opt_in, set_in_game,
            Off, Yes, No, No, NoAlias, &iflags.fx_hero_frame_light,
            Term_False, "NetHackW: a lighter, fainter hero frame")

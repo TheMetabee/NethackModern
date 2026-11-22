@@ -323,11 +323,23 @@ consider a new SDL2 or Qt-based port reading the same fx stream.
 - **Remembered settings:** every `fx_` option changed in play is kept in
   `nethackmodern.rc`, including whether the inventory panel is hidden
   (`fx_hide_inventory`).
+- **Tilesets:** the View menu switches between the built-in tiles and a
+  tile image in the game's own layout, picked from a file; the tile size
+  is worked out from the image and the choice is kept in
+  `nethackmodern.rc`. Zoom steps keep their size on screen, so big tiles
+  fit the level and show their detail zoomed in. (Older tilesets, such as
+  Absurd, can be converted to the 5.0 layout with a separate tool; no
+  third-party art is kept here.)
+- **Pointing projectiles** (`fx_turn_missiles`): arrows, bolts, daggers,
+  darts, spears and the like point the way they fly, thrown or fired, by
+  the hero or by monsters. Which way a tile's picture points is measured
+  from the picture, so it works with any tileset; round things are left
+  alone. Also in the View menu.
+- Restored games no longer flip through the saved message history on
+  the map while loading.
 - More sounds and effects found in play: bat deaths, vampires rising,
   the inventory bag, menu letters in a clearer font, a hero frame that
   slides with the hero.
-
-*Still to do:* a higher-resolution tileset.
 
 ## Open decisions
 
@@ -368,3 +380,4 @@ All are in the full options list (`m O`), under the `fx_` names:
 | `fx_ambience_volume` | 60 | ambience volume, 0 to 100 |
 | `fx_msg_pos` | bottom-left | where messages sit: top or bottom, left, centre or right |
 | `fx_hide_inventory` | off | keep the inventory side panel hidden |
+| `fx_turn_missiles` | on | thrown and fired things point the way they fly |
