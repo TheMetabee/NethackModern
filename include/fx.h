@@ -201,6 +201,8 @@ typedef void (*fx_handler_fn)(const struct fx_event *);
 #define FXA_CANCELLED  0x00010000UL
 #define FXA_HELPLESS   0x00020000UL /* paralyzed (hero: any helplessness) */
 #define FXA_ASLEEP     0x00040000UL /* monster asleep */
+#define FXA_CONFLICT   0x00080000UL /* hero: radiating Conflict; monster:
+                                     * within its reach this turn */
 
 /* glyph_info.fxhealth: 0 = no bar, else 1..100 percent of max HP */
 

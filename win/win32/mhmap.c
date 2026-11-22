@@ -38,7 +38,7 @@ static const double fx_zooms[] = { 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0 };
 #define FX_AURA_MASK (FXA_ASLEEP | FXA_CONFUSED | FXA_STUNNED | FXA_SLOW \
                       | FXA_LEVITATE | FXA_REFLECT | FXA_PROTECT          \
                       | FXA_STONING | FXA_SLIMED | FXA_SICK | FXA_HALLU   \
-                      | FXA_INVIS)
+                      | FXA_INVIS | FXA_CONFLICT)
 #define FX_FRAME_MS 30      /* ~33 frames per second while numbers float */
 #define FX_FLOAT_MS 900     /* lifetime of one number */
 #define FX_TEXT_MS 1400     /* lifetime of a status name */
@@ -1982,6 +1982,7 @@ static const struct fx_status_name {
     { FXA_CANCELLED, "Cancelled", FXS_BAD },
     { FXA_HELPLESS, "Paralyzed", FXS_BAD },
     { FXA_ASLEEP, "Asleep", FXS_MIND },
+    { FXA_CONFLICT, "Conflict", FXS_BAD },
 };
 
 static void
@@ -2004,6 +2005,12 @@ fx_status_floaters(PNHMapWindow data, const struct fx_event *ev)
     if (ev->flags & FXF_TARGET_PET) {
         gain &= ~FXA_FLEEING;
         lose &= ~FXA_FLEEING;
+    }
+    /* monsters drift in and out of Conflict's reach as they move; their
+       red aura shows it, so only the hero's own gets a name */
+    if (!(ev->flags & FXF_HERO_TARGET)) {
+        gain &= ~FXA_CONFLICT;
+        lose &= ~FXA_CONFLICT;
     }
     for (i = 0; i < SIZE(fx_status_names); i++) {
         const struct fx_status_name *s = &fx_status_names[i];
@@ -4134,6 +4141,42 @@ fx_paint_auras(PNHMapWindow data, HDC hdc)
                                fx_dim(RGB(255, 255, 255),
                                       (1.0 - abs(i) * 0.3)
                                           * sin(g * 3.14159)));
+                }
+            }
+            if ((au & FXA_CONFLICT) && x == u.ux && y == u.uy) {
+                /* the hero radiating Conflict: dark red rings pulsing
+                   outward, one after another */
+                for (i = 0; i < 2; i++) {
+                    double t = fmod(fx_phase(now, x, y, 21, 1800)
+                                    + i / 2.0, 1.0);
+                    double r = 0.3 + 0.55 * t, k = sin(t * 3.14159) * 0.75;
+                    int j;
+
+                    for (j = 0; j < 20; j++) {
+                        double a = j / 20.0 * TAU;
+
+                        fx_dot(data->partDC, cx + (int) (tw * r * cos(a)),
+                               cy + (int) (th * r * sin(a)), r1,
+                               fx_dim(RGB(200, 30, 40), k));
+                    }
+                }
+            } else if (au & FXA_CONFLICT) {
+                /* a creature in its grip: a throbbing red glow, and red
+                   embers flickering up off it like rage */
+                double beat = fx_phase(now, x, y, 23, 700);
+                double k = 0.25 + 0.2 * sin(beat * TAU);
+
+                fx_dot(data->partDC, cx, cy + th / 6, tw / 2,
+                       fx_dim(RGB(170, 20, 25), k));
+                for (i = 0; i < 5; i++) {
+                    double t = fmod(fx_phase(now, x, y, 27 + i, 1100)
+                                    + i / 5.0, 1.0);
+                    int px = bx + (int) (tw * (0.15 + 0.17 * i
+                                               + 0.05 * sin(t * TAU * 2)));
+                    int py = by + (int) (th * (0.85 - 0.9 * t));
+
+                    fx_dot(data->partDC, px, py, r1,
+                           fx_dim(RGB(255, 70, 50), sin(t * 3.14159)));
                 }
             }
             if (au & FXA_PROTECT) {

@@ -167,6 +167,8 @@ still:
 | Protection spell | a soft ring |
 | Stoning / slimed / sick | grit, slime or bubbles |
 | Invisible but seen | a see-through sprite |
+| Conflict (you) | dark red rings pulsing outward |
+| In your Conflict's reach | a throbbing red glow and rising embers |
 
 Auras run on their own slow timer, which only runs while one is in view.
 

@@ -331,6 +331,8 @@ fx_hero_auras(void)
         a |= FXA_HALLU;
     if (Blind)
         a |= FXA_BLIND;
+    if (Conflict)
+        a |= FXA_CONFLICT;
     if (gm.multi < 0)
         a |= FXA_HELPLESS;
     return a;
@@ -387,6 +389,11 @@ fx_mon_auras(struct monst *mtmp)
         a |= FXA_ASLEEP;
     else if (!mtmp->mcanmove)
         a |= FXA_HELPLESS;
+    /* within the hero's Conflict: the same test movemon() makes before
+       each monster rolls to resist it (the Wizard is immune) */
+    if (Conflict && !mtmp->iswiz && m_canseeu(mtmp)
+        && cansee(mtmp->mx, mtmp->my) && mdistu(mtmp) <= BOLT_LIM * BOLT_LIM)
+        a |= FXA_CONFLICT;
     return a;
 }
 
