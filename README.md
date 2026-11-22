@@ -10,6 +10,17 @@ saves are ordinary 5.0 saves.
 Each addition has its own option, so you can turn off any of them and get
 back the look of stock NetHackW.
 
+**Not a variant, but not stock NetHack either.** NetHack Modern changes
+NetHack's source code: it adds small hooks that tell the interface what
+just happened (a hit, a miss, a spell, a death). Those hooks only
+report; they don't change any rules. So it isn't a variant in the sense
+of SLASH'EM or EvilHack, which play differently. Think of it as NetHack
+5.0 with a new coat of paint.
+
+**Not an official release.** NetHack Modern is not an official NetHack
+release and is not affiliated with or endorsed by the NetHack DevTeam.
+Please report problems with it here, not to the DevTeam.
+
 > The NetHack DevTeam's own README, which covers NetHack 5.0 itself, is
 > still in this repository as [`README`](README).
 
