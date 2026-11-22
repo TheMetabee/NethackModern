@@ -379,6 +379,9 @@ mswin_player_selection(void)
     } else { /* iflags.wc_player_selection == VIA_PROMPTS */
         prompt_for_player_selection();
     }
+    /* NetHack Modern: the hero is chosen and the game begins; the
+       menu music fades out before the intro */
+    mswin_menu_music_end();
 }
 
 void
@@ -1418,6 +1421,7 @@ mswin_print_glyph(winid wid, coordxy x, coordxy y,
 {
     logDebug("mswin_print_glyph(%d, %d, %d, %d, %d, %lu)\n",
              wid, x, y, glyphinfo->glyph, bkglyphinfo->glyph);
+    mswin_menu_music_end(); /* NetHack Modern: a restored game is shown */
 
     if ((wid >= 0) && (wid < MAXWINDOWS)
         && (GetNHApp()->windowlist[wid].win != NULL)) {
@@ -1531,6 +1535,7 @@ mswin_nhgetch(void)
     int key = 0;
 
     logDebug("mswin_nhgetch()\n");
+    mswin_menu_music_end(); /* NetHack Modern: the game has begun */
 
     while ((event = mswin_input_pop()) == NULL || event->type != NHEVENT_CHAR)
         mswin_main_loop();
@@ -1562,6 +1567,7 @@ mswin_nh_poskey(coordxy *x, coordxy *y, int *mod)
     int key;
 
     logDebug("mswin_nh_poskey()\n");
+    mswin_menu_music_end(); /* NetHack Modern: the game has begun */
 
     while ((event = mswin_input_pop()) == NULL)
         mswin_main_loop();

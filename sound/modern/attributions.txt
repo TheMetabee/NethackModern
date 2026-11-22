@@ -602,3 +602,26 @@ noted; spells that work like a scroll, potion or wand reuse those sounds:
   spell_restore_1.wav    <- Chisper level-up-magic-harp (trimmed)
   spell_flesh_1.wav      <- wpn_stone_hit_1 (Kenney Impact) crack and
                             use_grease_1 (AHTu20, pitched down)
+
+-------------------------------------------------------------------------
+Menu music (music_title.mp3), played on the title, name and character
+screens; the speaker icon in the corner turns it off.
+  music_title.mp3        <- "Fantasy: Lament for a Warrior's Soul" by
+                            RandomMind (Lament_for_a_Warriors_Soul_
+                            REUPLOAD.mp3), trimmed of its leading and
+                            trailing silence and re-encoded as VBR MP3
+  License: CC0 1.0 (public domain dedication)
+           https://creativecommons.org/publicdomain/zero/1.0/
+  Source:  https://opengameart.org/content/fantasy-lament-for-a-warriors-soul
+
+Death tune (music_death.mp3), played once when the hero dies.
+  music_death.mp3        <- made for NetHack Modern: one strike of
+                            "Altenthann: Isolated Bavarian Church Bell at
+                            Distance (300 m), Open Window, Post-Rain
+                            Ambience" by TSP-Talk (Freesound 846302),
+                            filtered, pitched down five semitones and
+                            tolled every 4.5 s over a synthesized drone,
+                            wind and dissonant swells in a long echo
+  License: CC0 1.0 (public domain dedication)
+           https://creativecommons.org/publicdomain/zero/1.0/
+  Source:  https://freesound.org/people/TSP-Talk/sounds/846302/

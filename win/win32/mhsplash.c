@@ -14,6 +14,9 @@
 #endif
 #include "dlb.h"
 #include "mhtheme.h"
+#ifdef SND_LIB_MINIAUDIO
+#include "../../sound/miniaudio/nhminiaudio.h"
+#endif
 
 #define LLEN 128
 
@@ -528,6 +531,8 @@ static HWND ms_hwnd;
 static int ms_result = -1; /* the button chosen; -1 while waiting */
 static int ms_focus = MS_PLAY, ms_hot = -1, ms_down = -1;
 static RECT ms_btn[MS_NBTN];
+#define MS_SOUND MS_NBTN /* the speaker icon, beside the buttons */
+static RECT ms_snd;
 static HBITMAP ms_bg;         /* the painting, cropped, scaled, shaded */
 static int ms_bg_w, ms_bg_h;  /* ... for this size */
 
@@ -782,6 +787,181 @@ mswin_ms_backdrop_free(void)
         DeleteObject(ms_bg), ms_bg = NULL;
 }
 
+/* NetHack Modern: the menu music.  It starts with the title screen,
+   carries on through the name and character screens, and fades out as
+   the game begins: when the hero is chosen, when a restored game is
+   drawn, or failing those at the first wait for a command (see
+   mswproc.c).  The speaker icon on each of those
+   screens (or Ctrl+M) turns it off and on; that's kept in the
+   fx_menu_music option, in nethackmodern.rc. */
+
+static boolean mm_on;   /* playing now */
+static boolean mm_over; /* the game has begun: no more music */
+static char mm_path[MAX_PATH + 48];
+
+#define MM_FILE "music_title.mp3"
+
+/* the track: <exedir>\sounds\, or the source copy when running out of
+   the build tree (binary\<cfg>\<platform>), as for the other sounds */
+static boolean
+mm_find(void)
+{
+    static const char *const tries[] = {
+        "sounds\\", "..\\..\\..\\sound\\modern\\"
+    };
+    char exe[MAX_PATH], *p;
+    int i;
+
+    if (!GetModuleFileNameA(NULL, exe, sizeof exe))
+        return FALSE;
+    if ((p = strrchr(exe, '\\')) != 0)
+        p[1] = '\0';
+    for (i = 0; i < SIZE(tries); i++) {
+        Snprintf(mm_path, sizeof mm_path, "%s%s%s", exe, tries[i], MM_FILE);
+        if (GetFileAttributesA(mm_path) != INVALID_FILE_ATTRIBUTES)
+            return TRUE;
+    }
+    mm_path[0] = '\0';
+    return FALSE;
+}
+
+/* make the music match what's wanted */
+static void
+mm_sync(void)
+{
+#ifdef SND_LIB_MINIAUDIO
+    boolean want = !mm_over && iflags.fx_menu_music && iflags.sounds;
+
+    if (want == mm_on)
+        return;
+    if (want) {
+        static boolean first = TRUE;
+
+        if (!mm_path[0] && !mm_find())
+            return;
+        if (!nhma_init())
+            return; /* no audio device */
+        nhma_set_master_volume(0.8f);
+        nhma_music(mm_path, 0.55f, first ? 2500 : 900, 1);
+        first = FALSE;
+        mm_on = TRUE;
+    } else {
+        nhma_music((const char *) 0, 0.0f, mm_over ? 2500 : 700, 0);
+        mm_on = FALSE;
+    }
+#endif
+}
+
+void
+mswin_menu_music_start(void)
+{
+    mm_sync();
+}
+
+/* the game has begun: fade the music out for good */
+void
+mswin_menu_music_end(void)
+{
+    if (mm_over)
+        return;
+    mm_over = TRUE;
+    mm_sync();
+}
+
+void
+mswin_menu_music_toggle(void)
+{
+    iflags.fx_menu_music = !iflags.fx_menu_music;
+    cfg_remember_option("fx_menu_music", iflags.fx_menu_music
+                                             ? "fx_menu_music"
+                                             : "!fx_menu_music");
+    mm_sync();
+}
+
+/* where the speaker icon goes: the top right corner */
+void
+mswin_ms_sound_rect(int w, double s, RECT *r)
+{
+    int sz = (int) (42 * s), m = (int) (18 * s);
+
+    SetRect(r, w - m - sz, m, w - m, m + sz);
+}
+
+/* the speaker: with sound waves while the music is on, crossed out when
+   it's off; pointed at, it says what it does */
+void
+mswin_ms_sound_icon(HDC hdc, const RECT *r, boolean hot, double s)
+{
+    boolean on = iflags.fx_menu_music;
+    int cx = (r->left + r->right) / 2 - (int) (3 * s),
+        cy = (r->top + r->bottom) / 2;
+    double u = s * 1.05;
+    COLORREF ink = hot ? TH_ACCENT : on ? TH_TEXT : TH_TEXT_DIM;
+    HBRUSH bg = CreateSolidBrush(hot ? TH_BG_HEADER : TH_BG_PANEL),
+           ib = CreateSolidBrush(ink);
+    HPEN edge = CreatePen(PS_SOLID, 1, hot ? TH_ACCENT : TH_SEPARATOR),
+         line = CreatePen(PS_SOLID, max(2, (int) (2.2 * u)), ink);
+    HGDIOBJ ob = SelectObject(hdc, bg), op = SelectObject(hdc, edge);
+    HGDIOBJ obr = GetCurrentObject(hdc, OBJ_BRUSH);
+    POINT sp[6];
+#define UX(v) (cx + (int) ((v) * u))
+#define UY(v) (cy + (int) ((v) * u))
+
+    nhUse(obr);
+    Ellipse(hdc, r->left, r->top, r->right, r->bottom);
+
+    /* the speaker itself */
+    sp[0].x = UX(-10), sp[0].y = UY(-4);
+    sp[1].x = UX(-4), sp[1].y = UY(-4);
+    sp[2].x = UX(3), sp[2].y = UY(-10);
+    sp[3].x = UX(3), sp[3].y = UY(10);
+    sp[4].x = UX(-4), sp[4].y = UY(4);
+    sp[5].x = UX(-10), sp[5].y = UY(4);
+    SelectObject(hdc, ib);
+    SelectObject(hdc, GetStockObject(NULL_PEN));
+    Polygon(hdc, sp, 6);
+
+    SelectObject(hdc, line);
+    SelectObject(hdc, GetStockObject(NULL_BRUSH));
+    if (on) {
+        int k;
+
+        for (k = 1; k <= 2; k++) {
+            int rr = (int) ((k == 1 ? 6 : 11) * u), ax = UX(4);
+
+            Arc(hdc, ax - rr, cy - rr, ax + rr, cy + rr, ax + rr, cy + rr,
+                ax + rr, cy - rr);
+        }
+    } else {
+        MoveToEx(hdc, UX(8), UY(-5), NULL);
+        LineTo(hdc, UX(17), UY(5));
+        MoveToEx(hdc, UX(17), UY(-5), NULL);
+        LineTo(hdc, UX(8), UY(5));
+    }
+#undef UX
+#undef UY
+    SelectObject(hdc, op);
+    SelectObject(hdc, ob);
+    DeleteObject(bg);
+    DeleteObject(ib);
+    DeleteObject(edge);
+    DeleteObject(line);
+
+    if (hot) {
+        HFONT f = ms_font(max(10, (int) (14 * s)), FW_SEMIBOLD, FALSE);
+        HGDIOBJ of = SelectObject(hdc, f);
+        RECT t;
+
+        SetRect(&t, r->left - (int) (260 * s), r->top,
+                r->left - (int) (10 * s), r->bottom);
+        SetBkMode(hdc, TRANSPARENT);
+        ms_text(hdc, on ? "Music on  (Ctrl+M)" : "Music off  (Ctrl+M)", &t,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE, TH_TEXT, 1);
+        SelectObject(hdc, of);
+        DeleteObject(f);
+    }
+}
+
 static void
 ms_paint(HWND hWnd, HDC hdc)
 {
@@ -841,6 +1021,8 @@ ms_paint(HWND hWnd, HDC hdc)
         for (i = 0; i < MS_NBTN; i++)
             ms_button(mdc, i, s);
     }
+    mswin_ms_sound_rect(w, s, &ms_snd);
+    mswin_ms_sound_icon(mdc, &ms_snd, ms_hot == MS_SOUND, s);
 
     /* the versions, bottom left */
     r.left = (int) (24 * s), r.right = w / 2;
@@ -890,12 +1072,19 @@ ms_hit(int x, int y)
     for (i = 0; i < MS_NBTN; i++)
         if (PtInRect(&ms_btn[i], pt))
             return i;
+    if (PtInRect(&ms_snd, pt))
+        return MS_SOUND;
     return -1;
 }
 
 static void
 ms_choose(HWND hWnd, int i)
 {
+    if (i == MS_SOUND) {
+        mswin_menu_music_toggle();
+        InvalidateRect(hWnd, NULL, FALSE);
+        return;
+    }
     if (i == MS_ABOUT) {
         /* the full version and build options, as before */
         mswin_display_splash_window(TRUE);
@@ -927,7 +1116,7 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             TRACKMOUSEEVENT tme;
 
             ms_hot = hot;
-            if (hot >= 0)
+            if (hot >= 0 && hot < MS_NBTN)
                 ms_focus = hot;
             tme.cbSize = sizeof tme;
             tme.dwFlags = TME_LEAVE;
@@ -986,6 +1175,10 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case VK_SPACE:
             ms_choose(hWnd, ms_focus);
             return 0;
+        case 'M':
+            if (GetKeyState(VK_CONTROL) < 0)
+                ms_choose(hWnd, MS_SOUND);
+            return 0;
         default:
             return 0;
         }
@@ -1002,6 +1195,9 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case 'q':
         case 'x':
             ms_choose(hWnd, MS_EXIT);
+            break;
+        case 'm':
+            ms_choose(hWnd, MS_SOUND);
             break;
         }
         return 0;
@@ -1059,6 +1255,7 @@ mswin_display_menu_screen(void)
         return; /* no title screen; just play */
     }
     mswin_menu_screen_place(main);
+    mswin_menu_music_start();
     GetNHApp()->hPopupWnd = ms_hwnd; /* the main window sends focus here */
     SetForegroundWindow(main);
     SetFocus(ms_hwnd);

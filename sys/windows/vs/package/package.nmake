@@ -118,6 +118,8 @@ modernsounds:
 	copy /Y $(ROOTDIR)\sound\modern\*.wav $(VSBINDIR)\sounds
 	@if exist $(VSBINDIR)\sounds\*.flac del /Q $(VSBINDIR)\sounds\*.flac
 	copy /Y $(ROOTDIR)\sound\modern\*.flac $(VSBINDIR)\sounds
+	@if exist $(VSBINDIR)\sounds\*.mp3 del /Q $(VSBINDIR)\sounds\*.mp3
+	copy /Y $(ROOTDIR)\sound\modern\*.mp3 $(VSBINDIR)\sounds
 	copy /Y $(ROOTDIR)\sound\modern\attributions.txt $(VSBINDIR)\sounds
 
 $(VSBINDIR)\record:

@@ -34,6 +34,7 @@ PNHWinApp GetNHApp(void);
 #define G_NGRP 4
 #define G_BTN 4 /* the row of buttons */
 #define G_BOX 5 /* the name box */
+#define G_SND 6 /* the speaker icon: the menu music on or off */
 
 #define B_BACK 0
 #define B_RANDOM 1
@@ -53,7 +54,7 @@ static int cs_hg = -1, cs_hi = -1; /* what's under the mouse */
 static int cs_dg = -1, cs_di = -1; /* what the mouse is pressing */
 static int cs_n[G_NGRP];           /* how many choices in each group */
 static RECT cs_row[G_NGRP][MAXROWS], cs_panel[G_NGRP], cs_info;
-static RECT cs_btn[B_N], cs_box;
+static RECT cs_btn[B_N], cs_box, cs_snd;
 static char cs_name[PL_NSIZ];
 static boolean cs_caret = TRUE;
 static void (*cs_rnd)(void *);
@@ -585,7 +586,8 @@ cs_paint_name(HDC hdc, int w, int h, double s)
 
     SelectObject(hdc, small);
     cs_hints(hdc, w, h, s,
-             "Type a name        Enter: continue        Esc: back");
+             "Type a name        Enter: continue        Esc: back        "
+             "Ctrl+M: music");
 
     SelectObject(hdc, of);
     DeleteObject(big);
@@ -792,8 +794,8 @@ cs_paint_char(HDC hdc, int w, int h, double s)
 
     SelectObject(hdc, small);
     cs_hints(hdc, w, h, s,
-             "Arrows or mouse: choose        Tab: next        "
-             "Enter: play        *: random        Esc: back");
+             "Arrows or mouse: choose      Tab: next      Enter: play      "
+             "*: random      Esc: back      Ctrl+M: music");
 
     SelectObject(hdc, of);
     DeleteObject(big);
@@ -833,6 +835,8 @@ cs_paint(HWND hWnd, HDC hdc)
         cs_paint_name(mdc, w, h, s);
     else
         cs_paint_char(mdc, w, h, s);
+    mswin_ms_sound_rect(w, s, &cs_snd);
+    mswin_ms_sound_icon(mdc, &cs_snd, cs_hg == G_SND, s);
     BitBlt(hdc, 0, 0, w, h, mdc, 0, 0, SRCCOPY);
     SelectObject(mdc, omb);
     DeleteObject(mbm);
@@ -854,6 +858,10 @@ cs_hit(int x, int y, int *g)
     int i, k;
 
     pt.x = x, pt.y = y;
+    if (PtInRect(&cs_snd, pt)) {
+        *g = G_SND;
+        return 0;
+    }
     for (i = 0; i < B_N; i++)
         if (cs_btn_used(i) && PtInRect(&cs_btn[i], pt)) {
             *g = G_BTN;
@@ -987,6 +995,11 @@ cs_key(WPARAM vk)
         else if (g == G_ROLE)
             cs_focus_group(cs_lastmid);
         break;
+    case 'M':
+        if (GetKeyState(VK_CONTROL) >= 0)
+            return; /* a plain M is typed or picks a role, in WM_CHAR */
+        mswin_menu_music_toggle();
+        break;
     case VK_HOME:
     case VK_END:
         if (g < G_NGRP) {
@@ -1053,7 +1066,7 @@ cs_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             if (cs_hg == G_BOX)
                 cur = IDC_IBEAM;
-            else if (cs_hg == G_BTN
+            else if (cs_hg == G_BTN || cs_hg == G_SND
                      || (cs_hg >= 0 && cs_hg < G_NGRP
                          && cs_ok(cs_hg, cs_hi)))
                 cur = IDC_HAND;
@@ -1074,7 +1087,7 @@ cs_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             else
                 MessageBeep(0);
             cs_dg = cs_di = -1;
-        } else if (cs_dg == G_BTN) {
+        } else if (cs_dg == G_BTN || cs_dg == G_SND) {
             SetCapture(hWnd);
         }
         InvalidateRect(hWnd, NULL, FALSE);
@@ -1089,6 +1102,8 @@ cs_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         InvalidateRect(hWnd, NULL, FALSE);
         if (wasg == G_BTN && g == G_BTN && was == at)
             cs_activate(at);
+        else if (wasg == G_SND && g == G_SND)
+            mswin_menu_music_toggle();
         return 0;
     }
     case WM_GETDLGCODE:

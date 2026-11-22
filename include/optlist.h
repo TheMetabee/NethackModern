@@ -357,6 +357,12 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_ambience, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_ambience, Term_False,
            "a quiet background loop for each kind of level")
+    NHOPTB(fx_death_music, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_death_music, Term_False,
+           "a mournful tune when your hero dies")
+    NHOPTB(fx_menu_music, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_menu_music, Term_False,
+           "music on the title and character creation screens")
     NHOPTB(fx_auras, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_auras, Term_False,
            "show lasting status effects on creatures (sleeping z's)")

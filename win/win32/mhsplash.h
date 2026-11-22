@@ -24,4 +24,11 @@ void mswin_ms_button(HDC hdc, const RECT *r, const char *label,
 void mswin_ms_backdrop(HDC hdc, HDC dst, int w, int h, int dim);
 void mswin_ms_backdrop_free(void);
 
+/* NetHack Modern: the menu music and the speaker icon that toggles it */
+void mswin_menu_music_start(void);
+void mswin_menu_music_end(void);
+void mswin_menu_music_toggle(void);
+void mswin_ms_sound_rect(int w, double s, RECT *r);
+void mswin_ms_sound_icon(HDC hdc, const RECT *r, boolean hot, double s);
+
 #endif /* MSWINSplashWindow_h */

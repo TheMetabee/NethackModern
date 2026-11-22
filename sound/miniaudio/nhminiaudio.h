@@ -20,5 +20,10 @@ int nhma_play(const char *path, float volume, float pitch, float pan);
 void nhma_ambience(const char *path, float volume, unsigned fade_ms);
 /* NetHack Modern: the player's effect and ambience volumes, 0.0 .. 1.0 */
 void nhma_set_volumes(float effects, float ambience);
+/* NetHack Modern: music, one track at a time streamed from disk (the
+   menu music, looping; the death tune, once).  A path fades it in
+   (resuming where it was stopped, if it's the same track); NULL fades it
+   out. */
+void nhma_music(const char *path, float volume, unsigned fade_ms, int loop);
 
 #endif /* NHMINIAUDIO_H */

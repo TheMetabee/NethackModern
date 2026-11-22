@@ -257,6 +257,14 @@ fire, ice, water and barred levels, Vlad's Tower, the Wizard's Tower,
 the Planes and more. Effects and ambience have separate volume controls,
 in the Game menu and as options.
 
+**Menu music.** A wistful medieval lament plays on the title, name and
+character screens and fades out once play begins. The speaker icon in the
+top right corner (or Ctrl+M) turns it off and on, and that choice is
+remembered.
+
+**Death tune.** When your hero dies, a distant church bell tolls slowly over
+a low drone and a cold wind. Turn it off with the `fx_death_music` option.
+
 ## Playing
 
 NetHack Modern runs on Windows for now; Linux and macOS ports are a work
@@ -322,6 +330,8 @@ Every addition has an option, under `fx_` names in the full options list
 | `fx_ambience` | on | level ambience loops |
 | `fx_volume` | 100 | sound effects volume, 0–100 |
 | `fx_ambience_volume` | 60 | ambience volume, 0–100 |
+| `fx_menu_music` | on | music on the title and character creation screens |
+| `fx_death_music` | on | a mournful tune when your hero dies |
 | `fx_hide_inventory` | off | keep the inventory side panel hidden |
 
 The tileset is NetHack's own `tile_file` option (`tile_file:none` means

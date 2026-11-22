@@ -1557,6 +1557,24 @@ ma_ambience_update(unsigned fade_ms)
     nhma_ambience(path, vol, fade_ms);
 }
 
+/* the hero has died: the ambience fades away and the death tune plays
+   once (the fx_death_music option) */
+static void
+ma_death_music(void)
+{
+    char path[MAX_PATH + 64];
+
+    if (!ma.ok)
+        return;
+    nhma_ambience((const char *) 0, 0.0f, 2000);
+    if (!iflags.fx_death_music || !iflags.sounds)
+        return;
+    Snprintf(path, sizeof path, "%smusic_death.mp3", ma.dir);
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+        return;
+    nhma_music(path, 0.7f, 1500, 0);
+}
+
 /* now and then, a distant sound that belongs to the place: pickaxes in
    the Mines, fire and groans in Gehennom, wails in the Valley, howls
    and creaks in Vlad's Tower, chimes in the Wizard's Tower, creaks in
@@ -1946,6 +1964,8 @@ ma_fx_event(const struct fx_event *ev)
         if (ev->text && !strcmp(ev->text, "inventory"))
             ma_play_named("ui_inventory", 0.8f, ma_frand(0.95f, 1.05f),
                           0.0f);
+        else if (ev->text && !strcmp(ev->text, "death"))
+            ma_death_music();
         break;
     case FXE_MOVE:
         /* the hero stepping: keep the ambience right (the option, deafness,

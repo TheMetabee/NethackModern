@@ -23,6 +23,9 @@ static float amb_base[2];                       /* each loop's own level */
 static ma_sound amb[2];
 static int amb_used[2], amb_cur = -1;
 static char amb_path[2][512];
+static ma_sound mus;             /* the menu music */
+static int mus_used, mus_on;
+static char mus_path[512];
 
 int
 nhma_init(void)
@@ -53,6 +56,10 @@ nhma_shutdown(void)
             amb_used[i] = 0;
         }
     amb_cur = -1;
+    if (mus_used) {
+        ma_sound_uninit(&mus);
+        mus_used = mus_on = 0;
+    }
     ma_engine_uninit(&engine);
     engine_ok = 0;
 }
@@ -162,4 +169,40 @@ nhma_set_volumes(float effects, float ambience)
             ma_sound_set_volume(&amb[amb_cur],
                                 amb_base[amb_cur] * amb_scale);
     }
+}
+
+void
+nhma_music(const char *path, float volume, unsigned fade_ms, int loop)
+{
+    int fresh = 0;
+
+    if (!engine_ok)
+        return;
+    if (!path) {
+        if (mus_used && mus_on)
+            ma_sound_stop_with_fade_in_milliseconds(&mus, fade_ms);
+        mus_on = 0;
+        return;
+    }
+    if (!mus_used || strcmp(mus_path, path)) {
+        if (mus_used) {
+            ma_sound_uninit(&mus);
+            mus_used = 0;
+        }
+        if (ma_sound_init_from_file(&engine, path, MA_SOUND_FLAG_STREAM,
+                                    NULL, NULL, &mus) != MA_SUCCESS)
+            return;
+        mus_used = fresh = 1;
+        (void) strncpy(mus_path, path, sizeof mus_path - 1);
+        mus_path[sizeof mus_path - 1] = '\0';
+        ma_sound_set_looping(&mus, loop ? MA_TRUE : MA_FALSE);
+    }
+    /* cancel a fade-out still under way, then fade in from wherever the
+       volume is now (a new track, from silence) */
+    ma_node_set_state_time(&mus, ma_node_state_stopped, ~(ma_uint64) 0);
+    ma_sound_set_volume(&mus, volume);
+    ma_sound_set_fade_in_milliseconds(&mus, fresh ? 0.0f : -1.0f, 1.0f,
+                                      fade_ms);
+    if (ma_sound_start(&mus) == MA_SUCCESS)
+        mus_on = 1;
 }
