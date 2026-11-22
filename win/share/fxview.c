@@ -2260,3 +2260,112 @@ fxv_snap(void)
     fxv.shake_dur = 0;
     return TRUE;
 }
+
+/* ---- lighting ----------------------------------------------------- */
+
+/* A shade layer over the map, made from how lit each square looks
+   (fx_light_map() in the core) and smoothed between squares. Rebuilt
+   only when the light changes. */
+boolean
+fxv_light_layer(fxv_ms now, const uint32_t **pixels, boolean *changed,
+                boolean *flicker)
+{
+    static unsigned char bright[COLNO][ROWNO], warm[COLNO][ROWNO];
+    static unsigned char pbright[COLNO][ROWNO], pwarm[COLNO][ROWNO];
+    static unsigned char rock[COLNO][ROWNO], prock[COLNO][ROWNO];
+    static uint32_t bits[FXV_LIGHT_W * FXV_LIGHT_H];
+    static boolean built = FALSE;
+    const int S = FXV_LIGHT_S, W = FXV_LIGHT_W, H = FXV_LIGHT_H;
+    int x, y;
+
+    *pixels = (const uint32_t *) 0;
+    *changed = *flicker = FALSE;
+    if (!iflags.fx_lighting || !fxv_tiles_shown() || u.uswallow
+        || !program_state.in_moveloop)
+        return FALSE;
+    *flicker = fx_light_map(bright, warm, (double) now / 1000.0) != 0;
+    /* squares never seen take their neighbours' shade, so the dark of
+       the unknown doesn't make a halo round what you remember */
+    for (x = 0; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++) {
+            int g = fxv_glyph_at(x, y)->glyph;
+
+            rock[x][y] = 0;
+            if ((g == NO_GLYPH || g == GLYPH_UNEXPLORED) && !cansee(x, y))
+                bright[x][y] = fx_shade_level(FALSE), warm[x][y] = 0;
+            /* solid rock is only backdrop: keep it well down so the
+               rooms and corridors stand out */
+            else if (glyph_is_cmap(g) && glyph_to_cmap(g) == S_stone)
+                bright[x][y] = fx_shade_level(TRUE), warm[x][y] = 0,
+                rock[x][y] = 1;
+        }
+    *pixels = bits;
+    if (built && !memcmp(bright, pbright, sizeof bright)
+        && !memcmp(warm, pwarm, sizeof warm)
+        && !memcmp(rock, prock, sizeof rock))
+        return TRUE;
+    memcpy(pbright, bright, sizeof bright);
+    memcpy(pwarm, warm, sizeof warm);
+    memcpy(prock, rock, sizeof rock);
+    built = TRUE;
+    *changed = TRUE;
+    {
+        int px, py;
+
+        for (py = 0; py < H; py++) {
+            double v = (py + 0.5) / S - 0.5;
+            int y0 = (int) floor(v), y1 = y0 + 1;
+            double fy = v - y0;
+
+            fy = fy * fy * (3 - 2 * fy); /* tighter fade: less bleed */
+            y0 = max(0, min(ROWNO - 1, y0));
+            y1 = max(0, min(ROWNO - 1, y1));
+            for (px = 0; px < W; px++) {
+                double u0 = (px + 0.5) / S - 0.5;
+                int x0 = (int) floor(u0), x1 = x0 + 1;
+                double fx = u0 - x0, b, w, d, a;
+                int A, R, G, B;
+                int cx = max(1, min(COLNO - 1, px / S)),
+                    cy = max(0, min(ROWNO - 1, py / S));
+                double bs[4], ws[4];
+                int sx[4], sy[4], k;
+
+                fx = fx * fx * (3 - 2 * fx);
+                x0 = max(1, min(COLNO - 1, x0));
+                x1 = max(1, min(COLNO - 1, x1));
+                if (rock[cx][cy]) {
+                    /* rock is one flat shade: no light spills in */
+                    b = bright[cx][cy], w = 0;
+                } else {
+                    /* blend only with squares that aren't rock, so
+                       nothing bleeds out into it either */
+                    sx[0] = x0, sy[0] = y0, sx[1] = x1, sy[1] = y0;
+                    sx[2] = x0, sy[2] = y1, sx[3] = x1, sy[3] = y1;
+                    for (k = 0; k < 4; k++) {
+                        int qx = sx[k], qy = sy[k];
+
+                        if (rock[qx][qy])
+                            qx = cx, qy = cy;
+                        bs[k] = bright[qx][qy], ws[k] = warm[qx][qy];
+                    }
+                    b = (bs[0] * (1 - fx) + bs[1] * fx) * (1 - fy)
+                        + (bs[2] * (1 - fx) + bs[3] * fx) * fy;
+                    w = (ws[0] * (1 - fx) + ws[1] * fx) * (1 - fy)
+                        + (ws[2] * (1 - fx) + ws[3] * fx) * fy;
+                }
+                d = 1.0 - b / 255.0;          /* how much shade */
+                w = (w / 255.0) * 0.26;       /* a warm lamp tint */
+                a = d + w - d * w;
+                /* premultiplied: black shade plus a lamp-orange tint */
+                A = (int) (a * 255.0);
+                R = (int) (255 * w * (1 - d));
+                G = (int) (140 * w * (1 - d));
+                B = (int) (40 * w * (1 - d));
+                bits[py * W + px] = ((uint32_t) A << 24)
+                                    | ((uint32_t) R << 16)
+                                    | ((uint32_t) G << 8) | (uint32_t) B;
+            }
+        }
+    }
+    return TRUE;
+}

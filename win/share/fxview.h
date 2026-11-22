@@ -123,6 +123,20 @@ const glyph_info *fxv_glyph_at(int x, int y);
 boolean fxv_tiles_shown(void);
 fxv_color fxv_nh_color(int);
 
+/* lighting: a shade layer over the map, FXV_LIGHT_S pixels per square,
+   smoothed between squares so light fades off instead of stopping at
+   tile edges. fxv_light_layer() builds it and points *pixels at it:
+   FXV_LIGHT_W x FXV_LIGHT_H, row by row, premultiplied 0xAARRGGBB (a
+   Win32 32-bit DIB and SDL's ARGB8888 alike); *changed says whether it
+   differs from last time. It returns FALSE when lighting isn't shown
+   (then *pixels is null), and sets *flicker while a light flickers
+   (keep repainting). Column 0 is never part of the level. */
+#define FXV_LIGHT_S 8
+#define FXV_LIGHT_W (COLNO * FXV_LIGHT_S)
+#define FXV_LIGHT_H (ROWNO * FXV_LIGHT_S)
+boolean fxv_light_layer(fxv_ms now, const uint32_t **pixels,
+                        boolean *changed, boolean *flicker);
+
 /* motion, made from fx events. fxv_anim_pose() says where to draw an
    animating creature this frame, as an offset from its square in tiles
    (x in tile widths, y in tile heights), and how solid (0..255); FALSE
