@@ -123,6 +123,30 @@ const glyph_info *fxv_glyph_at(int x, int y);
 boolean fxv_tiles_shown(void);
 fxv_color fxv_nh_color(int);
 
+/* auras: lasting effects on creatures (sleeping z's, stars round a
+   stunned head, a slowed creature's drag, the hero's Conflict, and the
+   rest of FXV_AURA_MASK) and drifting gas clouds. The shared code says
+   what to draw; the front end draws it through these, as light added
+   onto the map (a dot or letter of colour c brightens what's under it
+   by c; black adds nothing). begin and end, if set, bracket each
+   square's effects with the box they stay inside (NetHackW clears and
+   then ORs a box of its black glow layer); a square whose box starts
+   past layer_w x layer_h (when set) is skipped. */
+#define FXV_AURA_MASK (FXA_ASLEEP | FXA_CONFUSED | FXA_STUNNED | FXA_SLOW \
+                       | FXA_LEVITATE | FXA_REFLECT | FXA_PROTECT          \
+                       | FXA_STONING | FXA_SLIMED | FXA_SICK | FXA_HALLU   \
+                       | FXA_INVIS | FXA_CONFLICT)
+struct fxv_glow {
+    void *ctx;
+    int layer_w, layer_h;
+    void (*begin)(void *ctx, int l, int t, int r, int b);
+    void (*dot)(void *ctx, int x, int y, int r, fxv_color c);
+    void (*text)(void *ctx, int x, int y, const char *s, fxv_color c);
+    void (*end)(void *ctx, int l, int t, int r, int b);
+};
+int fxv_paint_auras(const struct fxv_glow *, fxv_ms now, int ox, int oy,
+                    int tw, int th);
+
 /* lighting: a shade layer over the map, FXV_LIGHT_S pixels per square,
    smoothed between squares so light fades off instead of stopping at
    tile edges. fxv_light_layer() builds it and points *pixels at it:

@@ -2369,3 +2369,325 @@ fxv_light_layer(fxv_ms now, const uint32_t **pixels, boolean *changed,
     }
     return TRUE;
 }
+
+/* ---- auras -------------------------------------------------------- */
+
+static fxv_color
+fxv_dim(fxv_color c, double k)
+{
+    if (k < 0)
+        k = 0;
+    if (k > 1)
+        k = 1;
+    return FXV_RGB((int) (FXV_R(c) * k), (int) (FXV_G(c) * k),
+               (int) (FXV_B(c) * k));
+}
+
+/* a phase 0..1 that loops every 'period' ms, offset per creature so a
+   room of them doesn't move in step */
+static double
+fxv_phase(fxv_ms now, int x, int y, int salt, fxv_ms period)
+{
+    fxv_ms beat = (fxv_ms) (x * 389 + y * 157 + salt * 613);
+
+    return (double) ((now + beat) % period) / period;
+}
+
+/* lasting status effects on creatures, for as long as the core says so
+   (the square's fxauras), and drifting gas clouds: drawn as light
+   through the front end's glow primitives (fxview.h); returns how many
+   squares had one. ox, oy is where map square 0,0 is drawn, tw x th the
+   size of a square, all in the front end's pixels. */
+int
+fxv_paint_auras(const struct fxv_glow *glow, fxv_ms now, int ox, int oy,
+                int tw, int th)
+{
+#define FXV_Z_PERIOD 2100   /* ms for one z to rise and fade */
+#define FXV_Z_COUNT 3       /* z's in the air at once */
+#define TAU 6.2831853
+    int x, y, n = 0, i;
+
+    if (!iflags.fx_auras)
+        return 0;
+    for (x = 1; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++) {
+            unsigned long au = fxv_glyph_at(x, y)->fxauras & FXV_AURA_MASK;
+            int glyph = fxv_glyph_at(x, y)->glyph;
+            /* gas clouds (stinking cloud, breath, a hezrou's trail) and
+               plain clouds drift where they're drawn */
+            int gas = (glyph == cmap_to_glyph(S_poisoncloud)) ? 1
+                      : (glyph == cmap_to_glyph(S_cloud)) ? 2 : 0;
+            int box_l, box_t, box_r, box_b;
+            int bx, by, cx, cy, hx, hy, r1 = max(2, tw / 13);
+
+            if (!gas && (!au || !glyph_is_monster(glyph)))
+                continue;
+            if (gas)
+                au = 0UL;
+            n++;
+            bx = ox + x * tw, by = oy + y * th;
+            cx = bx + tw / 2, cy = by + th / 2;   /* middle of the tile */
+            hx = cx, hy = by + th / 8;           /* about the head */
+            /* effects live in the tile and a margin around it */
+            box_l = bx - tw / 2, box_t = by - th;
+            box_r = bx + tw + tw / 2, box_b = by + th + th / 2;
+            if (box_r < 0 || box_b < 0
+                || (glow->layer_w && box_l > glow->layer_w)
+                || (glow->layer_h && box_t > glow->layer_h))
+                continue;
+            if (glow->begin)
+                (*glow->begin)(glow->ctx, box_l, box_t, box_r, box_b);
+
+            if (gas) {
+                /* billowing gas: big soft puffs rolling round the square
+                   and spilling past its edges, each swelling and thinning
+                   on its own beat, so a cloud seems to churn */
+                fxv_color gasc = (gas == 1) ? FXV_RGB(130, 215, 60)
+                                         : FXV_RGB(160, 165, 175);
+                fxv_color hc = (gas == 1) ? FXV_RGB(200, 255, 120)
+                                         : FXV_RGB(215, 220, 228);
+
+                for (i = 0; i < 5; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 29 + i * 5, 2300)
+                                    + i / 5.0, 1.0);
+                    double k = sin(t * 3.14159);
+                    /* each puff circles the middle, slowly, its own way */
+                    double a = (x * 1.7 + y * 2.3 + i * 1.26)
+                               + (now % 9000) / 9000.0 * 6.2831853
+                                     * ((i & 1) ? 1 : -1);
+                    int px = cx + (int) (tw * 0.30 * cos(a));
+                    int py = cy + (int) (th * (0.26 * sin(a) - 0.12 * t));
+                    int rr = (int) (tw * (0.22 + 0.2 * t));
+
+                    glow->dot(glow->ctx, px, py, rr, fxv_dim(gasc, k * 0.38));
+                    glow->dot(glow->ctx, px, py, (rr * 2) / 3,
+                           fxv_dim(gasc, k * 0.55));
+                    glow->dot(glow->ctx, px - rr / 5, py - rr / 5,
+                           max(1, rr / 3), fxv_dim(hc, k * 0.6));
+                }
+            }
+            if (au & FXA_ASLEEP) {
+                /* z's rising, drifting, growing and fading */
+                for (i = 0; i < FXV_Z_COUNT; i++) {
+                    double t = fxv_phase(now, x, y,
+                                        i * 7, FXV_Z_PERIOD);
+                    double fade;
+                    int zx, zy, c;
+                    const char *z;
+
+                    t = fmod(t + (double) i / FXV_Z_COUNT, 1.0);
+                    fade = (t < 0.15) ? t / 0.15 : 1.0 - (t - 0.15) / 0.85;
+                    zx = bx + (int) (tw * (0.55 + 0.35 * t
+                                           + 0.06 * sin(t * TAU * 1.5)));
+                    zy = by + (int) (th * (0.30 - 0.95 * t));
+                    c = (int) (255 * fade * fade);
+                    z = (t < 0.45) ? "z" : "Z";
+                    glow->text(glow->ctx, zx, zy - th / 3, z,
+                            FXV_RGB((c * 190) / 255, (c * 215) / 255, c));
+                }
+            }
+            if (au & (FXA_STUNNED | FXA_CONFUSED | FXA_HALLU)) {
+                /* things circling the head: stars when stunned, swirling
+                   motes when confused, every colour when hallucinating */
+                boolean stun = (au & FXA_STUNNED) != 0;
+                boolean hallu = (au & FXA_HALLU) != 0;
+                int k = stun ? 3 : 4;
+                double spin = fxv_phase(now, x, y, 3, stun ? 1100 : 1700);
+
+                for (i = 0; i < k; i++) {
+                    double a = (spin + (double) i / k) * TAU;
+                    double depth = 0.55 + 0.45 * sin(a); /* front brighter */
+                    int px = hx + (int) (tw * 0.38 * cos(a));
+                    int py = hy - th / 8 + (int) (th * 0.13 * sin(a));
+                    fxv_color c;
+
+                    if (hallu)
+                        c = fxv_lerp_color(FXV_RGB(255, 80, 80), FXV_RGB(80, 160, 255),
+                                          (float) fmod(spin * 3 + i * 0.3, 1.0));
+                    else if (stun)
+                        c = FXV_RGB(255, 230, 90);
+                    else
+                        c = FXV_RGB(220, 140, 255);
+                    if (stun) {
+                        /* a glowing four-point star */
+                        int sr = max(4, tw / 6), j;
+
+                        glow->dot(glow->ctx, px, py, sr,
+                               fxv_dim(c, depth * 0.25));
+                        for (j = 1; j <= sr; j++) {
+                            int ar = max(1, (sr - j) / 3);
+
+                            glow->dot(glow->ctx, px - j, py, ar,
+                                   fxv_dim(c, depth));
+                            glow->dot(glow->ctx, px + j, py, ar,
+                                   fxv_dim(c, depth));
+                            glow->dot(glow->ctx, px, py - j, ar,
+                                   fxv_dim(c, depth));
+                            glow->dot(glow->ctx, px, py + j, ar,
+                                   fxv_dim(c, depth));
+                        }
+                        glow->dot(glow->ctx, px, py, max(2, sr / 3),
+                               fxv_dim(FXV_RGB(255, 255, 230), depth));
+                    } else {
+                        glow->dot(glow->ctx, px, py, r1 * 2 + 1,
+                               fxv_dim(c, depth * 0.3));
+                        glow->dot(glow->ctx, px, py, r1, fxv_dim(c, depth));
+                    }
+                }
+            }
+            if (au & FXA_SLOW) {
+                /* heavy blue motes sinking slowly at the feet */
+                /* (drops sinking down the body, each with a soft glow,
+                   like something weighing it down) */
+                for (i = 0; i < 4; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 11, 2600)
+                                    + i / 4.0, 1.0);
+                    double k = sin(t * 3.14159);
+                    int px = bx + (int) (tw * (0.18 + 0.21 * i));
+                    int py = by + (int) (th * (0.15 + 0.85 * t));
+                    int rr = max(3, tw / 8);
+
+                    glow->dot(glow->ctx, px, py, rr * 2,
+                           fxv_dim(FXV_RGB(70, 110, 255), k * 0.3));
+                    glow->dot(glow->ctx, px, py, rr,
+                           fxv_dim(FXV_RGB(110, 150, 255), k));
+                }
+            }
+            if (au & FXA_LEVITATE) {
+                /* soft air stirring under the feet */
+                for (i = 0; i < 4; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 5, 1500)
+                                    + i / 4.0, 1.0);
+                    int side = (i & 1) ? 1 : -1;
+                    int px = cx + side * (int) (tw * (0.08 + 0.32 * t));
+                    int py = by + th - th / 10 + (int) (th * 0.15 * t);
+
+                    glow->dot(glow->ctx, px, py, r1,
+                           fxv_dim(FXV_RGB(190, 225, 255), (1.0 - t) * 0.7));
+                }
+            }
+            if (au & FXA_REFLECT) {
+                /* every few seconds a glint sweeps across */
+                double t = fxv_phase(now, x, y, 2, 2600);
+
+                if (t < 0.14) {
+                    double g = t / 0.14;
+                    int glx = bx + (int) (tw * (0.1 + 0.8 * g));
+                    int gly = by + (int) (th * (0.85 - 0.7 * g));
+
+                    for (i = -2; i <= 2; i++)
+                        glow->dot(glow->ctx, glx + i * tw / 14,
+                               gly - i * th / 14, max(1, r1 - abs(i) / 2),
+                               fxv_dim(FXV_RGB(255, 255, 255),
+                                      (1.0 - abs(i) * 0.3)
+                                          * sin(g * 3.14159)));
+                }
+            }
+            if ((au & FXA_CONFLICT) && x == u.ux && y == u.uy) {
+                /* the hero radiating Conflict: dark red rings pulsing
+                   outward, one after another */
+                for (i = 0; i < 2; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 21, 1800)
+                                    + i / 2.0, 1.0);
+                    double r = 0.3 + 0.55 * t, k = sin(t * 3.14159) * 0.75;
+                    int j;
+
+                    for (j = 0; j < 20; j++) {
+                        double a = j / 20.0 * TAU;
+
+                        glow->dot(glow->ctx, cx + (int) (tw * r * cos(a)),
+                               cy + (int) (th * r * sin(a)), r1,
+                               fxv_dim(FXV_RGB(200, 30, 40), k));
+                    }
+                }
+            } else if (au & FXA_CONFLICT) {
+                /* a creature in its grip: a throbbing red glow, and red
+                   embers flickering up off it like rage */
+                double beat = fxv_phase(now, x, y, 23, 700);
+                double k = 0.25 + 0.2 * sin(beat * TAU);
+
+                glow->dot(glow->ctx, cx, cy + th / 6, tw / 2,
+                       fxv_dim(FXV_RGB(170, 20, 25), k));
+                for (i = 0; i < 5; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 27 + i, 1100)
+                                    + i / 5.0, 1.0);
+                    int px = bx + (int) (tw * (0.15 + 0.17 * i
+                                               + 0.05 * sin(t * TAU * 2)));
+                    int py = by + (int) (th * (0.85 - 0.9 * t));
+
+                    glow->dot(glow->ctx, px, py, r1,
+                           fxv_dim(FXV_RGB(255, 70, 50), sin(t * 3.14159)));
+                }
+            }
+            if (au & FXA_PROTECT) {
+                /* a slow golden ring of light around it, breathing */
+                double t = fxv_phase(now, x, y, 9, 3000);
+                double br = 0.35 + 0.25 * sin(t * TAU);
+
+                for (i = 0; i < 16; i++) {
+                    double a = (i / 16.0 + t * 0.25) * TAU;
+
+                    glow->dot(glow->ctx,
+                           cx + (int) (tw * 0.52 * cos(a)),
+                           cy + (int) (th * 0.52 * sin(a)), r1,
+                           fxv_dim(FXV_RGB(255, 210, 110), br));
+                }
+            }
+            if (au & FXA_STONING) {
+                /* grey grit creeping inward */
+                for (i = 0; i < 5; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 13, 1900)
+                                    + i / 5.0, 1.0);
+                    double a = (i * 0.21 + 0.1) * TAU;
+                    double r = 0.6 * (1.0 - t);
+
+                    glow->dot(glow->ctx, cx + (int) (tw * r * cos(a)),
+                           cy + (int) (th * r * sin(a)), r1,
+                           fxv_dim(FXV_RGB(200, 200, 190), t * 0.8));
+                }
+            }
+            if (au & FXA_SLIMED) {
+                /* green slime dripping off */
+                for (i = 0; i < 3; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 17, 1600)
+                                    + i / 3.0, 1.0);
+                    int px = bx + (int) (tw * (0.22 + 0.28 * i));
+                    int py = by + (int) (th * (0.45 + 0.6 * t * t));
+
+                    glow->dot(glow->ctx, px, py, r1 + (t > 0.6),
+                           fxv_dim(FXV_RGB(120, 230, 60), 1.0 - t * 0.7));
+                }
+            }
+            if (au & FXA_SICK) {
+                /* sickly bubbles rising and popping */
+                for (i = 0; i < 3; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 19, 2000)
+                                    + i / 3.0, 1.0);
+                    int px = bx + (int) (tw * (0.3 + 0.2 * i)
+                                         + tw * 0.05 * sin(t * TAU * 2));
+                    int py = by + (int) (th * (0.85 - 0.8 * t));
+
+                    glow->dot(glow->ctx, px, py, r1 + (int) (t * 1.5),
+                           fxv_dim(FXV_RGB(190, 220, 70), sin(t * 3.14159) * 0.8));
+                }
+            }
+            if (au & FXA_INVIS) {
+                /* seen though invisible (it is also drawn see-through):
+                   just two faint specks drifting slowly down it */
+                for (i = 0; i < 2; i++) {
+                    double t = fmod(fxv_phase(now, x, y, 23, 3400)
+                                    + i / 2.0, 1.0);
+                    int px = bx + (int) (tw * (0.32 + 0.36 * i));
+                    int py = by + (int) (th * (0.2 + 0.7 * t));
+
+                    glow->dot(glow->ctx, px, py, max(1, r1 - 1),
+                           fxv_dim(FXV_RGB(150, 190, 230),
+                                  sin(t * 3.14159) * 0.4));
+                }
+            }
+            if (glow->end)
+                (*glow->end)(glow->ctx, box_l, box_t, box_r, box_b);
+        }
+    return n;
+#undef TAU
+}
