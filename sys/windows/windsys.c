@@ -507,6 +507,8 @@ get_port_id(char *buf)
 
 #ifdef MSWIN_GRAPHICS
 extern void free_winmain_stuff(void);
+extern boolean mswin_play_again;   /* NetHack Modern, NetHackW.c */
+extern void mswin_relaunch(void);
 #endif
 
 void
@@ -526,6 +528,10 @@ nethack_exit(int code)
     /* frees some status tracking data */
     genl_status_finish();
 #ifdef MSWIN_GRAPHICS
+    /* NetHack Modern: death, quit and save all lead back to the title
+       screen, by starting afresh; closing the window doesn't */
+    if (code == EXIT_SUCCESS && mswin_play_again)
+        mswin_relaunch();
     free_winmain_stuff();
 #endif
 #ifdef WIN32CON

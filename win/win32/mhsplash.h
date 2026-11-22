@@ -10,5 +10,7 @@
 #include "global.h"
 
 void mswin_display_splash_window(BOOL);
+void mswin_display_menu_screen(void);   /* NetHack Modern */
+void mswin_menu_screen_place(HWND main);
 
 #endif /* MSWINSplashWindow_h */

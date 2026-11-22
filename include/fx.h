@@ -15,6 +15,9 @@
 #ifndef FX_H
 #define FX_H
 
+/* the NetHack Modern release, shown on the title screen and in About */
+#define MODERN_VERSION_STRING "0.1.2"
+
 /* one-shot events */
 enum fx_event_type {
     FXE_DAMAGE = 1, /* target lost 'amount' HP */

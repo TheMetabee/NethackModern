@@ -186,6 +186,8 @@ mswin_display_splash_window(BOOL show_ver)
         char verbuf[BUFSZ];
         /* int verstrsize = 0; */
 
+        Sprintf(verbuf, "NetHack Modern v%s\n", MODERN_VERSION_STRING);
+        strbuf_append(&strbuf, verbuf); /* NetHack Modern */
         getversionstring(verbuf, sizeof verbuf);
         strbuf_append(&strbuf, verbuf);
         strbuf_append(&strbuf, "\n\n");
@@ -507,4 +509,509 @@ NHSplashWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     }
     return FALSE;
+}
+
+/* NetHack Modern: the title screen.  It fills the game window before
+   play begins, in place of the old splash popup: the painting, the
+   title, both version numbers, and Play / About / Exit.  Every game
+   ends back here (see mswin_relaunch in NetHackW.c). */
+
+#define MS_PLAY 0
+#define MS_ABOUT 1
+#define MS_EXIT 2
+#define MS_NBTN 3
+
+static const char *const ms_label[MS_NBTN] = {
+    "Play NetHack Modern", "About", "Exit"
+};
+static HWND ms_hwnd;
+static int ms_result = -1; /* the button chosen; -1 while waiting */
+static int ms_focus = MS_PLAY, ms_hot = -1, ms_down = -1;
+static RECT ms_btn[MS_NBTN];
+static HBITMAP ms_bg;         /* the painting, cropped, scaled, shaded */
+static int ms_bg_w, ms_bg_h;  /* ... for this size */
+
+static HFONT
+ms_font(int px, int weight, BOOL serif)
+{
+    return CreateFontA(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                       CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                       VARIABLE_PITCH | (serif ? FF_ROMAN : FF_SWISS),
+                       serif ? "Palatino Linotype" : TH_FONT_UI);
+}
+
+/* how big to draw things: 1.0 for a 720-pixel-high window */
+static double
+ms_scale(int w, int h)
+{
+    double s = min(h / 720.0, w / 1100.0);
+
+    return s < 0.55 ? 0.55 : s > 2.5 ? 2.5 : s;
+}
+
+/* the painting fills the window (cropped to keep its shape), darkened
+   towards the bottom so the title and buttons read over it */
+static void
+ms_make_bg(HDC hdc, int w, int h)
+{
+    static HBITMAP art;
+    static boolean art_tried;
+    HDC bdc;
+    HGDIOBJ ob;
+    RECT all;
+    HBRUSH b;
+
+    if (ms_bg && ms_bg_w == w && ms_bg_h == h)
+        return;
+    if (ms_bg)
+        DeleteObject(ms_bg);
+    ms_bg = CreateCompatibleBitmap(hdc, max(1, w), max(1, h));
+    ms_bg_w = w, ms_bg_h = h;
+    bdc = CreateCompatibleDC(hdc);
+    ob = SelectObject(bdc, ms_bg);
+    SetRect(&all, 0, 0, w, h);
+    b = CreateSolidBrush(TH_BG_APP);
+    FillRect(bdc, &all, b);
+    DeleteObject(b);
+
+    if (!art_tried) {
+        art_tried = TRUE;
+        art = (HBITMAP) LoadImage(GetNHApp()->hApp,
+                                  MAKEINTRESOURCE(IDB_SPLASH_ART),
+                                  IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+    }
+    if (art) {
+        BITMAP bm;
+        HDC adc = CreateCompatibleDC(hdc);
+        HGDIOBJ oa = SelectObject(adc, art);
+        POINT org;
+        double sc;
+        int dw, dh;
+
+        GetObject(art, sizeof bm, &bm);
+        sc = max((double) w / bm.bmWidth, (double) h / bm.bmHeight);
+        dw = (int) (bm.bmWidth * sc + 0.5);
+        dh = (int) (bm.bmHeight * sc + 0.5);
+        SetStretchBltMode(bdc, HALFTONE);
+        SetBrushOrgEx(bdc, 0, 0, &org);
+        /* crop evenly from the sides; from the bottom more than the top,
+           so the rider and the moon stay in view */
+        StretchBlt(bdc, (w - dw) / 2, (h - dh) / 3, dw, dh, adc, 0, 0,
+                   bm.bmWidth, bm.bmHeight, SRCCOPY);
+        SelectObject(adc, oa);
+        DeleteDC(adc);
+    }
+
+    /* the shade: a one-pixel-wide column of black, transparent at the
+       top and nearly opaque at the bottom, stretched across */
+    if (h > 0) {
+        BITMAPINFO bi;
+        DWORD *px = NULL;
+        HBITMAP sh;
+
+        ZeroMemory(&bi, sizeof bi);
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = 1;
+        bi.bmiHeader.biHeight = -h; /* top-down */
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        sh = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, (void **) &px, NULL,
+                              0);
+        if (sh && px) {
+            HDC sdc = CreateCompatibleDC(hdc);
+            HGDIOBJ os = SelectObject(sdc, sh);
+            BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+            int y;
+
+            for (y = 0; y < h; y++) {
+                double t = (double) y / h, a;
+
+                if (t < 0.28)      /* a little at the very top too */
+                    a = t < 0.08 ? 70.0 * (0.08 - t) / 0.08 : 0.0;
+                else if (t < 0.74) /* a smooth ramp */
+                    a = 235.0 * (t - 0.28) / 0.46;
+                else
+                    a = 235.0;
+                a = a * a / 235.0; /* ease in */
+                px[y] = ((DWORD) (int) a) << 24; /* black, premultiplied */
+            }
+            GdiFlush();
+            (void) GdiAlphaBlend(bdc, 0, 0, w, h, sdc, 0, 0, 1, h, bf);
+            SelectObject(sdc, os);
+            DeleteDC(sdc);
+        }
+        if (sh)
+            DeleteObject(sh);
+    }
+    SelectObject(bdc, ob);
+    DeleteDC(bdc);
+}
+
+/* where the buttons go: Play wide and gold, About and Exit beneath */
+static void
+ms_layout(int w, int h)
+{
+    double s = ms_scale(w, h);
+    int pw = (int) (330 * s), ph = (int) (54 * s), gap = (int) (12 * s);
+    int sw = (pw - gap) / 2, sh = (int) (40 * s);
+    int top = (int) (h * 0.70);
+
+    if (top + ph + gap + sh > h - (int) (70 * s))
+        top = h - (int) (70 * s) - ph - gap - sh;
+    SetRect(&ms_btn[MS_PLAY], (w - pw) / 2, top, (w - pw) / 2 + pw,
+            top + ph);
+    SetRect(&ms_btn[MS_ABOUT], (w - pw) / 2, top + ph + gap,
+            (w - pw) / 2 + sw, top + ph + gap + sh);
+    SetRect(&ms_btn[MS_EXIT], (w + pw) / 2 - sw, top + ph + gap, (w + pw) / 2,
+            top + ph + gap + sh);
+}
+
+static void
+ms_text(HDC hdc, const char *s, RECT *r, UINT how, COLORREF c, int shadow)
+{
+    if (shadow) {
+        OffsetRect(r, shadow, shadow);
+        SetTextColor(hdc, RGB(0, 0, 0));
+        DrawTextA(hdc, s, -1, r, how | DT_NOPREFIX);
+        OffsetRect(r, -shadow, -shadow);
+    }
+    SetTextColor(hdc, c);
+    DrawTextA(hdc, s, -1, r, how | DT_NOPREFIX);
+}
+
+static void
+ms_button(HDC hdc, int i, double s)
+{
+    RECT r = ms_btn[i];
+    boolean hot = (ms_hot == i), focus = (ms_focus == i),
+            down = (ms_down == i && hot);
+    COLORREF fill, ink, edge;
+    HBRUSH fb;
+    HPEN pen;
+    HGDIOBJ ob, op;
+    int rad = (int) (12 * s);
+
+    if (i == MS_PLAY) {
+        fill = down ? RGB(196, 152, 70) : hot ? RGB(244, 206, 124)
+                                              : TH_ACCENT;
+        ink = TH_BG_APP;
+        edge = focus ? RGB(255, 236, 190) : fill;
+    } else {
+        fill = down ? TH_SEPARATOR : hot ? TH_BG_HEADER : TH_BG_PANEL;
+        ink = hot || focus ? TH_TEXT : TH_TEXT_DIM;
+        edge = focus ? TH_ACCENT : TH_SEPARATOR;
+    }
+    fb = CreateSolidBrush(fill);
+    pen = CreatePen(PS_SOLID, focus ? max(2, (int) (2 * s)) : 1, edge);
+    ob = SelectObject(hdc, fb);
+    op = SelectObject(hdc, pen);
+    RoundRect(hdc, r.left, r.top, r.right, r.bottom, rad, rad);
+    SelectObject(hdc, op);
+    SelectObject(hdc, ob);
+    DeleteObject(pen);
+    DeleteObject(fb);
+    ms_text(hdc, ms_label[i], &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            ink, 0);
+}
+
+static void
+ms_paint(HWND hWnd, HDC hdc)
+{
+    RECT cr, r;
+    int w, h, th;
+    double s;
+    HDC mdc, bdc;
+    HBITMAP mbm;
+    HGDIOBJ omb, obb, of;
+    HFONT title, sub, btn, small, small_b;
+    char buf[BUFSZ];
+
+    GetClientRect(hWnd, &cr);
+    w = cr.right, h = cr.bottom;
+    if (w <= 0 || h <= 0)
+        return;
+    s = ms_scale(w, h);
+    ms_make_bg(hdc, w, h);
+    ms_layout(w, h);
+
+    /* draw off screen, then copy, so nothing flickers */
+    mdc = CreateCompatibleDC(hdc);
+    mbm = CreateCompatibleBitmap(hdc, w, h);
+    omb = SelectObject(mdc, mbm);
+    bdc = CreateCompatibleDC(hdc);
+    obb = SelectObject(bdc, ms_bg);
+    BitBlt(mdc, 0, 0, w, h, bdc, 0, 0, SRCCOPY);
+    SelectObject(bdc, obb);
+    DeleteDC(bdc);
+    SetBkMode(mdc, TRANSPARENT);
+
+    th = (int) (96 * s);
+    title = ms_font(th, FW_BOLD, TRUE);
+    sub = ms_font(max(10, th / 4), FW_SEMIBOLD, FALSE);
+    btn = ms_font(max(11, (int) (19 * s)), FW_SEMIBOLD, FALSE);
+    small = ms_font(max(10, (int) (14 * s)), FW_NORMAL, FALSE);
+    small_b = ms_font(max(10, (int) (15 * s)), FW_SEMIBOLD, FALSE);
+
+    /* the title, just above the buttons */
+    of = SelectObject(mdc, title);
+    r.left = 0, r.right = w;
+    r.bottom = ms_btn[MS_PLAY].top - (int) (22 * s) - th / 4 - th / 6;
+    r.top = r.bottom - th - th / 4;
+    ms_text(mdc, "NetHack", &r, DT_CENTER | DT_BOTTOM | DT_SINGLELINE,
+            TH_ACCENT, max(2, (int) (3 * s)));
+    SelectObject(mdc, sub);
+    r.top = r.bottom - th / 10;
+    r.bottom = r.top + th / 4 + th / 6;
+    ms_text(mdc, "M  O  D  E  R  N", &r, DT_CENTER | DT_TOP | DT_SINGLELINE,
+            TH_TEXT, max(1, (int) (2 * s)));
+
+    /* the buttons */
+    SelectObject(mdc, btn);
+    {
+        int i;
+
+        for (i = 0; i < MS_NBTN; i++)
+            ms_button(mdc, i, s);
+    }
+
+    /* the versions, bottom left */
+    r.left = (int) (24 * s), r.right = w / 2;
+    r.bottom = h - (int) (18 * s);
+    r.top = r.bottom - (int) (20 * s);
+    SelectObject(mdc, small);
+    Sprintf(buf, "NetHack %d.%d.%d", VERSION_MAJOR, VERSION_MINOR,
+            PATCHLEVEL);
+    ms_text(mdc, buf, &r, DT_LEFT | DT_BOTTOM | DT_SINGLELINE, TH_TEXT_DIM,
+            1);
+    OffsetRect(&r, 0, -(int) (21 * s));
+    SelectObject(mdc, small_b);
+    Sprintf(buf, "NetHack Modern v%s", MODERN_VERSION_STRING);
+    ms_text(mdc, buf, &r, DT_LEFT | DT_BOTTOM | DT_SINGLELINE, TH_ACCENT, 1);
+
+    /* the copyright, bottom right */
+    SelectObject(mdc, small);
+    r.left = w / 2, r.right = w - (int) (24 * s);
+    r.bottom = h - (int) (18 * s);
+    r.top = r.bottom - (int) (20 * s);
+    ms_text(mdc, COPYRIGHT_BANNER_D, &r, DT_RIGHT | DT_BOTTOM | DT_SINGLELINE,
+            TH_TEXT_DIM, 1);
+    OffsetRect(&r, 0, -(int) (21 * s));
+    ms_text(mdc, COPYRIGHT_BANNER_A, &r, DT_RIGHT | DT_BOTTOM | DT_SINGLELINE,
+            TH_TEXT_DIM, 1);
+
+    SelectObject(mdc, of);
+    DeleteObject(title);
+    DeleteObject(sub);
+    DeleteObject(btn);
+    DeleteObject(small);
+    DeleteObject(small_b);
+
+    BitBlt(hdc, 0, 0, w, h, mdc, 0, 0, SRCCOPY);
+    SelectObject(mdc, omb);
+    DeleteObject(mbm);
+    DeleteDC(mdc);
+}
+
+static int
+ms_hit(int x, int y)
+{
+    POINT pt;
+    int i;
+
+    pt.x = x, pt.y = y;
+    for (i = 0; i < MS_NBTN; i++)
+        if (PtInRect(&ms_btn[i], pt))
+            return i;
+    return -1;
+}
+
+static void
+ms_choose(HWND hWnd, int i)
+{
+    if (i == MS_ABOUT) {
+        /* the full version and build options, as before */
+        mswin_display_splash_window(TRUE);
+        GetNHApp()->hPopupWnd = hWnd;
+        SetFocus(hWnd);
+        return;
+    }
+    ms_result = i;
+}
+
+static LRESULT CALLBACK
+ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+
+        ms_paint(hWnd, hdc);
+        EndPaint(hWnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        int hot = ms_hit(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+
+        if (hot != ms_hot) {
+            TRACKMOUSEEVENT tme;
+
+            ms_hot = hot;
+            if (hot >= 0)
+                ms_focus = hot;
+            tme.cbSize = sizeof tme;
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hWnd;
+            tme.dwHoverTime = 0;
+            TrackMouseEvent(&tme);
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        if (ms_hot >= 0) {
+            ms_hot = -1;
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        return 0;
+    case WM_SETCURSOR:
+        if (LOWORD(lParam) == HTCLIENT) {
+            SetCursor(LoadCursor(NULL, ms_hot >= 0 ? IDC_HAND : IDC_ARROW));
+            return TRUE;
+        }
+        break;
+    case WM_LBUTTONDOWN:
+        SetFocus(hWnd);
+        ms_down = ms_hit(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        if (ms_down >= 0)
+            SetCapture(hWnd);
+        InvalidateRect(hWnd, NULL, FALSE);
+        return 0;
+    case WM_LBUTTONUP: {
+        int was = ms_down,
+            at = ms_hit(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+
+        ms_down = -1;
+        if (GetCapture() == hWnd)
+            ReleaseCapture();
+        InvalidateRect(hWnd, NULL, FALSE);
+        if (was >= 0 && was == at)
+            ms_choose(hWnd, at);
+        return 0;
+    }
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS;
+    case WM_KEYDOWN:
+        switch (wParam) {
+        case VK_LEFT:
+        case VK_UP:
+            ms_focus = (ms_focus + MS_NBTN - 1) % MS_NBTN;
+            break;
+        case VK_RIGHT:
+        case VK_DOWN:
+        case VK_TAB:
+            ms_focus = (ms_focus + 1) % MS_NBTN;
+            break;
+        case VK_RETURN:
+        case VK_SPACE:
+            ms_choose(hWnd, ms_focus);
+            return 0;
+        default:
+            return 0;
+        }
+        InvalidateRect(hWnd, NULL, FALSE);
+        return 0;
+    case WM_CHAR:
+        switch (tolower((int) wParam)) {
+        case 'p':
+            ms_choose(hWnd, MS_PLAY);
+            break;
+        case 'a':
+            ms_choose(hWnd, MS_ABOUT);
+            break;
+        case 'q':
+        case 'x':
+            ms_choose(hWnd, MS_EXIT);
+            break;
+        }
+        return 0;
+    }
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+/* keep the title screen filling the game window as it's resized */
+void
+mswin_menu_screen_place(HWND main)
+{
+    RECT rc;
+
+    if (!ms_hwnd || !IsWindow(ms_hwnd))
+        return;
+    GetClientRect(main, &rc);
+    SetWindowPos(ms_hwnd, HWND_TOP, 0, 0, rc.right, rc.bottom, 0);
+}
+
+/* show the title screen and wait; returns only when Play is chosen
+   (Exit, or closing the window, ends the program) */
+void
+mswin_display_menu_screen(void)
+{
+    static boolean registered;
+    HWND main = GetNHApp()->hMainWnd, bar;
+    MSG msg;
+
+    if (!registered) {
+        WNDCLASS wc;
+
+        ZeroMemory(&wc, sizeof wc);
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        wc.lpfnWndProc = ms_proc;
+        wc.hInstance = GetNHApp()->hApp;
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.lpszClassName = TEXT("MSNHMenuScreen");
+        RegisterClass(&wc);
+        registered = TRUE;
+    }
+    /* the topic bar stays hidden until the game starts */
+    bar = FindWindowEx(main, NULL, TEXT("MSNHTopBar"), NULL);
+    if (bar)
+        ShowWindow(bar, SW_HIDE);
+
+    ms_result = -1;
+    ms_focus = MS_PLAY, ms_hot = ms_down = -1;
+    ms_hwnd = CreateWindow(TEXT("MSNHMenuScreen"), NULL,
+                           WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 1,
+                           1, main, NULL, GetNHApp()->hApp, NULL);
+    if (!ms_hwnd) {
+        if (bar)
+            ShowWindow(bar, SW_SHOW);
+        mswin_play_again = TRUE;
+        return; /* no title screen; just play */
+    }
+    mswin_menu_screen_place(main);
+    GetNHApp()->hPopupWnd = ms_hwnd; /* the main window sends focus here */
+    SetForegroundWindow(main);
+    SetFocus(ms_hwnd);
+
+    while (ms_result < 0 && GetMessage(&msg, NULL, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    GetNHApp()->hPopupWnd = NULL;
+    DestroyWindow(ms_hwnd);
+    ms_hwnd = NULL;
+    if (ms_bg)
+        DeleteObject(ms_bg), ms_bg = NULL;
+    if (bar)
+        ShowWindow(bar, SW_SHOW);
+    SetFocus(main);
+
+    if (ms_result != MS_PLAY)
+        bail((char *) 0); /* Exit: nothing started, nothing to save */
+    mswin_play_again = TRUE; /* from now on, a finished game comes back */
 }

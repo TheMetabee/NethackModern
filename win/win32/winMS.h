@@ -145,6 +145,9 @@ typedef struct mswin_nhwindow_app {
 extern PNHWinApp GetNHApp(void);
 extern struct window_procs mswin_procs;
 extern void free_winmain_stuff(void);
+/* NetHack Modern: a finished game goes back to the title screen */
+extern boolean mswin_play_again;
+extern void mswin_relaunch(void);
 
 /* Some prototypes */
 void mswin_init_nhwindows(int *argc, char **argv);

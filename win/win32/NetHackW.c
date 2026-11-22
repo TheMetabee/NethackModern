@@ -77,6 +77,41 @@ extern int nethackw_main(int argc, char *argv[]);
 
 static char *argv[MAX_CMDLINE_PARAM];
 
+/* NetHack Modern: once the player has chosen Play on the title screen,
+   a game that ends (death, quit, save) starts the program again, which
+   brings the title screen back.  The core keeps its state in globals
+   that aren't made to be reset, so a fresh start is the clean way. */
+boolean mswin_play_again = FALSE;
+static WCHAR start_dir[MAX_PATH]; /* where we were started from */
+
+void
+mswin_relaunch(void)
+{
+    WCHAR *cmd;
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    size_t n;
+
+    mswin_play_again = FALSE; /* once only */
+    /* the same command line, so options like -D carry over */
+    n = wcslen(GetCommandLineW()) + 1;
+    cmd = (WCHAR *) malloc(n * sizeof (WCHAR));
+    if (!cmd)
+        return;
+    wcscpy_s(cmd, n, GetCommandLineW());
+    ZeroMemory(&si, sizeof si);
+    si.cb = sizeof si;
+    ZeroMemory(&pi, sizeof pi);
+    if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL,
+                       start_dir[0] ? start_dir : NULL, &si, &pi)) {
+        /* let the new window come to the front */
+        AllowSetForegroundWindow(pi.dwProcessId);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    free(cmd);
+}
+
 int APIENTRY
 WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
         int nCmdShow)
@@ -95,6 +130,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
     UNREFERENCED_PARAMETER(lpCmdLine);
     UNREFERENCED_PARAMETER(nCmdShow);
 
+    if (!GetCurrentDirectoryW(MAX_PATH, start_dir))
+        start_dir[0] = 0;
     win10_init();
     early_init(0, NULL);  /* Change as needed to support CRASHREPORT */
 

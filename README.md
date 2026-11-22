@@ -193,7 +193,11 @@ light, medium, dark or deep.
 - **Inventory panel.** Grouped by item class with headers, each line with
   the item's tile. It updates as your inventory changes and has a Hide
   button.
-- **Clearer menus** and a new splash screen.
+- **Clearer menus.**
+- **Title screen.** The game opens on a title screen inside the window,
+  with Play, About and Exit and both version numbers. Dying, quitting or
+  saving brings you back to it, ready for another game; closing the
+  window still exits.
 
 ### Tilesets
 

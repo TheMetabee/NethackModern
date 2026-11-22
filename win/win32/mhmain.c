@@ -18,6 +18,7 @@
 #include "mhmap.h"
 #include "mhtheme.h"
 #include "mhfont.h"
+#include "mhsplash.h"
 
 typedef struct mswin_nethack_main_window {
     int mapAcsiiModeSave;
@@ -456,6 +457,7 @@ MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         WINDOWPLACEMENT wp;
 
         mswin_layout_main_window(NULL);
+        mswin_menu_screen_place(hWnd); /* NetHack Modern: title screen */
 
         wp.length = sizeof(wp);
         if (GetWindowPlacement(hWnd, &wp)) {
@@ -486,6 +488,11 @@ MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_CLOSE: {
         /* exit gracefully */
+        /* NetHack Modern: closing the window ends the program rather than
+           going back to the title screen (unless the close is cancelled) */
+        boolean again = mswin_play_again;
+
+        mswin_play_again = FALSE;
         if (program_state.gameover) {
             /* assume the user really meant this, as the game is already
              * over... */
@@ -524,6 +531,7 @@ MainWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 done(QUIT);
                 break;
             case IDCANCEL:
+                mswin_play_again = again;
                 break;
             }
         }
@@ -2204,6 +2212,16 @@ tb_dark_titlebar(HWND hWnd)
         (void) fn(hWnd, 19, &on, sizeof on); /* older Windows 10 */
     SetWindowPos(hWnd, NULL, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    /* Windows 10 only repaints the caption in its new colours when the
+       window's activation changes; the window is already showing, and
+       the title screen inside it never moves activation away and back,
+       so flip it once here */
+    {
+        BOOL active = (GetActiveWindow() == hWnd);
+
+        SendMessage(hWnd, WM_NCACTIVATE, !active, 0);
+        SendMessage(hWnd, WM_NCACTIVATE, active, 0);
+    }
 }
 
 /* with the theme: drop the Win32 menu for the topic bar */

@@ -307,8 +307,10 @@ mswin_init_nhwindows(int *argc, char **argv)
     if (iflags.fx_theme)
         mswin_apply_theme(); /* NetHack Modern: one dark palette */
 
-    if (iflags.wc_splash_screen)
-        mswin_display_splash_window(FALSE);
+    /* NetHack Modern: the title screen, in the game window, in place of
+       the splash popup; it returns when the player chooses Play, and
+       every finished game comes back to it, so it's always shown */
+    mswin_display_menu_screen();
 
     iflags.window_inited = TRUE;
 }
