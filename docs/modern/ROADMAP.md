@@ -204,7 +204,7 @@ fx events, the core's `Soundeffect()` calls and matching messages (hidden
 layers, death cries per creature type, eating by texture, traps, doors and
 locks, prayer, wands, potions, scrolls and so on. No footsteps except
 wading. Every file is credited in `sound/modern/attributions.txt`.
-Level ambience is still to do.
+Level ambience came later, in Phase 5.
 
 **Phase 4 — Animation.** Attack "lunge" (sprite nudges toward target and
 back), hit flash/shake on the victim (150–250 ms, strength scaled by damage
@@ -286,10 +286,13 @@ worked out in the port from game state, so no core query was needed. Not
 built: on-screen zoom and tiles/ASCII buttons (the keys and the View menu
 cover them).
 
-**Phase 5 — Polish / possible new front end.** *Under way.* Fix rough
-edges found in play. Then: level ambience, a higher-resolution tileset,
-lighting/FOV shading. If GDI in `win/win32` becomes the bottleneck,
-consider a new SDL2 or Qt-based port reading the same fx stream.
+**Phase 5 — Polish / possible new front end.** *Under way.* The
+planned pieces are done: level ambience, lighting and field-of-view
+shading, and higher-resolution tiles (any tile image can be picked in
+play; none is shipped, as the art people use isn't ours to share). What
+remains is fixing rough edges found in play. If GDI in `win/win32`
+becomes the bottleneck, consider a new SDL2 or Qt-based port reading the
+same fx stream.
 
 *Done so far:*
 
@@ -344,8 +347,12 @@ consider a new SDL2 or Qt-based port reading the same fx stream.
 ## Open decisions
 
 - First front end: **win32** (decided; everything so far is in NetHackW).
-  Qt remains an option later.
-- Tileset: keep the default tiles at first; choose a larger set in Phase 5.
+- Next front end: most likely **SDL** (SDL2/SDL3), drawing with the GPU,
+  for smooth scaling, blending and lighting at any tile size. It would
+  read the same fx event stream, so the core work carries over. Qt stays
+  a fallback.
+- Tileset: the default tiles; any tile image in the game's layout can be
+  picked in play (none other is shipped).
 - Asset licensing: CC0, CC-BY (credited) and royalty-free game packs that
   allow use in games, each file credited in `sound/modern/attributions.txt`
   or `win/win32/ART-CREDITS.txt`. Packs that forbid redistribution are not
