@@ -10,6 +10,9 @@
 #ifdef CURSES_GRAPHICS
 extern struct window_procs curses_procs;
 #endif
+#ifdef SDL_GRAPHICS /* NetHack Modern: win/sdl */
+extern struct window_procs sdl_procs;
+#endif
 #ifdef X11_GRAPHICS
 /* Cannot just blindly include winX.h without including all of X11 stuff
    and must get the order of include files right.  Don't bother. */
@@ -102,6 +105,9 @@ static struct win_choices {
 #endif
 #ifdef CURSES_GRAPHICS
     { &curses_procs, 0 },
+#endif
+#ifdef SDL_GRAPHICS /* NetHack Modern */
+    { &sdl_procs, 0 CHAINR(0) },
 #endif
 #ifdef X11_GRAPHICS
     { &X11_procs, win_X11_init CHAINR(0) },

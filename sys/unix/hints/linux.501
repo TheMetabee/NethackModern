@@ -592,6 +592,21 @@ MANDIR=/usr/share/man/man6
 #-INCLUDE multisnd-post.501
 #
 
+# NetHack Modern: the SDL3 interface and the shared effects it draws
+ifdef WANT_WIN_SDL
+ifdef MAKEFILE_SRC
+$(TARGETPFX)sdlmain.o: ../win/sdl/sdlmain.c ../win/share/fxview.h $(HACK_H)
+	$(TARGET_CC) $(TARGET_CFLAGS) -c -o $@ ../win/sdl/sdlmain.c
+$(TARGETPFX)fxview.o: ../win/share/fxview.c ../win/share/fxview.h $(HACK_H)
+	$(TARGET_CC) $(TARGET_CFLAGS) -c -o $@ ../win/share/fxview.c
+endif   # MAKEFILE_SRC
+ifdef MAKEFILE_TOP
+# the tile sheet it draws the map from
+POSTINSTALL+= ( cd util && $(MAKE) tile2bmp && ./tile2bmp ../dat/tiles.bmp ) \
+		&& cp dat/tiles.bmp $(INSTDIR)/tiles.bmp;
+endif   # MAKEFILE_TOP
+endif   # WANT_WIN_SDL
+
 ifdef MAKEFILE_TOP
 ifeq ($(MAKELEVEL),0)
 .PHONY: checkmakefiles

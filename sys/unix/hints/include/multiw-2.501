@@ -107,6 +107,22 @@ WINOBJ0 += $(WINX11OBJ)
 GENTILECFILE = $(SRCDIR)/tile.c
 endif
 
+# NetHack Modern: the SDL3 tiles interface (win/sdl), with the effects
+# shared with NetHackW (win/share/fxview.c). Needs SDL3 and SDL3_ttf
+# found by pkg-config (set PKG_CONFIG_PATH for a private install).
+# 'make WANT_WIN_SDL=1 WANT_DEFAULT=sdl' makes it the default.
+ifdef WANT_WIN_SDL
+SDL_PKGS ?= sdl3 sdl3-ttf
+WINCFLAGS += -DSDL_GRAPHICS -DTILES_IN_GLYPHMAP -I../win/share \
+	$(shell pkg-config --cflags $(SDL_PKGS))
+# the glyph-to-tile table (generated src/tile.c), for glyphinfo's tileidx
+GENTILECFILE = $(SRCDIR)/tile.c
+GENTILEOFILE = $(SRCDIR)/tile.o
+WINSRC += ../win/sdl/sdlmain.c ../win/share/fxview.c
+WINOBJ0 += $(TARGETPFX)sdlmain.o $(TARGETPFX)fxview.o
+WINLIB += $(shell pkg-config --libs $(SDL_PKGS)) -lm
+endif
+
 ifndef WANT_WIN_QT
 ifdef WANT_WIN_ALL
 WANT_WIN_QT=1
