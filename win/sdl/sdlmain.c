@@ -70,6 +70,10 @@ static struct {
     int keyq[SDL_KEYQ], kq_head, kq_tail;
     boolean skip_text;         /* the key already gave us this character */
     boolean dirty;
+    struct {                   /* the menu or text window open, if any */
+        struct sdl_win *w;
+        int first, how;
+    } ovl;
 } sdl;
 
 static void sdl_render(void);
@@ -404,12 +408,16 @@ sdl_present(void)
     SDL_RenderPresent(sdl.ren);
 }
 
+static void sdl_draw_overlay(void);
+
+/* draw everything, with any open menu or text window on top */
 static void
 sdl_render(void)
 {
     if (!sdl.ren)
         return;
     sdl_draw_screen();
+    sdl_draw_overlay();
     sdl_present();
     sdl.dirty = FALSE;
 }
@@ -469,14 +477,17 @@ sdl_page_lines(void)
     return max(5, (h - 4 * sdl.lh) / sdl.lh - 2);
 }
 
-/* draw a menu or text window over the map, from item 'first' */
+/* draw the open menu or text window over the screen */
 static void
-sdl_draw_overlay(struct sdl_win *w, int first, int how)
+sdl_draw_overlay(void)
 {
+    struct sdl_win *w = sdl.ovl.w;
+    int first = sdl.ovl.first, how = sdl.ovl.how;
     int sw, sh, i, n = sdl_page_lines(), width = 20, x, y, bw, bh;
 
+    if (!w)
+        return;
     SDL_GetRenderOutputSize(sdl.ren, &sw, &sh);
-    sdl_draw_screen();
     for (i = 0; i < w->nitems; i++)
         width = max(width, (int) strlen(w->items[i].text) + 6);
     if (w->prompt)
@@ -512,7 +523,6 @@ sdl_draw_overlay(struct sdl_win *w, int first, int how)
                  (w->nitems + n - 1) / n);
         sdl_text(x + 12, y + 4, pg, sdl_dim);
     }
-    sdl_present();
 }
 
 /* give selectable items without an accelerator a-z, A-Z per page */
@@ -536,15 +546,22 @@ static int
 sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
 {
     int first = 0, n = sdl_page_lines(), c, i, count;
+    struct sdl_win *outer = sdl.ovl.w; /* a menu opened from a menu */
+    int outer_first = sdl.ovl.first, outer_how = sdl.ovl.how;
 
     if (how != PICK_NONE)
         sdl_assign_accels(w);
+    sdl.ovl.w = w, sdl.ovl.how = how;
     for (;;) {
-        sdl_draw_overlay(w, first, how);
+        sdl.ovl.first = first;
+        sdl_render();
         c = sdl_wait_key();
         if (c == '\033') {
             if (how == PICK_NONE)
                 break;
+            sdl.ovl.w = outer, sdl.ovl.first = outer_first;
+            sdl.ovl.how = outer_how;
+            sdl.dirty = TRUE;
             return -1;
         }
         if (c == '>' || (c == ' ' && first + n < w->nitems)) {
@@ -591,6 +608,8 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
         }
     }
  done:
+    sdl.ovl.w = outer, sdl.ovl.first = outer_first, sdl.ovl.how = outer_how;
+    sdl.dirty = TRUE;
     if (how == PICK_NONE || !picks)
         return 0;
     for (i = count = 0; i < w->nitems; i++)
@@ -673,6 +692,17 @@ sdl_init_nhwindows(int *argc, char **argv)
     (void) memset(&fxv, 0, sizeof fxv);
     fxv_init(&hooks);
     SDL_StartTextInput(sdl.window);
+    {
+        /* for testing: NETHACK_SDL_KEYS="..." is typed in at the start
+           (\n written as ^J, Escape as ^[) */
+        const char *k = getenv("NETHACK_SDL_KEYS");
+
+        for (; k && *k; k++)
+            if (k[0] == '^' && k[1])
+                sdl_push_key(C(k[1] == '[' ? '[' : k[1])), k++;
+            else
+                sdl_push_key(*k);
+    }
     iflags.window_inited = TRUE;
     sdl.dirty = TRUE;
     sdl_render();
