@@ -280,8 +280,13 @@ ifdef WANT_RELOCATABLE
 # it is (the game chdir()s there, to $NETHACKDIR if set, before reading
 # it), so the installed directory can be moved or packaged (AppImage)
 NHCFLAGS+=-DSYSCF -DSYSCF_FILE=\"sysconf\" -DSECURE
-# and libraries bundled in ../lib beside the binary are found first
+# and libraries bundled in ../lib beside the binary are found first; as
+# an old-style RPATH (not RUNPATH) so the bundled libraries' own
+# dependencies (SDL3_ttf needs SDL3 and FreeType) are found there too.
+# (--disable-new-dtags goes in LIBS, the end of the link line, as SDL3's
+# pkg-config flags turn new dtags back on.)
 LFLAGS+=-Wl,-rpath,'$$ORIGIN/../lib'
+LIBS+=-Wl,--disable-new-dtags
 else
 NHCFLAGS+=-DSYSCF -DSYSCF_FILE=\"$(HACKDIR)/sysconf\" -DSECURE
 endif

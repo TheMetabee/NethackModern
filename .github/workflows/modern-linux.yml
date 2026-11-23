@@ -94,25 +94,39 @@ jobs:
       # no FUSE in a container: AppImages unpack themselves and run
       APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
+      # SDL3 is built from source (22.04 has no packages for it); it loads
+      # X11 and Wayland from the player's system, so only their headers
+      # are needed here. DejaVu Sans Mono is the SDL window's font.
       - name: Install build dependencies
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            --no-install-recommends build-essential libncurses-dev \
-            git ca-certificates curl file
+            --no-install-recommends build-essential cmake pkg-config \
+            libncurses-dev git ca-certificates curl file \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev \
+            libwayland-dev libwayland-bin wayland-protocols \
+            libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
+            libdrm-dev libgbm-dev libfreetype-dev fonts-dejavu-core
 
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # tags, for the version in the file name
+
+      - name: Build SDL3 and SDL3_ttf
+        run: sh sys/unix/appimage/build-sdl3.sh /opt/sdl3 "$RUNNER_TEMP/sdl3-src"
 
       - name: Generate makefiles
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           sh sys/unix/setup.sh sys/unix/hints/linux.501
 
+      # the SDL window by default; the terminal versions as fallbacks
       - name: Compile and install
         run: |
+          PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig \
           make -j"$(nproc)" WANT_WIN_TTY=1 WANT_WIN_CURSES=1 \
+            WANT_WIN_SDL=1 WANT_DEFAULT=sdl \
             WANT_MINIAUDIO=1 WANT_RELOCATABLE=1 install
 
       - name: Get appimagetool and the AppImage runtime
@@ -128,16 +142,22 @@ jobs:
 
       - name: Make the AppImage
         run: |
+          LD_LIBRARY_PATH=/opt/sdl3/lib \
+          FONT=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf \
+          FONT_LICENSE=/usr/share/doc/fonts-dejavu-core/copyright \
           APPIMAGETOOL="$RUNNER_TEMP/tools/appimagetool" \
           APPIMAGE_RUNTIME="$RUNNER_TEMP/tools/runtime-x86_64" \
             sh sys/unix/appimage/build-appimage.sh playground dist
           ls -l dist
 
       # run the packed AppImage itself, from another directory, with the
-      # build's own game directory out of the way
+      # build's own game directory and SDL out of the way: in a terminal
+      # (no desktop here), then in its SDL window on SDL's off-screen
+      # driver, which must draw a frame of a new game
       - name: Check the AppImage
         run: |
           mv playground playground.built
+          mv /opt/sdl3 /opt/sdl3.built
           cd "$RUNNER_TEMP"
           image=$(ls "$GITHUB_WORKSPACE"/dist/*.AppImage)
           "$image" --version
@@ -146,6 +166,15 @@ jobs:
           test -f "$dir/sysconf"
           test -d "$dir/save"
           test -f "$dir/sounds/hit_1.wav"
+          test -f "$dir/tiles.bmp"
+          test -f "$dir/fonts/DejaVuSansMono.ttf"
+          DISPLAY=:0 SDL_VIDEO_DRIVER=offscreen \
+          NETHACKOPTIONS='name:ci,role:val,race:human,gender:female,align:lawful,!tutorial,!legacy' \
+          NETHACK_SDL_KEYS="Sy" NETHACK_SDL_SHOT="$RUNNER_TEMP/frame.png" \
+            timeout 20 "$image" > sdl.out 2>&1 || true
+          cat sdl.out
+          test -s "$RUNNER_TEMP/frame.png"
+          grep -q "welcome to NetHack" sdl.out
 
       - uses: actions/upload-artifact@v7
         with:
@@ -153,3 +182,12 @@ jobs:
           path: dist/*.AppImage
           retention-days: 30
           if-no-files-found: error
+
+      # what the SDL window drew in the check above, to look at
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: sdl-frame
+          path: ${{ runner.temp }}/frame.png
+          retention-days: 7
+          if-no-files-found: ignore

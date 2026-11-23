@@ -4,12 +4,16 @@
 #   sys/unix/appimage/build-appimage.sh <installed game dir> <output dir>
 #
 # Build the game first with WANT_RELOCATABLE=1, so it reads sysconf from
-# wherever it runs:
+# wherever it runs, and with the SDL window as its default (the terminal
+# version is the fallback when there's no desktop):
 #
 #   sh sys/unix/setup.sh sys/unix/hints/linux.501
-#   make WANT_WIN_TTY=1 WANT_WIN_CURSES=1 WANT_MINIAUDIO=1 \
+#   make WANT_WIN_TTY=1 WANT_WIN_SDL=1 WANT_DEFAULT=sdl WANT_MINIAUDIO=1 \
 #        WANT_RELOCATABLE=1 install
 #   sys/unix/appimage/build-appimage.sh playground dist
+#
+# The SDL window's font is bundled: $FONT (default DejaVu Sans Mono from
+# the system), with $FONT_LICENSE beside it if given.
 #
 # Always makes <output dir>/NetHackModern.AppDir (its AppRun can be run as
 # it is, for testing). If appimagetool is found ($APPIMAGETOOL or on the
@@ -44,6 +48,20 @@ for f in nhdat symbols license sysconf recover; do
     cp "$SRC/$f" "$APPDIR/usr/share/nethackmodern/$f"
 done
 cp -R "$SRC/sounds" "$APPDIR/usr/share/nethackmodern/sounds"
+# the SDL window's tile sheet and font
+if [ -f "$SRC/tiles.bmp" ]; then
+    cp "$SRC/tiles.bmp" "$APPDIR/usr/share/nethackmodern/tiles.bmp"
+fi
+FONT=${FONT:-/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf}
+if [ -f "$FONT" ]; then
+    mkdir -p "$APPDIR/usr/share/nethackmodern/fonts"
+    cp "$FONT" "$APPDIR/usr/share/nethackmodern/fonts/DejaVuSansMono.ttf"
+    if [ -n "$FONT_LICENSE" ] && [ -f "$FONT_LICENSE" ]; then
+        cp "$FONT_LICENSE" "$APPDIR/usr/share/nethackmodern/fonts/LICENSE"
+    fi
+else
+    echo "$0: no font at $FONT; the SDL window will look for one" >&2
+fi
 
 # bundle the libraries it links, except the C library itself, which
 # must come from the system it runs on
