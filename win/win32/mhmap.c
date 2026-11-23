@@ -1066,9 +1066,8 @@ fx_paint_spun(PNHMapWindow data, int i, int j, int tile, const RECT *rect,
     int tw = GetNHApp()->mapTile_X, th = GetNHApp()->mapTile_Y;
     int w = data->xBackTile, h = data->yBackTile;
     boolean builtin = (GetNHApp()->bmpMapTiles == GetNHApp()->bmpTiles);
-    int x, y, n = 0, margin;
-    double sx = 0, sy = 0, cxx = 0, cyy = 0, cxy = 0, cx, cy, a, l1, l2,
-           tr, det, ux, uy, rad = 0, rot, scale, cr, sr;
+    int x, y;
+    double cx, cy, rot, scale, cr, sr;
     static unsigned char *mask;
     static int masksz;
     BLENDFUNCTION bf;
@@ -1117,102 +1116,21 @@ fx_paint_spun(PNHMapWindow data, int i, int j, int tile, const RECT *rect,
                TILEBMP_Y(fx_spin_floor), SRCCOPY);
     GdiFlush();
 
-    /* what's drawn: not the see-through colour, and (for tile sets that
-       draw everything on a floor) not the floor; their frame is left out */
-    margin = builtin ? 0 : tw / 12;
-    for (y = 0; y < th; y++)
-        for (x = 0; x < tw; x++) {
-            DWORD p = src[y * tw + x];
-            int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
-            boolean on = !(r == 71 && g == 108 && b == 108);
-
-            if (on && !builtin) {
-                if (x < margin || y < margin || x >= tw - margin
-                    || y >= th - margin) {
-                    on = FALSE;
-                } else if (fx_spin_floor >= 0) {
-                    DWORD q = src[(th + y) * tw + x];
-                    int d = max(abs(r - (int) ((q >> 16) & 255)),
-                                max(abs(g - (int) ((q >> 8) & 255)),
-                                    abs(b - (int) (q & 255))));
-
-                    on = (d > 28);
-                }
-            }
-            mask[y * tw + x] = (unsigned char) on;
-            if (on) {
-                n++, sx += x, sy += y;
-                cxx += (double) x * x, cyy += (double) y * y,
-                cxy += (double) x * y;
-            }
-        }
-    if (n < 6)
-        return FALSE;
-    cx = sx / n, cy = sy / n;
-    cxx = cxx / n - cx * cx, cyy = cyy / n - cy * cy, cxy = cxy / n - cx * cy;
-    tr = cxx + cyy, det = cxx * cyy - cxy * cxy;
-    l1 = tr / 2 + sqrt(max(0.0, tr * tr / 4 - det));
-    l2 = tr / 2 - sqrt(max(0.0, tr * tr / 4 - det));
-    if (l1 < 3.0 * max(l2, 0.01))
-        return FALSE; /* not long and thin */
-    a = 0.5 * atan2(2 * cxy, cxx - cyy); /* the long axis (y down) */
-    ux = cos(a), uy = sin(a);
+    /* what's drawn, which way it points and where its middle is: the
+       measurement the other front ends share (fxview.c); then how far
+       to turn it, and how much to shrink it to stay in its square */
     {
-        /* which end is the tip: the steel one (blade, point, arrowhead:
-           bright and colourless) where that's clear, else the narrower
-           one (feathers, flights and hilts are wide), else the upper one
-           (weapon art points up), or the right one if it lies flat.
-           (ux, uy) points to the 'h' end; 'l' is the other. */
-        double tmax = 0, sh = 0, sl = 0, wh = 0, wl = 0;
-        int nh = 0, nl = 0;
-        boolean flip;
+        struct fxv_missile m;
 
-        for (y = 0; y < th; y++)
-            for (x = 0; x < tw; x++)
-                if (mask[y * tw + x])
-                    tmax = max(tmax, fabs((x - cx) * ux + (y - cy) * uy));
-        for (y = 0; y < th; y++)
-            for (x = 0; x < tw; x++)
-                if (mask[y * tw + x]) {
-                    double t = (x - cx) * ux + (y - cy) * uy,
-                           s = fabs(-(x - cx) * uy + (y - cy) * ux);
-                    DWORD p = src[y * tw + x];
-                    int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
-                    int hi = max(r, max(g, b)), lo = min(r, min(g, b));
-                    double steel = (hi / 255.0)
-                                   * (1.0 - (double) (hi - lo) / max(hi, 1));
-
-                    if (t > tmax / 2)
-                        sh += steel, wh += s, nh++;
-                    else if (t < -tmax / 2)
-                        sl += steel, wl += s, nl++;
-                }
-        if (nh)
-            sh /= nh, wh /= nh;
-        if (nl)
-            sl /= nl, wl /= nl;
-        if (fabs(sh - sl) > 0.08)
-            flip = (sl > sh);
-        else if (fabs(wh - wl) > 0.15 * max(wh, wl))
-            flip = (wl < wh);
-        else
-            flip = (fabs(uy) > 0.26) ? (uy > 0) : (ux < 0);
-        if (flip)
-            a += FX_PI;
+        if (!fxv_missile_shape((const uint32_t *) src,
+                               (!builtin && fx_spin_floor >= 0)
+                                   ? (const uint32_t *) src + tw * th
+                                   : (const uint32_t *) 0,
+                               tw, th, builtin, mask, &m)
+            || !fxv_missile_turn(&m, hdx, hdy, &rot, &scale))
+            return FALSE; /* round, or already pointing that way */
+        cx = m.cx, cy = m.cy;
     }
-    /* now 'a' is the way the picture points; turn it to the heading */
-    rot = atan2((double) hdy, (double) hdx) - a;
-    rot = fmod(rot + 3 * FX_PI, 2 * FX_PI) - FX_PI;
-    if (fabs(rot) < 0.05)
-        return FALSE; /* already points that way */
-
-    /* shrink it if turning it would take it past the square's edge */
-    for (y = 0; y < th; y++)
-        for (x = 0; x < tw; x++)
-            if (mask[y * tw + x])
-                rad = max(rad, sqrt((x + 0.5 - cx) * (x + 0.5 - cx)
-                                    + (y + 0.5 - cy) * (y + 0.5 - cy)));
-    scale = min(1.0, (min(tw, th) * 0.5) / max(rad, 1.0));
 
     if (!dstDC || dw != w || dh != h) {
         BITMAPINFO bi;
@@ -2596,30 +2514,21 @@ fx_paint_overlay(PNHMapWindow data, HDC hdc)
 static void
 fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect)
 {
-    int pct = data->map[i][j].fxhealth;
-    int h, w, fillw;
-    RECT bar;
+    int bar[4], fill[4];
+    fxv_color c;
+    RECT r;
     HBRUSH br;
-    COLORREF c;
 
-    if (!iflags.fx_healthbars || pct <= 0 || pct >= 100)
+    /* its shape and colours are shared (fxview.c) */
+    if (!fxv_health_bar(data->map[i][j].fxhealth, rect->left, rect->top,
+                        rect->right - rect->left, data->yBackTile, bar, fill,
+                        &c))
         return;
-    h = max(2, data->yBackTile / 10);
-    w = (rect->right - rect->left) - 4;
-    if (w < 4)
-        return;
-    SetRect(&bar, rect->left + 2, rect->bottom - h - 1, rect->right - 2,
-            rect->bottom - 1);
-    br = CreateSolidBrush(RGB(0, 0, 0));
-    FillRect(data->backBufferDC, &bar, br);
-    DeleteObject(br);
-    fillw = max(1, (w * pct) / 100);
-    c = pct > 50 ? RGB(60, 220, 60) : pct > 25 ? RGB(240, 200, 40)
-                                               : RGB(230, 50, 40);
-    SetRect(&bar, rect->left + 2, rect->bottom - h - 1,
-            rect->left + 2 + fillw, rect->bottom - 1);
+    SetRect(&r, bar[0], bar[1], bar[2], bar[3]);
+    FillRect(data->backBufferDC, &r, (HBRUSH) GetStockObject(BLACK_BRUSH));
+    SetRect(&r, fill[0], fill[1], fill[2], fill[3]);
     br = CreateSolidBrush(c);
-    FillRect(data->backBufferDC, &bar, br);
+    FillRect(data->backBufferDC, &r, br);
     DeleteObject(br);
 }
 

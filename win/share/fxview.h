@@ -158,6 +158,27 @@ int fxv_paint_auras(const struct fxv_glow *, fxv_ms now, int ox, int oy,
 #define FXV_FRAME_LIGHT FXV_RGB(255, 226, 150) /* drawn at 150/255 */
 boolean fxv_hero_frame(int x, int y, int tw, int th, int g, int r[8][4]);
 
+/* missiles pointing where they fly (fx_turn_missiles, and fx_flight_at()
+   in the core for the heading): fxv_missile_shape() measures a tile's
+   picture once; fxv_missile_turn() says how to turn it for a heading.
+   The front end turns the picture about (cx, cy) by rot and scales it
+   by scale, so that middle lands on the middle of the square. */
+struct fxv_missile {
+    double points;     /* the way the picture points, radians, y down */
+    double cx, cy;     /* its middle, in the tile's pixels */
+    double reach;      /* how far it reaches from there */
+    int tw, th;        /* the tile's size */
+};
+boolean fxv_missile_shape(const uint32_t *px, const uint32_t *floor, int tw,
+                          int th, boolean builtin, unsigned char *mask,
+                          struct fxv_missile *);
+boolean fxv_missile_turn(const struct fxv_missile *, int dx, int dy,
+                         double *rot, double *scale);
+
+/* health bars (fx_healthbars): see fxv_health_bar() */
+boolean fxv_health_bar(int pct, int x, int y, int tw, int th, int bar[4],
+                       int fill[4], fxv_color *);
+
 /* lighting: a shade layer over the map, FXV_LIGHT_S pixels per square,
    smoothed between squares so light fades off instead of stopping at
    tile edges. fxv_light_layer() builds it and points *pixels at it:

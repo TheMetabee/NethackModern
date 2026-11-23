@@ -2796,3 +2796,157 @@ fxv_hero_frame(int x, int y, int tw, int th, int g, int r[8][4])
     }
     return TRUE;
 }
+
+/* ---- missiles pointing where they fly ----------------------------- */
+
+/* Measure a missile's picture (fx_turn_missiles): which way it points
+   and where its middle is, so it can be turned to its heading. px is
+   the tile, tw x th pixels as 0x..RRGGBB (any alpha byte is ignored),
+   with the key colour (71,108,108) see-through. For a tile set that
+   draws everything on a floor (builtin FALSE), floor is that tile's
+   floor, and what matches it, and a frame round the edge, are left
+   out. mask (tw*th bytes) gets 1 where the picture is. FALSE if the
+   picture isn't long and thin (round things aren't turned). */
+boolean
+fxv_missile_shape(const uint32_t *px, const uint32_t *floor, int tw, int th,
+                  boolean builtin, unsigned char *mask,
+                  struct fxv_missile *m)
+{
+    int x, y, n = 0, margin;
+    double sx = 0, sy = 0, cxx = 0, cyy = 0, cxy = 0, cx, cy, a, l1, l2,
+           tr, det, ux, uy, rad = 0;
+
+    if (tw < 4 || th < 4)
+        return FALSE;
+    margin = builtin ? 0 : tw / 12;
+    for (y = 0; y < th; y++)
+        for (x = 0; x < tw; x++) {
+            uint32_t p = px[y * tw + x];
+            int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+            boolean on = !(r == 71 && g == 108 && b == 108);
+
+            if (on && !builtin) {
+                if (x < margin || y < margin || x >= tw - margin
+                    || y >= th - margin) {
+                    on = FALSE;
+                } else if (floor) {
+                    uint32_t q = floor[y * tw + x];
+                    int d = max(abs(r - (int) ((q >> 16) & 255)),
+                                max(abs(g - (int) ((q >> 8) & 255)),
+                                    abs(b - (int) (q & 255))));
+
+                    on = (d > 28);
+                }
+            }
+            mask[y * tw + x] = (unsigned char) on;
+            if (on) {
+                n++, sx += x, sy += y;
+                cxx += (double) x * x, cyy += (double) y * y,
+                cxy += (double) x * y;
+            }
+        }
+    if (n < 6)
+        return FALSE;
+    cx = sx / n, cy = sy / n;
+    cxx = cxx / n - cx * cx, cyy = cyy / n - cy * cy, cxy = cxy / n - cx * cy;
+    tr = cxx + cyy, det = cxx * cyy - cxy * cxy;
+    l1 = tr / 2 + sqrt(max(0.0, tr * tr / 4 - det));
+    l2 = tr / 2 - sqrt(max(0.0, tr * tr / 4 - det));
+    if (l1 < 3.0 * max(l2, 0.01))
+        return FALSE; /* not long and thin */
+    a = 0.5 * atan2(2 * cxy, cxx - cyy); /* the long axis (y down) */
+    ux = cos(a), uy = sin(a);
+    {
+        /* which end is the tip: the steel one (blade, point, arrowhead:
+           bright and colourless) where that's clear, else the narrower
+           one (feathers, flights and hilts are wide), else the upper one
+           (weapon art points up), or the right one if it lies flat.
+           (ux, uy) points to the 'h' end; 'l' is the other. */
+        double tmax = 0, sh = 0, sl = 0, wh = 0, wl = 0;
+        int nh = 0, nl = 0;
+        boolean flip;
+
+        for (y = 0; y < th; y++)
+            for (x = 0; x < tw; x++)
+                if (mask[y * tw + x])
+                    tmax = max(tmax, fabs((x - cx) * ux + (y - cy) * uy));
+        for (y = 0; y < th; y++)
+            for (x = 0; x < tw; x++)
+                if (mask[y * tw + x]) {
+                    double t = (x - cx) * ux + (y - cy) * uy,
+                           s = fabs(-(x - cx) * uy + (y - cy) * ux);
+                    uint32_t p = px[y * tw + x];
+                    int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+                    int hi = max(r, max(g, b)), lo = min(r, min(g, b));
+                    double steel = (hi / 255.0)
+                                   * (1.0 - (double) (hi - lo) / max(hi, 1));
+
+                    if (t > tmax / 2)
+                        sh += steel, wh += s, nh++;
+                    else if (t < -tmax / 2)
+                        sl += steel, wl += s, nl++;
+                }
+        if (nh)
+            sh /= nh, wh /= nh;
+        if (nl)
+            sl /= nl, wl /= nl;
+        if (fabs(sh - sl) > 0.08)
+            flip = (sl > sh);
+        else if (fabs(wh - wl) > 0.15 * max(wh, wl))
+            flip = (wl < wh);
+        else
+            flip = (fabs(uy) > 0.26) ? (uy > 0) : (ux < 0);
+        if (flip)
+            a += 3.14159265358979;
+    }
+    /* how far it reaches from its middle, for shrinking it to fit */
+    for (y = 0; y < th; y++)
+        for (x = 0; x < tw; x++)
+            if (mask[y * tw + x])
+                rad = max(rad, sqrt((x + 0.5 - cx) * (x + 0.5 - cx)
+                                    + (y + 0.5 - cy) * (y + 0.5 - cy)));
+    m->points = a, m->cx = cx, m->cy = cy, m->reach = rad;
+    m->tw = tw, m->th = th;
+    return TRUE;
+}
+
+/* how to turn a measured missile to head dx,dy: *rot radians (clockwise
+   on screen, y down) and *scale (shrunk so it stays in its square);
+   FALSE if it already points that way */
+boolean
+fxv_missile_turn(const struct fxv_missile *m, int dx, int dy, double *rot,
+                 double *scale)
+{
+    double r = atan2((double) dy, (double) dx) - m->points;
+
+    r = fmod(r + 3 * 3.14159265358979, 2 * 3.14159265358979)
+        - 3.14159265358979;
+    if (fabs(r) < 0.05)
+        return FALSE;
+    *rot = r;
+    *scale = min(1.0, (min(m->tw, m->th) * 0.5) / max(m->reach, 1.0));
+    return TRUE;
+}
+
+/* ---- health bars -------------------------------------------------- */
+
+/* the thin bar along the bottom of a hurt creature's square, for a
+   square at x,y of tw x th: the whole bar (black) and its filled part,
+   as left, top, right, bottom, and the fill's colour; FALSE if none
+   (fx_healthbars off, or the creature is unhurt or not reported) */
+boolean
+fxv_health_bar(int pct, int x, int y, int tw, int th, int bar[4],
+               int fill[4], fxv_color *c)
+{
+    int h = max(2, th / 10), w = tw - 4;
+
+    if (!iflags.fx_healthbars || pct <= 0 || pct >= 100 || w < 4)
+        return FALSE;
+    bar[0] = x + 2, bar[1] = y + th - h - 1;
+    bar[2] = x + tw - 2, bar[3] = y + th - 1;
+    fill[0] = bar[0], fill[1] = bar[1], fill[3] = bar[3];
+    fill[2] = bar[0] + max(1, (w * pct) / 100);
+    *c = pct > 50 ? FXV_RGB(60, 220, 60)
+         : pct > 25 ? FXV_RGB(240, 200, 40) : FXV_RGB(230, 50, 40);
+    return TRUE;
+}

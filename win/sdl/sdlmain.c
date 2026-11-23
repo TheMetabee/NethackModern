@@ -59,6 +59,7 @@ static struct {
     TTF_Font *font;
     SDL_Texture *tiles;        /* the tile sheet, key colour cut out */
     SDL_Texture *tiles_solid;  /* the same, solid: floors, backgrounds */
+    SDL_Surface *tiles_px;     /* the solid sheet's pixels (missiles) */
     int tiles_across;
     int cw, lh;                /* character width, line height */
     float text_px;             /* the text size, pixels (Alt+= / Alt+-) */
@@ -1313,6 +1314,82 @@ sdl_draw_floaters(int ox, int oy, int ts, fxv_ms now)
     }
 }
 
+/* a missile in flight on x,y pointing where it's going (fx_turn_missiles):
+   its floor, then the tile turned; FALSE if it isn't one, or doesn't
+   need turning (round things, or already pointing that way) */
+static boolean
+sdl_draw_missile(int x, int y, float px, float py, int ts)
+{
+    /* each tile's measurement, made the first time it flies */
+    static struct sdl_missile_cache {
+        char state; /* 0 not yet, 1 measured, 2 not a turnable shape */
+        struct fxv_missile m;
+    } *cache;
+    static int ncache;
+    const glyph_info *fg = &sdl.map[x][y];
+    int tile = fg->gm.tileidx, dx, dy;
+    double rot, scale;
+    struct sdl_missile_cache *c;
+
+    if (!iflags.fx_turn_missiles || !sdl.tiles_px
+        || !glyph_is_object(fg->glyph) || !fx_flight_at(x, y, &dx, &dy))
+        return FALSE;
+    if (!cache) {
+        ncache = (sdl.tiles_px->w / SDL_TILE) * (sdl.tiles_px->h / SDL_TILE);
+        cache = (struct sdl_missile_cache *) alloc(ncache * sizeof *cache);
+        (void) memset(cache, 0, ncache * sizeof *cache);
+    }
+    if (tile < 0 || tile >= ncache)
+        return FALSE;
+    c = &cache[tile];
+    if (!c->state) {
+        uint32_t px32[SDL_TILE * SDL_TILE];
+        unsigned char mask[SDL_TILE * SDL_TILE];
+        const Uint8 *row;
+        int i, j;
+
+        /* the tile's pixels, out of the solid sheet */
+        for (j = 0; j < SDL_TILE; j++) {
+            row = (const Uint8 *) sdl.tiles_px->pixels
+                  + ((tile / sdl.tiles_across) * SDL_TILE + j)
+                        * sdl.tiles_px->pitch
+                  + (tile % sdl.tiles_across) * SDL_TILE * 4;
+            for (i = 0; i < SDL_TILE; i++)
+                px32[j * SDL_TILE + i] = ((const Uint32 *) row)[i];
+        }
+        c->state = fxv_missile_shape(px32, (const uint32_t *) 0, SDL_TILE,
+                                     SDL_TILE, TRUE, mask, &c->m)
+                       ? 1 : 2;
+    }
+    if (c->state != 1 || !fxv_missile_turn(&c->m, dx, dy, &rot, &scale))
+        return FALSE;
+    {
+        /* the floor under it, then the picture turned about its middle,
+           which lands on the middle of the square */
+        const glyph_info *bg = &sdl.bkmap[x][y];
+        SDL_FRect src, dst;
+        SDL_FPoint mid;
+        float k = (float) (ts * scale) / SDL_TILE;
+
+        if (bg->glyph != NO_GLYPH && bg->glyph != GLYPH_UNEXPLORED)
+            sdl_tile_solid(bg->gm.tileidx, px, py, (float) ts);
+        else
+            sdl_tile_solid(sdl_floor_tile(x, y), px, py, (float) ts);
+        src.x = (float) ((tile % sdl.tiles_across) * SDL_TILE);
+        src.y = (float) ((tile / sdl.tiles_across) * SDL_TILE);
+        src.w = src.h = (float) SDL_TILE;
+        mid.x = (float) (c->m.cx + 0.5) * k;
+        mid.y = (float) (c->m.cy + 0.5) * k;
+        dst.w = dst.h = SDL_TILE * k;
+        dst.x = px + ts / 2.0f - mid.x;
+        dst.y = py + ts / 2.0f - mid.y;
+        (void) SDL_RenderTextureRotated(sdl.ren, sdl.tiles, &src, &dst,
+                                        rot * 180.0 / 3.14159265358979,
+                                        &mid, SDL_FLIP_NONE);
+    }
+    return TRUE;
+}
+
 static void
 sdl_draw_map(void)
 {
@@ -1343,12 +1420,29 @@ sdl_draw_map(void)
             /* as NetHackW: a background is solid and what's on it has
                its key colour cut out; with no background (plain lit
                floor) the tile itself is drawn solid */
-            if (bg->glyph != NO_GLYPH && bg->glyph != GLYPH_UNEXPLORED) {
+            if (sdl_draw_missile(x, y, px, py, ts)) {
+                ; /* a missile in flight, pointing where it's going */
+            } else if (bg->glyph != NO_GLYPH
+                       && bg->glyph != GLYPH_UNEXPLORED) {
                 sdl_tile_solid(bg->gm.tileidx, px, py, (float) ts);
                 if (fg->glyph != NO_GLYPH)
                     sdl_tile(fg->gm.tileidx, px, py, (float) ts);
             } else if (fg->glyph != NO_GLYPH) {
                 sdl_tile_solid(fg->gm.tileidx, px, py, (float) ts);
+            }
+            {
+                /* a hurt creature's health bar (shared shape, fxview.c) */
+                int bar[4], fill[4];
+                fxv_color c;
+
+                if (fxv_health_bar(fg->fxhealth, (int) px, (int) py, ts, ts,
+                                   bar, fill, &c)) {
+                    sdl_fill(bar[0], bar[1], bar[2] - bar[0],
+                             bar[3] - bar[1], 0, 0, 0, 255);
+                    sdl_fill(fill[0], fill[1], fill[2] - fill[0],
+                             fill[3] - fill[1], (Uint8) FXV_R(c),
+                             (Uint8) FXV_G(c), (Uint8) FXV_B(c), 255);
+                }
             }
         }
     /* the effects, in NetHackW's order */
@@ -1764,7 +1858,8 @@ sdl_init_nhwindows(int *argc, char **argv)
         /* solid, for floors and backgrounds */
         if ((argb = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888)) != 0) {
             sdl.tiles_solid = SDL_CreateTextureFromSurface(sdl.ren, argb);
-            SDL_DestroySurface(argb);
+            /* kept: its pixels are measured for turning missiles */
+            sdl.tiles_px = argb;
             if (sdl.tiles_solid)
                 (void) SDL_SetTextureScaleMode(sdl.tiles_solid,
                                                SDL_SCALEMODE_NEAREST);
@@ -1866,6 +1961,8 @@ sdl_exit_nhwindows(const char *str)
         SDL_DestroyTexture(sdl.tiles), sdl.tiles = 0;
     if (sdl.tiles_solid)
         SDL_DestroyTexture(sdl.tiles_solid), sdl.tiles_solid = 0;
+    if (sdl.tiles_px)
+        SDL_DestroySurface(sdl.tiles_px), sdl.tiles_px = 0;
     if (sdl.ren)
         SDL_DestroyRenderer(sdl.ren), sdl.ren = 0;
     if (sdl.window)
