@@ -2350,8 +2350,14 @@ sdl_bar(int x, int y, int w, int h, const char *label, int cur, int mx,
         }
     }
     Snprintf(buf, sizeof buf, "%s  %d / %d", label, cur, mx);
-    (void) sdl_text(x + (w - sdl_text_w(buf)) / 2, y + (h - sdl.lh) / 2,
-                    buf, sdl_col(FXV_RGB(250, 250, 252)));
+    {
+        /* with a drop shadow, so it reads over any fill colour */
+        int tx = x + (w - sdl_text_w(buf)) / 2, ty = y + (h - sdl.lh) / 2,
+            d = max(1, sdl.lh / 16);
+
+        (void) sdl_text(tx + d, ty + d, buf, sdl_col(FXV_RGB(8, 9, 12)));
+        (void) sdl_text(tx, ty, buf, sdl_col(FXV_RGB(250, 250, 252)));
+    }
 }
 
 /* a small triangle, pointing up or down, centred at x,y */
@@ -2382,8 +2388,9 @@ sdl_draw_status(void)
                     dim = sdl_col(FXV_RGB(138, 146, 160));
     int w, h, x = 12, y1, y2, rowh = sdl_rowh(), i, sw, colw, top;
     int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
-    int arrow[6];
-    char buf[BUFSZ];
+    int arrow[6], idw, barw;
+    boolean show_eq;
+    char buf[BUFSZ], where[BUFSZ];
 
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
     top = h - sdl_status_h();
@@ -2393,19 +2400,60 @@ sdl_draw_status(void)
         return; /* nothing to show before the game starts */
     y1 = top + 7, y2 = y1 + rowh;
 
-    /* identity: title, then alignment and where */
-    (void) sdl_text(x, y1, sdl_title, sdl_gold);
-    Snprintf(buf, sizeof buf, "%s   -   %s",
+    /* what each part needs, so that on a narrow window they can give
+       way in turn: the bars shorten, the name and place are cut short,
+       the stats close up, and last of all the equipment slots stay out
+       rather than run off the edge */
+    Snprintf(where, sizeof where, "%s   -   %s",
              (u.ualign.type == A_CHAOTIC) ? "Chaotic"
              : (u.ualign.type == A_NEUTRAL) ? "Neutral" : "Lawful",
              sdl_leveldesc);
+    idw = max(sdl_text_w(sdl_title), sdl_text_w(where));
+    barw = max(170, sdl.cw * 22);
+    colw = sdl.cw * 11; /* room for "St 18/04" in a monospace font */
+    {
+        int acw, eqw = 6 * (rowh - 3) + 5 * 4 + 18, over, take, w1, w2;
+
+        /* (the AC, level, gold and turn as they'll be drawn below) */
+        Snprintf(buf, sizeof buf, "AC %d", u.uac);
+        w1 = sdl_text_w(buf) + 16;
+        if (Upolyd)
+            Snprintf(buf, sizeof buf, "HD %d", mons[u.umonnum].mlevel);
+        else if (flags.showexp)
+            Snprintf(buf, sizeof buf, "Lvl %d  (%ld xp)", u.ulevel,
+                     u.uexp);
+        else
+            Snprintf(buf, sizeof buf, "Lvl %d", u.ulevel);
+        w1 += sdl_text_w(buf);
+        Snprintf(buf, sizeof buf, "$ %ld", money_cnt(gi.invent));
+        w2 = max(sdl_text_w(buf), sdl_text_w("AC 10")) + 16;
+        if (flags.time) {
+            Snprintf(buf, sizeof buf, "Turn %ld", svm.moves);
+            w2 += sdl_text_w(buf);
+        }
+        acw = max(w1, w2);
+        over = (12 + idw + 18 + barw + 18 + 3 * colw + 10 + acw + 18 + eqw)
+               - w;
+        take = min(max(over, 0), barw - max(110, sdl.cw * 12));
+        barw -= take, over -= take;
+        take = min(max(over, 0), 3 * (colw - sdl.cw * 10));
+        colw -= (take + 2) / 3, over -= take;
+        take = min(max(over, 0), idw - max(90, sdl.cw * 10));
+        idw -= take, over -= take;
+        show_eq = (over <= 0);
+    }
+
+    /* identity: title, then alignment and where */
+    sdl_fit(buf, sizeof buf, sdl_title, idw);
+    (void) sdl_text(x, y1, buf, sdl_gold);
+    sdl_fit(buf, sizeof buf, where, idw);
     (void) sdl_text(x, y2, buf, dim);
-    x += max(sdl_text_w(sdl_title), sdl_text_w(buf)) + 18;
+    x += idw + 18;
     sdl_rule(x - 9, y1, 2 * rowh - 2);
 
     /* HP and Pw */
     {
-        int bw = max(170, sdl.cw * 22), bh = rowh - 6;
+        int bw = barw, bh = rowh - 6;
 
         sdl_bar(x, y1 + 2, bw, bh, "HP", hp, hpmax,
                 fxv_hp_color(hpmax > 0 ? (hp * 100) / hpmax : 0));
@@ -2417,7 +2465,6 @@ sdl_draw_status(void)
 
     /* the six stats, two rows of three, with an arrow for 50 turns after
        one changes (fxview.c) */
-    colw = sdl.cw * 11; /* room for "St 18/04" in a monospace font */
     sw = sdl_text_w("Wi ");
     fxv_stat_arrows(arrow);
     for (i = 0; i < 6; i++) {
@@ -2475,7 +2522,7 @@ sdl_draw_status(void)
 
     /* what's worn and wielded: the twelve equipment slots, each
        edged red or green once known cursed or blessed (fxview.c) */
-    {
+    if (show_eq) {
         struct obj *slot[12];
         int cell = rowh - 3, gap = 4;
 

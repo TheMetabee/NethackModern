@@ -473,10 +473,15 @@ th_bar(HDC hdc, int x, int y, int w, int h, const char *label, int cur,
     SetBkMode(hdc, TRANSPARENT);
     {
         TEXTMETRIC tm;
+        int tx, ty, d;
 
         GetTextMetrics(hdc, &tm);
-        th_text(hdc, x + (w - th_width(hdc, buf)) / 2,
-                y + (h - tm.tmHeight) / 2, buf, RGB(250, 250, 252));
+        tx = x + (w - th_width(hdc, buf)) / 2;
+        ty = y + (h - tm.tmHeight) / 2;
+        d = max(1, tm.tmHeight / 16);
+        /* with a drop shadow, so it reads over any fill colour */
+        th_text(hdc, tx + d, ty + d, buf, RGB(8, 9, 12));
+        th_text(hdc, tx, ty, buf, RGB(250, 250, 252));
     }
 }
 
