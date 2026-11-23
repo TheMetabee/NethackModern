@@ -41,6 +41,7 @@ struct sdl_item {              /* a line of a menu or text window */
     char gacc;                 /* group accelerator */
     int attr, color;
     boolean selected;
+    int tile;                  /* its tile, -1 none */
     char *text;
 };
 
@@ -51,6 +52,7 @@ struct sdl_win {
     char *prompt;              /* end_menu() prompt */
     char status[2][BUFSZ];     /* NHW_STATUS: its two lines */
     int cury;
+    boolean perminv;           /* the persistent inventory (perm_invent) */
 };
 
 static struct {
@@ -76,6 +78,11 @@ static struct {
     glyph_info map[COLNO][ROWNO], bkmap[COLNO][ROWNO];
     struct sdl_win win[SDL_MAXWIN];
     char *msgs[SDL_MSGKEEP];
+    long msg_turn[SDL_MSGKEEP];      /* the turn each came on */
+    fxv_color msg_hl[SDL_MSGKEEP];   /* its highlight colour... */
+    boolean msg_has_hl[SDL_MSGKEEP]; /* ...if it has one */
+    TTF_Font *msgfont;         /* bold, for messages on the map */
+    SDL_Rect maprect;          /* the level as last drawn (column 1 on) */
     int nmsgs;                 /* total ever added */
     int msg_seen;              /* messages before this one are old */
     const char *prompt;        /* a question being asked, shown on top */
@@ -94,12 +101,23 @@ static struct {
         int items_y;           /* where the line for item "first" is */
         int hover;             /* the item under the mouse, -1 none */
     } ovl;
+    struct {                   /* the inventory panel (perm_invent) */
+        int first;             /* the line at its top */
+        boolean updating;      /* update_inventory() is filling it */
+    } inv;
 } sdl;
 
 static void sdl_render(void);
 static void sdl_zoom(int);
 static int sdl_page_lines(void);
 static int sdl_status_h(void);
+static int sdl_inv_w(void);
+static int sdl_inv_lines(void);
+static int sdl_map_top(void);
+static void sdl_draw_inventory(void);
+static int sdl_text_w(const char *);
+static SDL_Color sdl_col(fxv_color);
+static struct sdl_win *sdl_getwin(winid);
 
 /* the character panel's action buttons, as last drawn */
 #define SDL_MAXBTN 8
@@ -193,6 +211,8 @@ sdl_text_size(float px)
     (void) TTF_GetStringSize(sdl.font, "M", 1, &w, &h);
     sdl.cw = w;
     sdl.lh = TTF_GetFontLineSkip(sdl.font);
+    if (sdl.msgfont)
+        (void) TTF_SetFontSize(sdl.msgfont, sdl.text_px);
     sdl.dirty = TRUE;
 }
 
@@ -266,6 +286,7 @@ enum sdl_bar_kind {
     BAR_SHADE,     /* fx_shade 0..3, or 4: lighting off */
     BAR_STYLE,     /* fx_bar_style 0..4 */
     BAR_BORDER,    /* fx_bar_border on or off */
+    BAR_INVEN,     /* the inventory panel shown or hidden */
     BAR_SEP
 };
 
@@ -313,6 +334,7 @@ static const struct sdl_bar_item bar_view[] = {
     { "Bars: bevel", "", BAR_STYLE, NULL, 4 },
     { "Bar border", "", BAR_BORDER, NULL, 0 },
     BSEP,
+    { "Inventory panel", "", BAR_INVEN, NULL, 0 },
     BK("Previous messages", "Ctrl+P", "\x10"),
     BK("Dungeon overview", "Ctrl+O", "\x0f"),
 };
@@ -407,6 +429,8 @@ static const struct sdl_bar_topic {
 #define BAR_NTOPIC SIZE(bar_topics)
 
 static int bar_x[BAR_NTOPIC + 1]; /* topic left edges, and the end */
+static int bar_inv[2];            /* the inventory toggle's left, right */
+static void sdl_toggle_inven(void);
 
 /* is this item a setting that's on now? (it gets a tick) */
 static boolean
@@ -423,6 +447,8 @@ sdl_bar_checked(const struct sdl_bar_item *it)
         return iflags.fx_bar_style == it->arg;
     case BAR_BORDER:
         return iflags.fx_bar_border;
+    case BAR_INVEN:
+        return iflags.perm_invent && !iflags.fx_hide_inventory;
     default:
         return FALSE;
     }
@@ -490,7 +516,20 @@ sdl_bar_topic_at(float mx, float my)
     for (i = 0; i < (int) BAR_NTOPIC; i++)
         if (mx >= bar_x[i] && mx < bar_x[i + 1])
             return i;
+    if (iflags.perm_invent && mx >= bar_inv[0] && mx < bar_inv[1])
+        return BAR_NTOPIC; /* the inventory toggle */
     return -1;
+}
+
+/* show or hide the inventory panel (fx_hide_inventory, kept in
+   nethackmodern.rc at once, as NetHackW does) */
+static void
+sdl_toggle_inven(void)
+{
+    iflags.fx_hide_inventory = !iflags.fx_hide_inventory;
+    fx_options_remember();
+    sdl.recentre = TRUE;
+    sdl.dirty = TRUE;
 }
 
 static void
@@ -513,6 +552,21 @@ sdl_draw_bar(void)
         x += tw;
     }
     bar_x[BAR_NTOPIC] = x;
+    bar_inv[0] = bar_inv[1] = 0;
+    if (iflags.perm_invent) {
+        /* the inventory toggle, at the right end (as NetHackW's) */
+        const char *lab = iflags.fx_hide_inventory ? "Show inventory"
+                                                   : "Hide inventory";
+        int tw = (int) strlen(lab) * sdl.cw + 2 * sdl.cw;
+
+        bar_inv[0] = w - 8 - tw, bar_inv[1] = w - 8;
+        sdl_fill(bar_inv[0], 3, tw, sdl_bar_h() - 6,
+                 sdl.bar_hot == (int) BAR_NTOPIC ? 50 : 34,
+                 sdl.bar_hot == (int) BAR_NTOPIC ? 58 : 38,
+                 sdl.bar_hot == (int) BAR_NTOPIC ? 88 : 52, 255);
+        (void) sdl_text(bar_inv[0] + sdl.cw, 4, lab,
+                        sdl.bar_hot == (int) BAR_NTOPIC ? hi : sdl_dim);
+    }
     if (sdl.bar_open >= 0) {
         const struct sdl_bar_topic *tp = &bar_topics[sdl.bar_open];
         int bx, by, bw, bh, iy;
@@ -605,6 +659,16 @@ sdl_bar_do(const struct sdl_bar_item *it)
     case BAR_BORDER:
         iflags.fx_bar_border = !iflags.fx_bar_border;
         break;
+    case BAR_INVEN:
+        /* the panel is the core's persistent inventory, so it needs the
+           perm_invent option; this only shows or hides it, as NetHackW's
+           toolbar button does */
+        if (!iflags.perm_invent)
+            sdl_add_msg("The inventory panel needs the perm_invent option"
+                        " (set it with O).");
+        else
+            sdl_toggle_inven();
+        break;
     default:
         break;
     }
@@ -625,7 +689,8 @@ sdl_bar_mouse(const SDL_Event *ev)
         if (t != sdl.bar_hot)
             sdl.bar_hot = t, sdl.dirty = TRUE;
         if (sdl.bar_open >= 0) {
-            if (t >= 0 && t != sdl.bar_open) /* slide along the bar */
+            if (t >= 0 && t < (int) BAR_NTOPIC
+                && t != sdl.bar_open) /* slide along the bar */
                 sdl.bar_open = t, sdl.bar_item = -1;
             i = sdl_bar_item_at(mx, my);
             if (i != sdl.bar_item)
@@ -639,6 +704,12 @@ sdl_bar_mouse(const SDL_Event *ev)
         return FALSE;
     mx = ev->button.x, my = ev->button.y;
     t = sdl_bar_topic_at(mx, my);
+    if (t == (int) BAR_NTOPIC) { /* the inventory toggle: only a view */
+        sdl.bar_open = sdl.bar_item = -1;
+        if (ev->button.button == SDL_BUTTON_LEFT)
+            sdl_toggle_inven();
+        return TRUE;
+    }
     if (t >= 0) {
         if (!busy)
             sdl.bar_open = (sdl.bar_open == t) ? -1 : t;
@@ -701,10 +772,22 @@ sdl_handle_event(const SDL_Event *e)
         /* the wheel zooms the map, or turns a menu's pages */
         if (e->wheel.y == 0.0f)
             break;
-        if (sdl.ovl.w)
+        if (sdl.ovl.w) {
             sdl_push_key(e->wheel.y > 0 ? '<' : '>');
-        else
-            sdl_zoom(e->wheel.y > 0 ? 1 : -1);
+        } else {
+            /* over the inventory panel it scrolls that instead */
+            SDL_Event ev = *e;
+            int sw, sh;
+
+            (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+            SDL_GetRenderOutputSize(sdl.ren, &sw, &sh);
+            if (sdl_inv_w() > 0 && ev.wheel.mouse_x >= sw - sdl_inv_w()) {
+                sdl.inv.first += (e->wheel.y > 0) ? -3 : 3;
+                sdl.dirty = TRUE; /* (kept in range when drawn) */
+            } else {
+                sdl_zoom(e->wheel.y > 0 ? 1 : -1);
+            }
+        }
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
         /* the mouse never moves the hero: clicks only work menus and
@@ -947,9 +1030,9 @@ sdl_layout(int *top, int *bottom, int *ts, int *ox, int *oy)
     int w, h, aw, ah, z;
 
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
-    *top = sdl_bar_h() + SDL_MSGSHOW * sdl.lh + 8;
+    *top = sdl_map_top();
     *bottom = h - sdl_status_h(); /* the character panel */
-    aw = w, ah = max(1, *bottom - *top);
+    aw = max(1, w - sdl_inv_w()), ah = max(1, *bottom - *top);
     if (sdl.zoom >= 0) {
         z = sdl.zoom;
     } else {
@@ -1460,6 +1543,7 @@ sdl_draw_map(void)
             ox += (int) (sx * ts), oy += (int) (sy * ts);
     }
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    w -= sdl_inv_w(); /* the inventory panel is to the right */
     clip.x = 0, clip.y = top, clip.w = w, clip.h = bottom - top;
     SDL_SetRenderClipRect(sdl.ren, &clip);
     for (x = 1; x < COLNO; x++)
@@ -1497,6 +1581,9 @@ sdl_draw_map(void)
                 }
             }
         }
+    /* where the level is, for the messages' shade */
+    sdl.maprect.x = ox + ts, sdl.maprect.y = oy;
+    sdl.maprect.w = (COLNO - 1) * ts, sdl.maprect.h = ROWNO * ts;
     /* the effects, in NetHackW's order */
     sdl_draw_translucent(ox, oy, ts, (fxv_ms) now);
     sdl_draw_sprites(ox, oy, ts, (fxv_ms) now);
@@ -1511,20 +1598,315 @@ sdl_draw_map(void)
     (void) fxv_expire((fxv_ms) now);
 }
 
+/* NetHackW's messages on the map: in the corner fx_msg_pos picks,
+   newest lowest, each outlined so it reads over any tiles; a soft shade
+   behind them where they're over the level (or, with fx_msg_backdrop, a
+   panel); older turns fade, then drop away */
+static void
+sdl_draw_msg_overlay(void)
+{
+    struct {
+        SDL_Texture *tex;
+        int w, h, x, y;
+        fxv_color c;
+    } ln[FXV_MSG_SHOW];
+    static const SDL_Color white = { 255, 255, 255, 255 };
+    TTF_Font *f = sdl.msgfont ? sdl.msgfont : sdl.font;
+    int sw, sh, aw, top, bottom, margin, wmax, ol, gap, n = 0, i, col, y,
+        tot = 0;
+    SDL_Rect area, block;
+    boolean attop;
+
+    SDL_GetRenderOutputSize(sdl.ren, &sw, &sh);
+    aw = sw - sdl_inv_w(), top = sdl_map_top();
+    bottom = sh - sdl_status_h();
+    margin = max(10, sdl.lh / 2);
+    wmax = max(40, min(aw * 3 / 5, aw - 2 * margin));
+    ol = max(2, sdl.lh / 10); /* outline thickness */
+    gap = max(2, sdl.lh / 8);
+    attop = fxv_msg_place(&col);
+    TTF_SetFontWrapAlignment(f, col == 1 ? TTF_HORIZONTAL_ALIGN_CENTER
+                                : col == 2 ? TTF_HORIZONTAL_ALIGN_RIGHT
+                                           : TTF_HORIZONTAL_ALIGN_LEFT);
+
+    /* newest first: a question being asked, then the messages */
+    for (i = sdl.nmsgs - 1 + (sdl.prompt ? 1 : 0);
+         i >= max(0, sdl.nmsgs - SDL_MSGKEEP) && n < FXV_MSG_SHOW; i--) {
+        const char *txt;
+        fxv_color c = FXV_RGB(222, 226, 233);
+        SDL_Surface *surf;
+
+        if (i == sdl.nmsgs) {
+            txt = sdl.prompt, c = FXV_RGB(229, 186, 96);
+        } else {
+            int slot = i % SDL_MSGKEEP;
+            double k = fxv_msg_fade(svm.moves - sdl.msg_turn[slot],
+                                    i >= sdl.msg_seen);
+
+            if (k <= 0.0)
+                break;
+            txt = sdl.msgs[slot];
+            if (sdl.msg_has_hl[slot])
+                c = sdl.msg_hl[slot];
+            c = FXV_RGB((int) (FXV_R(c) * k), (int) (FXV_G(c) * k),
+                        (int) (FXV_B(c) * k));
+        }
+        if (!txt || !*txt)
+            continue;
+        surf = TTF_RenderText_Blended_Wrapped(f, txt, 0, white, wmax);
+        if (!surf)
+            continue;
+        ln[n].tex = SDL_CreateTextureFromSurface(sdl.ren, surf);
+        ln[n].w = surf->w, ln[n].h = surf->h, ln[n].c = c;
+        SDL_DestroySurface(surf);
+        if (ln[n].tex)
+            tot += ln[n].h + (n ? gap : 0), n++;
+    }
+    if (!n)
+        return;
+
+    /* stacked up from the bottom line (the newest) */
+    y = attop ? top + margin + tot : bottom - margin;
+    for (i = 0; i < n; i++) {
+        y -= ln[i].h;
+        ln[i].y = y;
+        ln[i].x = (col == 0) ? margin
+                  : (col == 1) ? (aw - ln[i].w) / 2 : aw - margin - ln[i].w;
+        y -= gap;
+    }
+    block.x = ln[0].x, block.y = ln[0].y, block.w = ln[0].w;
+    block.h = ln[0].h;
+    for (i = 1; i < n; i++) {
+        SDL_Rect r;
+
+        r.x = ln[i].x, r.y = ln[i].y, r.w = ln[i].w, r.h = ln[i].h;
+        (void) SDL_GetRectUnion(&block, &r, &block);
+    }
+    area.x = 0, area.y = top, area.w = aw, area.h = bottom - top;
+    SDL_SetRenderClipRect(sdl.ren, &area);
+
+    if (iflags.fx_msg_backdrop) {
+        /* a soft dark panel behind them */
+        int pad = max(6, sdl.lh / 3);
+
+        sdl_fill(block.x - pad, block.y - pad, block.w + 2 * pad,
+                 block.h + 2 * pad, 24, 27, 33, 185);
+    } else if (SDL_HasRectIntersection(&block, &sdl.maprect)) {
+        /* a shade fading out all round, where they're over the level */
+        int step = max(6, sdl.lh / 3), fade = 3 * margin, sx, sy;
+
+        for (sy = block.y - fade; sy < block.y + block.h + fade; sy += step)
+            for (sx = block.x - fade; sx < block.x + block.w + fade;
+                 sx += step) {
+                int cx = sx + step / 2, cy = sy + step / 2, a,
+                    dx = (cx < block.x) ? block.x - cx
+                         : (cx > block.x + block.w) ? cx - block.x - block.w
+                                                    : 0,
+                    dy = (cy < block.y) ? block.y - cy
+                         : (cy > block.y + block.h) ? cy - block.y - block.h
+                                                    : 0;
+
+                if ((a = fxv_msg_shade(dx, dy, fade)) != 0)
+                    sdl_fill(sx, sy, step, step,
+                             (Uint8) FXV_R(FXV_MSG_SHADE),
+                             (Uint8) FXV_G(FXV_MSG_SHADE),
+                             (Uint8) FXV_B(FXV_MSG_SHADE), (Uint8) a);
+            }
+    }
+
+    /* a soft shadow down and right, a round dark outline, the text */
+    for (i = 0; i < n; i++) {
+        SDL_FRect d;
+        int dx, dy;
+
+        d.w = (float) ln[i].w, d.h = (float) ln[i].h;
+        (void) SDL_SetTextureColorMod(ln[i].tex, 0, 0, 0);
+        for (dy = 1; dy <= ol + 1; dy++) {
+            d.x = (float) (ln[i].x + dy), d.y = (float) (ln[i].y + dy + 1);
+            SDL_RenderTexture(sdl.ren, ln[i].tex, NULL, &d);
+        }
+        (void) SDL_SetTextureColorMod(ln[i].tex,
+                                      (Uint8) FXV_R(FXV_MSG_SHADE),
+                                      (Uint8) FXV_G(FXV_MSG_SHADE),
+                                      (Uint8) FXV_B(FXV_MSG_SHADE));
+        for (dy = -ol; dy <= ol; dy++)
+            for (dx = -ol; dx <= ol; dx++) {
+                if ((!dx && !dy) || dx * dx + dy * dy > ol * ol + 1)
+                    continue; /* round, not square, corners */
+                d.x = (float) (ln[i].x + dx), d.y = (float) (ln[i].y + dy);
+                SDL_RenderTexture(sdl.ren, ln[i].tex, NULL, &d);
+            }
+        (void) SDL_SetTextureColorMod(ln[i].tex, (Uint8) FXV_R(ln[i].c),
+                                      (Uint8) FXV_G(ln[i].c),
+                                      (Uint8) FXV_B(ln[i].c));
+        d.x = (float) ln[i].x, d.y = (float) ln[i].y;
+        SDL_RenderTexture(sdl.ren, ln[i].tex, NULL, &d);
+        SDL_DestroyTexture(ln[i].tex);
+    }
+    SDL_SetRenderClipRect(sdl.ren, NULL);
+}
+
 static void
 sdl_draw_messages(void)
 {
     int i, first = max(0, sdl.nmsgs - SDL_MSGSHOW), row = 0;
     int y0 = sdl_bar_h(); /* below the menu bar */
 
+    if (iflags.fx_msg_overlay) {
+        sdl_draw_msg_overlay();
+        return;
+    }
     sdl_fill(0, y0, 4000, SDL_MSGSHOW * sdl.lh + 6, 8, 8, 12, 230);
     if (sdl.prompt) /* a question: it takes the bottom line */
         first = max(0, sdl.nmsgs - (SDL_MSGSHOW - 1));
     for (i = first; i < sdl.nmsgs; i++, row++)
         sdl_text(8, y0 + 3 + row * sdl.lh, sdl.msgs[i % SDL_MSGKEEP],
-                 i >= sdl.msg_seen ? sdl_white : sdl_dim);
+                 i < sdl.msg_seen ? sdl_dim
+                 : sdl.msg_has_hl[i % SDL_MSGKEEP]
+                     ? sdl_col(sdl.msg_hl[i % SDL_MSGKEEP])
+                     : sdl_white);
     if (sdl.prompt)
         sdl_text(8, y0 + 3 + row * sdl.lh, sdl.prompt, sdl_gold);
+}
+
+/* ---- the inventory panel to the right (perm_invent, as NetHackW) -- */
+
+/* the persistent inventory window, when it has something to show */
+static struct sdl_win *
+sdl_inv_win(void)
+{
+    struct sdl_win *iw;
+
+    if (!iflags.perm_invent || WIN_INVEN == WIN_ERR
+        || !program_state.in_moveloop)
+        return 0;
+    iw = sdl_getwin(WIN_INVEN);
+    return (iw && iw->perminv && iw->nitems) ? iw : 0;
+}
+
+/* the panel's width, 0 when it isn't shown; it doesn't follow what's
+   in it, so the map doesn't change size as things are picked up */
+static int
+sdl_inv_w(void)
+{
+    int sw, sh;
+
+    if (iflags.fx_hide_inventory || !sdl_inv_win())
+        return 0;
+    SDL_GetRenderOutputSize(sdl.ren, &sw, &sh);
+    return max(sw / 5, min(sw / 3, 36 * sdl.cw + 40));
+}
+
+/* its tiles: 1.5x or so, as NetHackW's lists, in steps of 8 */
+static int
+sdl_inv_ts(void)
+{
+    return 8 * max(2, (sdl.lh * 5 / 4 + 4) / 8);
+}
+
+static int
+sdl_inv_rowh(void)
+{
+    return max(sdl.lh, sdl_inv_ts()) + 4;
+}
+
+/* the top of the map area (and of the panel) */
+static int
+sdl_map_top(void)
+{
+    if (iflags.fx_msg_overlay) /* messages float on the map instead */
+        return sdl_bar_h();
+    return sdl_bar_h() + SDL_MSGSHOW * sdl.lh + 8;
+}
+
+/* how many lines fit in the panel */
+static int
+sdl_inv_lines(void)
+{
+    int sw, sh;
+
+    SDL_GetRenderOutputSize(sdl.ren, &sw, &sh);
+    return max(1, (sh - sdl_status_h() - sdl_map_top() - 8)
+                      / sdl_inv_rowh());
+}
+
+/* a line's text, cut short with "..." to fit in px */
+static void
+sdl_fit(char *buf, size_t sz, const char *s, int px)
+{
+    size_t n;
+
+    Snprintf(buf, sz, "%s", s);
+    if (sdl_text_w(buf) <= px)
+        return;
+    for (n = strlen(buf); n > 1; n--) {
+        Snprintf(buf + n - 1, sz - (n - 1), "...");
+        if (sdl_text_w(buf) <= px)
+            return;
+    }
+}
+
+static void
+sdl_draw_inventory(void)
+{
+    const SDL_Color text = sdl_col(FXV_RGB(222, 226, 233)),
+                    dim = sdl_col(FXV_RGB(138, 146, 160)),
+                    accent = sdl_col(FXV_RGB(229, 186, 96));
+    struct sdl_win *iw = sdl_inv_win();
+    int pw = sdl_inv_w(), sw, sh, x, y, h, rowh = sdl_inv_rowh(),
+        ts = sdl_inv_ts(), n = sdl_inv_lines(), i, ty;
+    SDL_Rect clip;
+    char buf[BUFSZ];
+
+    if (!iw || !pw)
+        return;
+    SDL_GetRenderOutputSize(sdl.ren, &sw, &sh);
+    x = sw - pw, y = sdl_map_top(), h = sh - sdl_status_h() - y;
+    sdl_fill(x, y, pw, h, 24, 27, 33, 255);
+    sdl_fill(x, y, 1, h, 52, 58, 70, 255);
+    sdl.inv.first = max(0, min(sdl.inv.first, iw->nitems - n));
+    clip.x = x + 1, clip.y = y, clip.w = pw - 1, clip.h = h;
+    SDL_SetRenderClipRect(sdl.ren, &clip);
+    y += 4;
+    for (i = sdl.inv.first; i < iw->nitems && i < sdl.inv.first + n;
+         i++, y += rowh) {
+        struct sdl_item *it = &iw->items[i];
+        int lx = x + 10;
+        boolean heading = (!it->id.a_void && it->attr != ATR_NONE
+                           && it->color == NO_COLOR);
+
+        ty = y + (rowh - sdl.lh) / 2;
+        if (heading) {
+            /* a group heading: a band, in the accent colour */
+            sdl_fill(x + 1, y, pw - 1, rowh, 33, 37, 46, 255);
+            sdl_fill(x + 1, y + rowh - 1, pw - 1, 1, 52, 58, 70, 255);
+            sdl_fit(buf, sizeof buf, it->text, pw - 24);
+            (void) sdl_text(lx, ty, buf, accent);
+            continue;
+        }
+        if (it->acc) { /* the letter, softer */
+            buf[0] = it->acc, buf[1] = '\0';
+            (void) sdl_text(lx, ty, buf, dim);
+        }
+        lx += 2 * sdl.cw;
+        if (it->tile >= 0)
+            sdl_tile(it->tile, (float) lx, (float) (y + (rowh - ts) / 2),
+                     (float) ts);
+        lx += ts + 6;
+        sdl_fit(buf, sizeof buf, it->text, x + pw - 14 - lx);
+        (void) sdl_text(lx, ty, buf,
+                        it->color == NO_COLOR ? text
+                                              : sdl_nh_color(it->color));
+    }
+    SDL_SetRenderClipRect(sdl.ren, NULL);
+    if (iw->nitems > n) {
+        /* a thin scroll bar: where this page is in the whole */
+        int top = sdl_map_top(), th = max(16, h * n / iw->nitems),
+            tp = top + (h - th) * sdl.inv.first / max(1, iw->nitems - n);
+
+        sdl_fill(sw - 5, top, 3, h, 33, 37, 46, 255);
+        sdl_fill(sw - 5, tp, 3, th, 90, 98, 115, 255);
+    }
 }
 
 /* ---- the character panel along the bottom (as NetHackW's) ---------- */
@@ -1909,6 +2291,7 @@ sdl_draw_screen(void)
     SDL_SetRenderDrawColor(sdl.ren, 0, 0, 0, 255);
     SDL_RenderClear(sdl.ren);
     sdl_draw_map();
+    sdl_draw_inventory();
     sdl_draw_status();
     sdl_draw_messages();
     sdl_draw_bar(); /* last: its drop-downs go over everything */
@@ -1950,14 +2333,37 @@ sdl_render(void)
 
 /* ---- messages ------------------------------------------------------ */
 
+/* wait for the player to see what's up before going on */
+static void
+sdl_more(void)
+{
+    int c;
+
+    sdl.prompt = "--More--";
+    sdl_render();
+    do
+        c = sdl_wait_key();
+    while (c != '\n' && c != '\r' && c != ' ' && c != '\033');
+    sdl.prompt = 0;
+    sdl.msg_seen = sdl.nmsgs;
+    sdl.dirty = TRUE;
+}
+
 static void
 sdl_add_msg(const char *s)
 {
     int slot = sdl.nmsgs % SDL_MSGKEEP;
 
+    /* on the map, as NetHackW: once a key's worth of messages fills
+       the lines shown, --More-- before the next */
+    if (iflags.fx_msg_overlay && program_state.in_moveloop && sdl.ren
+        && sdl.nmsgs - sdl.msg_seen >= FXV_MSG_SHOW)
+        sdl_more();
     if (sdl.nmsgs >= SDL_MSGKEEP)
         free(sdl.msgs[slot]);
     sdl.msgs[slot] = dupstr(s);
+    sdl.msg_turn[slot] = svm.moves;
+    sdl.msg_has_hl[slot] = fxv_msg_highlight(s, &sdl.msg_hl[slot]);
     sdl.nmsgs++;
     sdl.dirty = TRUE;
 }
@@ -1990,6 +2396,7 @@ sdl_new_item(struct sdl_win *w)
         w->items = it, w->maxitems = n;
     }
     (void) memset(&w->items[w->nitems], 0, sizeof w->items[0]);
+    w->items[w->nitems].tile = -1;
     return &w->items[w->nitems++];
 }
 
@@ -2262,6 +2669,9 @@ sdl_init_nhwindows(int *argc, char **argv)
         nh_terminate(EXIT_FAILURE);
     }
     sdl_text_size(sdl.text_px);
+    /* messages on the map are bold, as NetHackW's (semibold) are */
+    if ((sdl.msgfont = TTF_OpenFont(sdl.fontpath, sdl.text_px)) != 0)
+        TTF_SetFontStyle(sdl.msgfont, TTF_STYLE_BOLD);
     s = SDL_LoadBMP("tiles.bmp");
     if (s) {
         SDL_Surface *argb;
@@ -2460,18 +2870,8 @@ sdl_display_nhwindow(winid w, boolean blocking)
         return;
     }
     sdl_render();
-    if (blocking && sw->type == NHW_MESSAGE && sdl.nmsgs > sdl.msg_seen) {
-        int c;
-
-        sdl.prompt = "--More--";
-        sdl_render();
-        do
-            c = sdl_wait_key();
-        while (c != '\n' && c != '\r' && c != ' ' && c != '\033');
-        sdl.prompt = 0;
-        sdl.msg_seen = sdl.nmsgs;
-        sdl.dirty = TRUE;
-    }
+    if (blocking && sw->type == NHW_MESSAGE && sdl.nmsgs > sdl.msg_seen)
+        sdl_more();
 }
 
 static void
@@ -2535,9 +2935,10 @@ sdl_start_menu(winid w, unsigned long mbehavior)
 {
     struct sdl_win *sw = sdl_getwin(w);
 
-    nhUse(mbehavior);
-    if (sw)
+    if (sw) {
         sdl_free_items(sw);
+        sw->perminv = (mbehavior & MENU_BEHAVE_PERMINV) != 0;
+    }
 }
 
 static void
@@ -2548,10 +2949,11 @@ sdl_add_menu(winid w, const glyph_info *glyphinfo, const anything *id,
     struct sdl_win *sw = sdl_getwin(w);
     struct sdl_item *it;
 
-    nhUse(glyphinfo);
     if (!sw || sw->nitems >= SDL_TEXTMAX)
         return;
     it = sdl_new_item(sw);
+    if (glyphinfo && glyphinfo->glyph != NO_GLYPH)
+        it->tile = glyphinfo->gm.tileidx;
     it->id = *id;
     it->acc = ch, it->gacc = gch;
     it->attr = attr, it->color = clr;
@@ -2576,6 +2978,13 @@ sdl_select_menu(winid w, int how, menu_item **menu_list)
     *menu_list = 0;
     if (!sw)
         return -1;
+    /* the persistent inventory stays in its panel, as NetHackW's does;
+       'i' with the panel hidden shows it as a menu instead */
+    if (sw->perminv && how == PICK_NONE
+        && (sdl.inv.updating || sdl_inv_w() > 0)) {
+        sdl.dirty = TRUE;
+        return 0;
+    }
     return sdl_run_overlay(sw, how, menu_list);
 }
 
@@ -2819,7 +3228,34 @@ sdl_get_color_string(void)
 static void
 sdl_update_inventory(int arg)
 {
-    nhUse(arg);
+    if (!iflags.perm_invent || !program_state.something_worth_saving
+        || !iflags.window_inited || WIN_INVEN == WIN_ERR)
+        return;
+    if (!arg) {
+        /* the inventory changed: fill the panel again */
+        sdl.inv.updating = TRUE;
+        repopulate_perminvent();
+        sdl.inv.updating = FALSE;
+    } else if (sdl_inv_w() > 0) {
+        /* #perminv: scroll the panel with the keys until done */
+        int c, page;
+
+        do {
+            page = max(1, sdl_inv_lines() - 1);
+            sdl.dirty = TRUE;
+            c = sdl_wait_key();
+            if (c == '>' || c == ' ' || c == MENU_NEXT_PAGE)
+                sdl.inv.first += page;
+            else if (c == '<' || c == MENU_PREVIOUS_PAGE)
+                sdl.inv.first -= page;
+            else if (c == '^' || c == MENU_FIRST_PAGE)
+                sdl.inv.first = 0;
+            else if (c == '|' || c == MENU_LAST_PAGE)
+                sdl.inv.first = 10000; /* kept in range when drawn */
+            sdl.inv.first = max(0, sdl.inv.first);
+        } while (c != '\033' && c != '\n' && c != '\r');
+    }
+    sdl.dirty = TRUE;
 }
 
 static win_request_info *
@@ -2831,7 +3267,7 @@ sdl_ctrl_nhwindow(winid w, int request, win_request_info *wri)
 
 struct window_procs sdl_procs = {
     WPID(sdl),
-    (WC_COLOR | WC_HILITE_PET | WC_TILED_MAP),
+    (WC_COLOR | WC_HILITE_PET | WC_TILED_MAP | WC_PERM_INVENT),
     (WC2_DARKGRAY | WC2_FLUSH_STATUS),
     { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
     sdl_init_nhwindows,

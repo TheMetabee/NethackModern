@@ -1946,8 +1946,7 @@ mswin_map_zoom(int dir)
 static void
 fx_paint_messages(PNHMapWindow data, HDC hdc)
 {
-#define FX_MSG_SHOW 6     /* lines at most */
-#define FX_MSG_KEEP 6     /* turns an old line stays up */
+#define FX_MSG_SHOW FXV_MSG_SHOW /* lines at most (fxview.h) */
     struct {
         WCHAR w[TBUFSZ];
         int len;
@@ -1985,12 +1984,11 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
             break;
         scrolled = sc;
         age = svm.moves - turn;
-        if (!scrolled && !recent && age > FX_MSG_KEEP)
+        k2 = fxv_msg_fade(age, recent || scrolled); /* shared, fxview.c */
+        if (k2 <= 0.0)
             break;
         if (!*buf)
             continue;
-        k2 = recent || scrolled ? 1.0 : (age <= 1) ? 0.82
-             : (age <= 3) ? 0.66 : 0.5;
         ln[n].c = RGB((int) (GetRValue(c) * k2), (int) (GetGValue(c) * k2),
                       (int) (GetBValue(c) * k2));
         winos_ascii_to_wide_str((const unsigned char *) buf, ln[n].w,
@@ -2010,9 +2008,8 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
     /* the corner (or edge middle) the player picked; the newest line is
        always the lowest, nearest the action below for the top ones */
     {
-        int pos = iflags.fx_msg_pos, gap = max(2, fnt->height / 8), tot = 0;
-        boolean top = (pos >= 0 && pos <= 2);
-        int col = (pos < 0 || pos > 5) ? 0 : pos % 3; /* left, centre, right */
+        int gap = max(2, fnt->height / 8), tot = 0, col;
+        boolean top = fxv_msg_place(&col); /* col: left, centre, right */
 
         for (i = 0; i < n; i++)
             tot += (ln[i].r.bottom - ln[i].r.top) + (i ? gap : 0);
@@ -2098,14 +2095,11 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
                                  ? block.top - (sy + step / 2)
                              : (sy + step / 2 > block.bottom)
                                  ? (sy + step / 2) - block.bottom : 0;
-                    double d = sqrt((double) ox * ox + (double) oy * oy);
-                    double a = 1.0 - min(1.0, d / fade);
+                    int a = fxv_msg_shade(ox, oy, fade); /* fxview.c */
 
-                    a = a * a * (3 - 2 * a);
-
-                    if (a <= 0.02)
+                    if (!a)
                         continue;
-                    bf.SourceConstantAlpha = (BYTE) (232 * a);
+                    bf.SourceConstantAlpha = (BYTE) a;
                     (void) GdiAlphaBlend(hdc, sx, sy, step, step, shDC, 0, 0,
                                          1, 1, bf);
                 }
@@ -2154,7 +2148,6 @@ fx_paint_messages(PNHMapWindow data, HDC hdc)
     }
     SelectObject(hdc, oldFont);
 #undef FX_MSG_SHOW
-#undef FX_MSG_KEEP
 }
 
 /* NetHack Modern: four small gold corner marks around the hero's square,

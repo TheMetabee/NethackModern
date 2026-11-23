@@ -7,6 +7,7 @@
 #include "mhmsg.h"
 #include "mhfont.h"
 #include "mhtheme.h"
+#include "fxview.h"
 extern COLORREF nhcolor_to_RGB(int c); /* from mhmap */
 
 #define MSG_WRAP_TEXT
@@ -41,37 +42,13 @@ struct window_line {
 static boolean
 th_msg_highlight(const char *text, COLORREF *c)
 {
-    struct menucoloring *mc;
-    char low[MAXWINDOWTEXT + 1];
-    size_t k;
+    fxv_color fc;
 
-    if (!text || !*text)
+    /* shared with the SDL port (fxview.c); its colours are COLORREFs */
+    if (!fxv_msg_highlight(text, &fc))
         return FALSE;
-    if (msgtype_type(text, FALSE) == MSGTYP_STOP) {
-        *c = TH_ACCENT;
-        return TRUE;
-    }
-    for (k = 0; text[k] && k < sizeof low - 1; k++)
-        low[k] = (char) tolower((unsigned char) text[k]);
-    low[k] = '\0';
-    if (strstr(low, " trap") || !strncmp(low, "trap", 4)
-        || strstr(low, "trap door") || strstr(low, "squeaks loudly")) {
-        *c = RGB(242, 152, 62);
-        return TRUE;
-    }
-    if (iflags.use_menu_color)
-        for (mc = gm.menu_colorings; mc; mc = mc->next)
-            if (regex_match(text, mc->match)) {
-                *c = nhcolor_to_RGB(mc->color);
-                return TRUE;
-            }
-    if (!strncmp(text, "You see here", 12) || !strncmp(text, "You feel here", 13)
-        || !strncmp(text, "There is ", 9) || !strncmp(text, "There are ", 10)
-        || !strncmp(text, "Things that are here", 20)) {
-        *c = RGB(110, 200, 218);
-        return TRUE;
-    }
-    return FALSE;
+    *c = (COLORREF) fc;
+    return TRUE;
 }
 
 typedef struct mswin_nethack_message_window {

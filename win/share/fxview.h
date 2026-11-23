@@ -271,4 +271,15 @@ void fxv_detect_particles(const struct fx_event *);
 void fxv_scroll_particles(const struct fx_event *);
 void fxv_cast_particles(const struct fx_event *);
 
+/* messages on the map (fx_msg_overlay): newest at the bottom of the
+   block, at most FXV_MSG_SHOW lines, older turns fading and dropping
+   away after FXV_MSG_KEEP turns */
+#define FXV_MSG_SHOW 6
+#define FXV_MSG_KEEP 6
+#define FXV_MSG_SHADE FXV_RGB(4, 5, 8)  /* outline, and shade behind */
+boolean fxv_msg_highlight(const char *, fxv_color *);
+double fxv_msg_fade(long age, boolean recent);
+boolean fxv_msg_place(int *col);
+int fxv_msg_shade(int dx, int dy, int fade);
+
 #endif /* FXVIEW_H */

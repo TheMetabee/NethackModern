@@ -3187,3 +3187,83 @@ fxv_actions(struct fxv_action *act, int max, boolean moves)
 #undef ADD
     return n;
 }
+
+/* ---- messages on the map (fx_msg_overlay) ---------------------------- */
+
+/* a message worth picking out gets a colour: a MSGTYPE "stop" message
+   gold, traps orange, anything matching a menucolor its colour, and
+   "You see here" teal */
+boolean
+fxv_msg_highlight(const char *text, fxv_color *c)
+{
+    struct menucoloring *mc;
+    char low[BUFSZ];
+    size_t k;
+
+    if (!text || !*text)
+        return FALSE;
+    if (msgtype_type(text, FALSE) == MSGTYP_STOP) {
+        *c = FXV_RGB(229, 186, 96);
+        return TRUE;
+    }
+    for (k = 0; text[k] && k < sizeof low - 1; k++)
+        low[k] = (char) tolower((unsigned char) text[k]);
+    low[k] = '\0';
+    if (strstr(low, " trap") || !strncmp(low, "trap", 4)
+        || strstr(low, "trap door") || strstr(low, "squeaks loudly")) {
+        *c = FXV_RGB(242, 152, 62);
+        return TRUE;
+    }
+    if (iflags.use_menu_color)
+        for (mc = gm.menu_colorings; mc; mc = mc->next)
+            if (regex_match(text, mc->match)) {
+                *c = fxv_nh_color(mc->color);
+                return TRUE;
+            }
+    if (!strncmp(text, "You see here", 12)
+        || !strncmp(text, "You feel here", 13)
+        || !strncmp(text, "There is ", 9) || !strncmp(text, "There are ", 10)
+        || !strncmp(text, "Things that are here", 20)) {
+        *c = FXV_RGB(110, 200, 218);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* how bright a line 'age' turns old is drawn (1 = full); 0 means it
+   and everything older has dropped away. 'recent' lines (since the
+   last key, or while looking back through history) stay full. */
+double
+fxv_msg_fade(long age, boolean recent)
+{
+    if (recent)
+        return 1.0;
+    if (age > FXV_MSG_KEEP)
+        return 0.0;
+    return (age <= 1) ? 0.82 : (age <= 3) ? 0.66 : 0.5;
+}
+
+/* where the block goes, from fx_msg_pos: returns TRUE for the top
+   (the newest line is still the lowest), *col 0 left, 1 centre, 2
+   right */
+boolean
+fxv_msg_place(int *col)
+{
+    int pos = iflags.fx_msg_pos;
+
+    *col = (pos < 0 || pos > 5) ? 0 : pos % 3;
+    return (pos >= 0 && pos <= 2);
+}
+
+/* with no backdrop, a soft shade behind the lines where they lie over
+   the map: darkest under the text, fading out all round. dx, dy: how
+   far a point is outside the block; the alpha (0..232) to shade it */
+int
+fxv_msg_shade(int dx, int dy, int fade)
+{
+    double d = sqrt((double) dx * dx + (double) dy * dy),
+           a = 1.0 - min(1.0, d / max(1, fade));
+
+    a = a * a * (3 - 2 * a);
+    return (a <= 0.02) ? 0 : (int) (232 * a);
+}
