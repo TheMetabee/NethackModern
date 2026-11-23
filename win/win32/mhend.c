@@ -38,409 +38,55 @@ static boolean es_hot, es_down; /* the mouse over / pressing the button */
 static RECT es_btn;
 
 /*
- * the hero's last messages
+ * what the screens show: gathering it, and taking topten()'s lines
+ * apart, are shared with the SDL port (fxview.c)
  */
 
-#define LASTN 4
-static char es_last[LASTN][BUFSZ];
-static int es_nlast;
-
-static void
-es_strip(char *s, const char *what)
+/* the back-th newest message on the map, and its turn */
+static const char *
+es_line(int back, long *turn)
 {
-    char *p;
-    size_t n = strlen(what);
+    static char buf[BUFSZ];
+    COLORREF c;
+    boolean recent, scrolled;
 
-    while ((p = strstri(s, what)) != 0)
-        memmove(p, p + n, strlen(p + n) + 1);
+    return mswin_msg_overlay_line(back, buf, sizeof buf, &c, turn, &recent,
+                                  &scrolled) ? buf : (const char *) 0;
 }
 
+/* the hero's last messages, taken as the hero dies */
 void
 mswin_end_snapshot(void)
 {
-    char buf[BUFSZ], got[LASTN][BUFSZ];
-    COLORREF c;
-    long turn, t0 = 0L;
-    boolean recent, scrolled;
-    int back, n = 0, i;
-
-    for (back = 0; back < 16 && n < LASTN; back++) {
-        if (!mswin_msg_overlay_line(back, buf, sizeof buf, &c, &turn,
-                                    &recent, &scrolled))
-            break;
-        if (back == 0)
-            t0 = turn;
-        else if (turn != t0)
-            break; /* only the last turn's */
-        es_strip(buf, "--More--");
-        (void) mungspaces(buf);
-        if (!*buf || !strncmp(buf, "Die?", 4))
-            continue; /* wizard mode's question */
-        Strcpy(got[n++], buf);
-    }
-    for (i = 0; i < n; i++)
-        Strcpy(es_last[i], got[n - 1 - i]); /* oldest first */
-    es_nlast = n;
+    fxv_end_snapshot(es_line);
 }
 
-/*
- * what the death screen shows, gathered when it opens
- */
+#define es_title fxv_end.title
+#define es_cause fxv_end.cause
+#define es_stone fxv_end.stone
+#define es_nstone fxv_end.nstone
+#define es_last fxv_end.last
+#define es_nlast fxv_end.nlast
+#define es_stat fxv_end.stat
+#define es_gather fxv_end_gather
+#define sl_entry fxv_sl_entry
+#define sl_ent fxv_sl_ent
+#define sl_nent fxv_sl_nent
+#define sl_note fxv_sl_note
 
-static char es_title[BUFSZ], es_cause[BUFSZ], es_stone[4][BUFSZ];
-static int es_nstone;
-static struct {
-    const char *label;
-    char value[32];
-} es_stat[6];
-
-static void
-es_lines(const char *text, char out[][BUFSZ], int max, int *n)
-{
-    const char *p = text, *e;
-
-    *n = 0;
-    while (p && *p && *n < max) {
-        size_t len;
-
-        e = strchr(p, '\n');
-        len = e ? (size_t) (e - p) : strlen(p);
-        if (len >= BUFSZ)
-            len = BUFSZ - 1;
-        memcpy(out[*n], p, len);
-        out[*n][len] = '\0';
-        while (len && (out[*n][len - 1] == '\r' || out[*n][len - 1] == ' '))
-            out[*n][--len] = '\0';
-        (*n)++;
-        p = e ? e + 1 : 0;
-    }
-}
-
-static void
-es_gather(const char *rip, const char *summary)
-{
-    char lines[8][BUFSZ];
-    int n, i;
-    char where[BUFSZ];
-
-    /* the tombstone: name, gold, cause, year */
-    es_nstone = 0;
-    if (rip)
-        es_lines(rip, es_stone, 4, &es_nstone);
-
-    /* the heading: the game's own farewell ("Goodbye ... the Wizard") */
-    es_title[0] = '\0';
-    if (summary) {
-        es_lines(summary, lines, 8, &n);
-        for (i = 0; i < n; i++)
-            if (lines[i][0]) {
-                Strcpy(es_title, lines[i]);
-                break;
-            }
-    }
-    if (!es_title[0])
-        Sprintf(es_title, "Goodbye %s...", svp.plname);
-
-    /* what killed the hero, and where */
-    if (In_endgame(&u.uz))
-        Strcpy(where, "on the Elemental Planes");
-    else if (Is_knox(&u.uz))
-        Sprintf(where, "in %s", svd.dungeons[u.uz.dnum].dname);
-    else
-        Sprintf(where, "on level %d of %s", depth(&u.uz),
-                svd.dungeons[u.uz.dnum].dname);
-    if (es_nstone >= 3 && es_stone[2][0])
-        Sprintf(es_cause, "%c%s, %s", highc(es_stone[2][0]),
-                es_stone[2] + 1, where);
-    else
-        Sprintf(es_cause, "Died %s", where);
-
-    es_stat[0].label = "POINTS";
-    Sprintf(es_stat[0].value, "%ld", (long) u.urexp);
-    es_stat[1].label = "GOLD";
-    Sprintf(es_stat[1].value, "%ld", gd.done_money);
-    es_stat[2].label = "TURNS";
-    Sprintf(es_stat[2].value, "%ld", svm.moves);
-    es_stat[3].label = "EXPERIENCE LEVEL";
-    Sprintf(es_stat[3].value, "%d", u.ulevel);
-    es_stat[4].label = "MAXIMUM HP";
-    Sprintf(es_stat[4].value, "%d", u.uhpmax);
-    es_stat[5].label = "DEEPEST LEVEL";
-    Sprintf(es_stat[5].value, "%d", deepest_lev_reached(FALSE));
-}
-
-/*
- * the score list, from topten()'s lines
- */
-
-#define MAXLINES 400
-#define MAXENTRIES 120
-
-static struct {
-    int attr;
-    char *text;
-} sl_line[MAXLINES];
-static int sl_nline;
-
-static struct sl_entry {
-    int rank;                 /* 0: the hero's, when not on the list */
-    long points;
-    char name[PL_NSIZ];
-    char who[BUFSZ];          /* "chaotic female human Wizard" */
-    char fate[BUFSZ];         /* "Killed by a jackal" */
-    char place[BUFSZ];        /* "Died in The Dungeons of Doom on level 2" */
-    char hp[16];
-    int maxhp;
-    boolean hero;
-} sl_ent[MAXENTRIES];
-static int sl_nent;
-static char sl_note[BUFSZ];   /* "You made the top ten list!" and such */
 static int sl_top;            /* the first row showing */
 static int sl_fit = 1;        /* how many rows fit */
 
 void
 mswin_scores_add(int attr, const char *text)
 {
-    if (sl_nline >= MAXLINES || !text)
-        return;
-    sl_line[sl_nline].attr = attr;
-    sl_line[sl_nline].text = dupstr(text);
-    sl_nline++;
+    fxv_scores_add(attr, text);
 }
 
 void
 mswin_scores_clear(void)
 {
-    int i;
-
-    for (i = 0; i < sl_nline; i++)
-        free(sl_line[i].text);
-    sl_nline = 0;
-    sl_nent = 0;
-    sl_note[0] = '\0';
-}
-
-/* is this the first line of an entry: rank (or blanks), then points? */
-static boolean
-sl_starts_entry(const char *s)
-{
-    int i;
-    boolean seen = FALSE;
-
-    if (strlen(s) < 17)
-        return FALSE;
-    for (i = 0; i < 3; i++)
-        if (s[i] != ' ' && !digit(s[i]))
-            return FALSE;
-    for (i = 4; i < 14; i++) {
-        if (digit(s[i]))
-            seen = TRUE;
-        else if (s[i] != ' ')
-            return FALSE;
-    }
-    return seen && s[14] == ' ' && s[15] == ' ' && s[16] != ' ';
-}
-
-static boolean
-sl_continues(const char *s)
-{
-    int i;
-
-    for (i = 0; i < 16; i++)
-        if (s[i] != ' ')
-            return FALSE;
-    return s[16] && s[16] != ' ';
-}
-
-/* "Wiz", "Hum", "Fem", "Cha" into "chaotic female human Wizard" */
-static void
-sl_who(struct sl_entry *e, char *code)
-{
-    char *part[8], *p;
-    int np = 0, i, k;
-    const char *role = 0, *race = 0, *gend = 0, *align = 0;
-    boolean fem = FALSE;
-
-    /* the name can hold dashes; the codes are the last parts */
-    for (p = code; np < 8; ) {
-        part[np++] = p;
-        if ((p = strchr(p, '-')) == 0)
-            break;
-        *p++ = '\0';
-    }
-    k = np;
-    while (k > 1) {
-        const char *c = part[k - 1];
-        boolean took = FALSE;
-
-        if (!align)
-            for (i = 0; i < ROLE_ALIGNS; i++)
-                if (!strcmpi(c, aligns[i].filecode))
-                    align = aligns[i].adj, took = TRUE;
-        if (!took && !gend)
-            for (i = 0; i < ROLE_GENDERS; i++)
-                if (!strcmpi(c, genders[i].filecode))
-                    gend = genders[i].adj, fem = (i == 1), took = TRUE;
-        if (!took && !race)
-            for (i = 0; races[i].noun; i++)
-                if (!strcmpi(c, races[i].filecode))
-                    race = races[i].adj, took = TRUE;
-        if (!took && !role)
-            for (i = 0; roles[i].name.m; i++)
-                if (!strcmpi(c, roles[i].filecode))
-                    role = c, took = TRUE;
-        if (!took)
-            break;
-        k--;
-    }
-    /* what's left is the name */
-    e->name[0] = '\0';
-    for (i = 0; i < k; i++) {
-        if (i)
-            (void) strncat(e->name, "-", sizeof e->name - strlen(e->name) - 1);
-        (void) strncat(e->name, part[i], sizeof e->name - strlen(e->name) - 1);
-    }
-    e->who[0] = '\0';
-    if (align)
-        Sprintf(eos(e->who), "%s ", align);
-    if (gend)
-        Sprintf(eos(e->who), "%s ", gend);
-    if (race)
-        Sprintf(eos(e->who), "%s ", race);
-    if (role) {
-        for (i = 0; roles[i].name.m; i++)
-            if (!strcmpi(role, roles[i].filecode)) {
-                Strcat(e->who, (fem && roles[i].name.f) ? roles[i].name.f
-                                                        : roles[i].name.m);
-                break;
-            }
-    }
-    (void) mungspaces(e->who);
-}
-
-static void
-sl_cap(char *s)
-{
-    size_t n = strlen(s);
-
-    while (n && (s[n - 1] == '.' || s[n - 1] == ' '))
-        s[--n] = '\0';
-    if (*s)
-        *s = highc(*s);
-}
-
-/* take apart one entry: 'first' is its first line, 'rest' the text of
-   its other lines */
-static void
-sl_entry(const char *first, const char *rest, boolean hero)
-{
-    struct sl_entry *e;
-    char buf[BUFSZ * 3], *p, *q, *code;
-    size_t n;
-
-    if (sl_nent >= MAXENTRIES)
-        return;
-    e = &sl_ent[sl_nent];
-    memset(e, 0, sizeof *e);
-    e->hero = hero;
-    e->rank = atoi(first);
-    e->points = atol(first + 3);
-    Snprintf(buf, sizeof buf, "%s%s%s", first + 16, *rest ? " " : "", rest);
-    (void) mungspaces(buf);
-
-    /* the hit points at the end: "12 [12]" or "- [12]" */
-    n = strlen(buf);
-    if (n && buf[n - 1] == ']' && (p = strrchr(buf, '[')) != 0) {
-        for (q = p + 1; digit(*q); q++)
-            continue;
-        if (q > p + 1 && *q == ']') {
-            e->maxhp = atoi(p + 1);
-            q = p;
-            while (q > buf && q[-1] == ' ')
-                q--;
-            *q = '\0';
-            if ((p = strrchr(buf, ' ')) != 0
-                && (!strcmp(p + 1, "-") || digit(p[1]))) {
-                (void) strncpy(e->hp, p + 1, sizeof e->hp - 1);
-                *p = '\0';
-            } else {
-                Strcpy(e->hp, "?");
-            }
-        }
-    }
-    if (!e->maxhp)
-        Strcpy(e->hp, "");
-
-    /* the hero: "test1-Wiz-Hum-Fem-Cha" */
-    code = buf;
-    if ((p = strchr(buf, ' ')) != 0)
-        *p++ = '\0';
-    else
-        p = eos(buf);
-    sl_who(e, code);
-
-    /* the fate: "died in X on level 2.  Killed by a jackal." */
-    q = strstr(p, ". ");
-    if (q && q[2]) {
-        *q = '\0';
-        (void) strncpy(e->place, p, sizeof e->place - 1);
-        (void) strncpy(e->fate, q + 2, sizeof e->fate - 1);
-    } else {
-        (void) strncpy(e->fate, p, sizeof e->fate - 1);
-    }
-    sl_cap(e->fate);
-    sl_cap(e->place);
-    sl_nent++;
-}
-
-static void
-sl_parse(void)
-{
-    char rest[BUFSZ * 3];
-    const char *first = 0;
-    boolean hero = FALSE;
-    int i;
-
-    sl_nent = 0;
-    sl_note[0] = rest[0] = '\0';
-    for (i = 0; i <= sl_nline; i++) {
-        const char *s = (i < sl_nline) ? sl_line[i].text : "";
-        boolean bold = (i < sl_nline && sl_line[i].attr == ATR_BOLD);
-
-        if (first && sl_continues(s)) {
-            if (*rest)
-                (void) strncat(rest, " ", sizeof rest - strlen(rest) - 1);
-            (void) strncat(rest, s + 16, sizeof rest - strlen(rest) - 1);
-            hero = hero || bold;
-            continue;
-        }
-        if (first) { /* the entry before is complete */
-            sl_entry(first, rest, hero);
-            first = 0;
-        }
-        if (i == sl_nline)
-            break;
-        if (sl_starts_entry(s)) {
-            first = s;
-            rest[0] = '\0';
-            hero = bold;
-        } else if (!strncmp(s, " No  Points", 11)) {
-            continue; /* the header; the table has its own */
-        } else {
-            char t[BUFSZ];
-
-            (void) strncpy(t, s, sizeof t - 1);
-            t[sizeof t - 1] = '\0';
-            (void) mungspaces(t);
-            if (*t) {
-                if (*sl_note)
-                    (void) strncat(sl_note, "  ",
-                                   sizeof sl_note - strlen(sl_note) - 1);
-                (void) strncat(sl_note, t,
-                               sizeof sl_note - strlen(sl_note) - 1);
-            }
-        }
-    }
+    fxv_scores_clear();
 }
 
 /*
@@ -450,9 +96,7 @@ sl_parse(void)
 static double
 es_scale(int w, int h)
 {
-    double s = min(h / 740.0, w / 960.0);
-
-    return s < 0.5 ? 0.5 : s > 2.2 ? 2.2 : s;
+    return fxv_cs_scale(w, h); /* as the character screen (fxview.c) */
 }
 
 #define S(v) ((int) ((v) * s + 0.5))
@@ -1352,18 +996,10 @@ mswin_death_screen(const char *rip, const char *summary)
 boolean
 mswin_scores_screen(void)
 {
-    int i;
     boolean ok;
 
-    sl_parse();
-    /* start with the hero's entry in view */
-    sl_top = 0;
+    sl_top = fxv_scores_parse(); /* with the hero's entry in view */
     sl_fit = 6;
-    for (i = 0; i < sl_nent; i++)
-        if (sl_ent[i].hero) {
-            sl_top = max(0, i - 2);
-            break;
-        }
     ok = es_run(ES_SCORES);
     mswin_scores_clear();
     return ok;

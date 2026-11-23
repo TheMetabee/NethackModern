@@ -51,7 +51,13 @@
 #define SDL_CSK_BACKTAB 0x307
 #define SDL_CSK_MUSIC 0x308
 #define SDL_CSK_CLEAR 0x309      /* Ctrl+Backspace: the whole name */
+#define SDL_CSK_PGUP 0x30a
+#define SDL_CSK_PGDN 0x30b
 #define SDL_CSK_BTN 0x310        /* + the button clicked */
+#define CS_IN(r, x, y) ((x) >= (r)[0] && (x) < (r)[2] && (y) >= (r)[1] \
+                        && (y) < (r)[3])
+#define SDL_ES_DEATH 0           /* the death screen */
+#define SDL_ES_SCORES 1          /* the score list */
 /* the name and character screens, and their groups beyond the choices
    (FXV_CS_ROLE..FXV_CS_ALIGN) */
 #define SDL_CS_NAME 0 /* asking for a name */
@@ -78,6 +84,8 @@ struct sdl_win {
     char status[2][BUFSZ];     /* NHW_STATUS: its two lines */
     int cury;
     boolean perminv;           /* the persistent inventory (perm_invent) */
+    boolean rip;               /* the end of the game: the tombstone's
+                                  lines, then the farewell */
 };
 
 static struct {
@@ -140,7 +148,20 @@ static struct {
         char name[PL_NSIZ];
         struct fxv_cs_layout L; /* as last laid out */
     } cs;
+    struct {                   /* the death screen and the score list */
+        int mode;              /* SDL_ES_DEATH or _SCORES; -1 when not up */
+        boolean hot, down;     /* the mouse over / pressing the button */
+        int btn[4];            /* the button, as last drawn */
+        int top, fit;          /* scores: the first row showing, how many
+                                  rows fit */
+    } es;
+    boolean closing;           /* the window was closed: don't come back
+                                  to the title screen */
     SDL_Texture *art;          /* the title painting (none if missing) */
+    SDL_Surface *art_px;       /* ... its pixels, for the death screen */
+    SDL_Texture *art_grey;     /* the death screen's: drained of colour */
+    SDL_Texture *stone;        /* the tombstone, at stone_w x stone_h */
+    int stone_w, stone_h;
     float art_w, art_h;
     TTF_Font *face[3];         /* the screens' fonts (SDL_FACE_*) */
     struct {                   /* the inventory panel (perm_invent) */
@@ -150,6 +171,8 @@ static struct {
 } sdl;
 
 static void sdl_render(void);
+static boolean sdl_play_again; /* Play was chosen: a finished game
+                                  comes back to the title screen */
 static void sdl_zoom(int);
 static int sdl_page_lines(void);
 static int sdl_status_h(void);
@@ -160,6 +183,9 @@ static void sdl_draw_inventory(void);
 static int sdl_title_hit(float, float);
 static int sdl_cs_hit(float, float, int *);
 static void sdl_draw_cs(void);
+static void sdl_draw_es(void);
+static void sdl_end_screens(struct sdl_win *, boolean);
+static void sdl_outrip(winid, int, time_t);
 static winid sdl_create_nhwindow(int);
 static void sdl_putstr(winid, int, const char *);
 static void sdl_destroy_nhwindow(winid);
@@ -338,6 +364,7 @@ enum sdl_bar_kind {
     BAR_STYLE,     /* fx_bar_style 0..4 */
     BAR_BORDER,    /* fx_bar_border on or off */
     BAR_INVEN,     /* the inventory panel shown or hidden */
+    BAR_ACTIONS,   /* the action buttons shown or hidden */
     BAR_SEP
 };
 
@@ -386,6 +413,7 @@ static const struct sdl_bar_item bar_view[] = {
     { "Bar border", "", BAR_BORDER, NULL, 0 },
     BSEP,
     { "Inventory panel", "", BAR_INVEN, NULL, 0 },
+    { "Action buttons", "", BAR_ACTIONS, NULL, 0 },
     BK("Previous messages", "Ctrl+P", "\x10"),
     BK("Dungeon overview", "Ctrl+O", "\x0f"),
 };
@@ -500,6 +528,8 @@ sdl_bar_checked(const struct sdl_bar_item *it)
         return iflags.fx_bar_border;
     case BAR_INVEN:
         return iflags.perm_invent && !iflags.fx_hide_inventory;
+    case BAR_ACTIONS:
+        return iflags.fx_action_buttons;
     default:
         return FALSE;
     }
@@ -720,6 +750,10 @@ sdl_bar_do(const struct sdl_bar_item *it)
         else
             sdl_toggle_inven();
         break;
+    case BAR_ACTIONS: /* (kept in nethackmodern.rc at once) */
+        iflags.fx_action_buttons = !iflags.fx_action_buttons;
+        fx_options_remember();
+        break;
     default:
         break;
     }
@@ -806,7 +840,9 @@ sdl_handle_event(const SDL_Event *e)
             sdl_push_key('x');
             break;
         }
-        /* closing the window: save, as a hangup would */
+        /* closing the window: save, as a hangup would, and don't come
+           back to the title screen */
+        sdl.closing = TRUE;
         sdl_push_key('\033');
         if (program_state.in_moveloop)
             sdl_push_key('S'), sdl_push_key('y');
@@ -830,6 +866,10 @@ sdl_handle_event(const SDL_Event *e)
             break;
         if (sdl.ovl.w) {
             sdl_push_key(e->wheel.y > 0 ? '<' : '>');
+        } else if (sdl.es.mode >= 0) {
+            sdl_push_key(e->wheel.y > 0 ? SDL_CSK_UP : SDL_CSK_DOWN);
+        } else if (sdl.cs.mode >= 0 || sdl.title.up) {
+            ; /* nothing to zoom */
         } else {
             /* over the inventory panel it scrolls that instead */
             SDL_Event ev = *e;
@@ -853,6 +893,11 @@ sdl_handle_event(const SDL_Event *e)
         float mx, my;
 
         (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        if (sdl.es.mode >= 0 && !w) { /* the end screens' button */
+            if (ev.button.button == SDL_BUTTON_LEFT && sdl.es.hot)
+                sdl.es.down = TRUE, sdl.dirty = TRUE;
+            break;
+        }
         if (sdl.cs.mode >= 0 && !w) { /* the name or character screen */
             int g, i;
 
@@ -914,6 +959,15 @@ sdl_handle_event(const SDL_Event *e)
         break;
     }
     case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (sdl.es.mode >= 0 && !sdl.ovl.w
+            && e->button.button == SDL_BUTTON_LEFT) {
+            if (sdl.es.down) {
+                sdl.es.down = FALSE, sdl.dirty = TRUE;
+                if (sdl.es.hot)
+                    sdl_push_key('\n');
+            }
+            break;
+        }
         if (sdl.cs.mode >= 0 && !sdl.ovl.w
             && e->button.button == SDL_BUTTON_LEFT) {
             /* a button: chosen on letting go over it */
@@ -950,6 +1004,13 @@ sdl_handle_event(const SDL_Event *e)
         int i;
 
         (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        if (sdl.es.mode >= 0 && !sdl.ovl.w) { /* the button lights up */
+            boolean hot = CS_IN(sdl.es.btn, ev.motion.x, ev.motion.y);
+
+            if (hot != sdl.es.hot)
+                sdl.es.hot = hot, sdl.dirty = TRUE;
+            break;
+        }
         if (sdl.cs.mode >= 0 && !sdl.ovl.w) { /* what's pointed at */
             int g;
 
@@ -999,7 +1060,7 @@ sdl_handle_event(const SDL_Event *e)
         boolean numlock = (m & SDL_KMOD_NUM) != 0;
 
         sdl.skip_text = FALSE;
-        if (sdl.cs.mode >= 0 && !sdl.ovl.w) {
+        if ((sdl.cs.mode >= 0 || sdl.es.mode >= 0) && !sdl.ovl.w) {
             int c = 0;
 
             if ((m & SDL_KMOD_CTRL) && k == SDLK_M) {
@@ -1024,6 +1085,8 @@ sdl_handle_event(const SDL_Event *e)
                 case SDLK_RIGHT: c = SDL_CSK_RIGHT; break;
                 case SDLK_HOME: c = SDL_CSK_HOME; break;
                 case SDLK_END: c = SDL_CSK_END; break;
+                case SDLK_PAGEUP: c = SDL_CSK_PGUP; break;
+                case SDLK_PAGEDOWN: c = SDL_CSK_PGDN; break;
                 case SDLK_TAB:
                     c = (m & SDL_KMOD_SHIFT) ? SDL_CSK_BACKTAB : SDL_CSK_TAB;
                     break;
@@ -2438,41 +2501,10 @@ sdl_draw_status(void)
         sdl_rule(x - 9, y1, 2 * rowh - 2);
     }
 
-    /* the action buttons, from the right edge over two rows: what makes
-       sense to do here (fxview.c) */
-    {
-        struct fxv_action act[SDL_MAXBTN];
-        int n = fxv_actions(act, SDL_MAXBTN, TRUE), bx = w - 20, row = 0;
+    /* (the action buttons float above the panel: sdl_draw_actions()) */
+    sdl_actx = w;
 
-        sdl_nbtn = 0, sdl_actx = w;
-        for (i = n - 1; i >= 0; i--) {
-            int lw = sdl_text_w(act[i].label), hw = sdl_text_w(act[i].hint);
-            int bw = lw + hw + 30;
-            SDL_Rect *r = &sdl_btn[sdl_nbtn].r;
-            boolean hot = (sdl_nbtn == sdl_btn_hot);
-
-            if (bx - bw < w / 2 && row == 0) /* wrap to the second row */
-                row = 1, bx = w - 20;
-            if (bx - bw < w / 2)
-                break;
-            r->x = bx - bw, r->y = (row ? y2 : y1) + 1;
-            r->w = bw, r->h = rowh - 4;
-            sdl_btn[sdl_nbtn].key = act[i].key;
-            sdl_rbox(r->x, r->y, r->w, r->h, 4,
-                     hot ? FXV_RGB(52, 58, 70) : FXV_RGB(33, 37, 46));
-            (void) sdl_text(r->x + 10, r->y + (r->h - sdl.lh) / 2,
-                            act[i].label, text);
-            (void) sdl_text(r->x + r->w - 10 - hw,
-                            r->y + (r->h - sdl.lh) / 2, act[i].hint,
-                            hot ? sdl_gold : dim);
-            bx -= bw + 6;
-            sdl_actx = min(sdl_actx, r->x);
-            sdl_nbtn++;
-        }
-    }
-
-    /* conditions as chips, wrapping onto the second row (fxview.c),
-       stopping short of the action buttons */
+    /* conditions as chips, wrapping onto the second row (fxview.c) */
     {
         struct fxv_chip chip[24];
         int nchip = fxv_status_chips(chip, SIZE(chip)), cx = x, cy = y1;
@@ -2492,6 +2524,54 @@ sdl_draw_status(void)
     }
 }
 
+/* the action buttons: what makes sense to do here (fxview.c), in a row
+   floating just above the character panel at the right of the map (at
+   its left when the messages sit bottom right), so they never crowd the
+   panel on a narrow window; fx_action_buttons turns them off */
+static void
+sdl_draw_actions(void)
+{
+    struct fxv_action act[SDL_MAXBTN];
+    int w, h, n, i, x, y, bh, right, left;
+    boolean from_left = (iflags.fx_msg_overlay && iflags.fx_msg_pos == 5);
+    const SDL_Color text = sdl_col(FXV_RGB(222, 226, 233)),
+                    dim = sdl_col(FXV_RGB(138, 146, 160));
+
+    sdl_nbtn = 0;
+    if (!iflags.fx_action_buttons || !program_state.in_moveloop
+        || !sdl_title[0])
+        return;
+    SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    bh = sdl_rowh();
+    y = h - sdl_status_h() - bh - 8;
+    left = 12, right = w - sdl_inv_w() - 12;
+    n = fxv_actions(act, SDL_MAXBTN, TRUE);
+    x = from_left ? left : right;
+    for (i = 0; i < n; i++) {
+        /* from the right, the last action is the rightmost, as before */
+        int k = from_left ? i : n - 1 - i;
+        int lw = sdl_text_w(act[k].label), hw = sdl_text_w(act[k].hint);
+        int bw = lw + hw + 30;
+        SDL_Rect *r = &sdl_btn[sdl_nbtn].r;
+        boolean hot = (sdl_nbtn == sdl_btn_hot);
+
+        if (from_left ? x + bw > right : x - bw < left)
+            break; /* no more room */
+        r->x = from_left ? x : x - bw, r->y = y, r->w = bw, r->h = bh;
+        sdl_btn[sdl_nbtn].key = act[k].key;
+        sdl_rbox(r->x, r->y, r->w, r->h, FXV_CORNER,
+                 hot ? FXV_RGB(229, 186, 96) : FXV_RGB(52, 58, 70));
+        sdl_rbox(r->x + 1, r->y + 1, r->w - 2, r->h - 2, FXV_CORNER - 1,
+                 hot ? FXV_RGB(52, 58, 70) : FXV_RGB(28, 31, 38));
+        (void) sdl_text(r->x + 10, r->y + (r->h - sdl.lh) / 2, act[k].label,
+                        text);
+        (void) sdl_text(r->x + r->w - 10 - hw, r->y + (r->h - sdl.lh) / 2,
+                        act[k].hint, hot ? sdl_gold : dim);
+        x = from_left ? x + bw + 6 : x - bw - 6;
+        sdl_nbtn++;
+    }
+}
+
 /* the whole screen, without any menu over it */
 static void
 sdl_draw_screen(void)
@@ -2502,6 +2582,7 @@ sdl_draw_screen(void)
     sdl_draw_inventory();
     sdl_draw_status();
     sdl_draw_messages();
+    sdl_draw_actions(); /* over the map, just above the panel */
     sdl_draw_bar(); /* last: its drop-downs go over everything */
 }
 
@@ -2533,7 +2614,9 @@ sdl_render(void)
     if (!sdl.ren)
         return;
     sdl_sync_options();
-    if (sdl.cs.mode >= 0)
+    if (sdl.es.mode >= 0)
+        sdl_draw_es();
+    else if (sdl.cs.mode >= 0)
         sdl_draw_cs();
     else if (sdl.title.up)
         sdl_draw_title();
@@ -2903,6 +2986,7 @@ sdl_backdrop(int w, int h, int dim)
         if ((s = SDL_LoadPNG("splash_art.png")) != 0) {
             sdl.art = SDL_CreateTextureFromSurface(sdl.ren, s);
             sdl.art_w = (float) s->w, sdl.art_h = (float) s->h;
+            sdl.art_px = SDL_ConvertSurface(s, SDL_PIXELFORMAT_XRGB8888);
             SDL_DestroySurface(s);
             if (sdl.art)
                 (void) SDL_SetTextureScaleMode(sdl.art,
@@ -3224,14 +3308,17 @@ sdl_title_screen(void)
             c = (sdl.title.focus == FXV_TITLE_ABOUT) ? 'a'
                 : (sdl.title.focus == FXV_TITLE_EXIT) ? 'x' : 'p';
         c = lowc(c);
-        if (c == 'p')
+        if (c == 'p') {
+            sdl_play_again = TRUE; /* a finished game comes back here */
             break;
+        }
         if (c == 'a') {
             sdl_title_about();
         } else if (c == 'm') {
             sdl_music_toggle();
         } else if (c == 'x' || c == 'q') {
             /* nothing has started: nothing to save */
+            sdl_play_again = FALSE;
             sdl_exit_nhwindows((char *) 0);
             nh_terminate(EXIT_SUCCESS);
         }
@@ -3253,8 +3340,6 @@ static const char *const sdl_cs_btn_label[2][FXV_CSB_N] = {
     { "Back", "Random", "Play" },
 };
 
-#define CS_IN(r, x, y) ((x) >= (r)[0] && (x) < (r)[2] && (y) >= (r)[1] \
-                        && (y) < (r)[3])
 
 static boolean
 sdl_cs_btn_used(int b)
@@ -3800,6 +3885,701 @@ sdl_name_screen(void)
     return TRUE;
 }
 
+
+/* ---- the death screen and the score list (as NetHackW's) ----------- */
+
+/* They take the place of the tombstone and the plain text score list,
+   fill the window, and work with the mouse or the keyboard alone. What
+   they show is gathered by the shared code (fxview.c). */
+
+#define ES_BONE FXV_RGB(232, 226, 212)  /* the death screen's pale text */
+#define ES_FAINT FXV_RGB(104, 110, 122) /* dimmer than CS_DIM */
+#define S(v) ((int) ((v) * s + 0.5))
+
+/* a line of text cut short with "..." to fit in px, in font f */
+static void
+sdl_fit_in(TTF_Font *f, char *buf, size_t sz, const char *t, int px)
+{
+    size_t n;
+
+    Snprintf(buf, sz, "%s", t);
+    if (sdl_text_w_in(f, buf) <= px)
+        return;
+    for (n = strlen(buf); n > 1; n--) {
+        Snprintf(buf + n - 1, sz - (n - 1), "...");
+        if (sdl_text_w_in(f, buf) <= px)
+            return;
+    }
+}
+
+/* the painting drained of its colour, cold and dark at the edges, for
+   the death screen; made once from the art's pixels */
+static SDL_Texture *
+sdl_art_grey(void)
+{
+    SDL_Surface *g;
+    int x, y, w, h;
+
+    if (sdl.art_grey || !sdl.art_px)
+        return sdl.art_grey;
+    w = sdl.art_px->w, h = sdl.art_px->h;
+    if (!(g = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_XRGB8888)))
+        return 0;
+    for (y = 0; y < h; y++) {
+        const Uint32 *src = (const Uint32 *) ((const Uint8 *) sdl.art_px->pixels
+                                              + (size_t) y * sdl.art_px->pitch);
+        Uint32 *dst = (Uint32 *) ((Uint8 *) g->pixels + (size_t) y * g->pitch);
+        double dy = (y - h * 0.45) / (h * 0.70);
+
+        for (x = 0; x < w; x++) {
+            Uint32 v = src[x];
+            int r = (v >> 16) & 255, green = (v >> 8) & 255, b = v & 255;
+            double dx = (x - w / 2.0) / (w * 0.62), d = dx * dx + dy * dy,
+                   f = 0.40 * (1.0 - 0.75 * min(d, 1.0)),
+                   l = (0.30 * r + 0.59 * green + 0.11 * b) * f;
+
+            r = (int) (l * 0.90), green = (int) (l * 0.96);
+            b = (int) min(l * 1.10 + 4, 255.0);
+            dst[x] = ((Uint32) r << 16) | ((Uint32) green << 8) | (Uint32) b;
+        }
+    }
+    sdl.art_grey = SDL_CreateTextureFromSurface(sdl.ren, g);
+    SDL_DestroySurface(g);
+    if (sdl.art_grey)
+        (void) SDL_SetTextureScaleMode(sdl.art_grey, SDL_SCALEMODE_LINEAR);
+    return sdl.art_grey;
+}
+
+/* the backdrop: the painting; for the death screen drained of colour,
+   for the score list darkened */
+static void
+sdl_es_backdrop(int w, int h)
+{
+    SDL_Texture *g;
+
+    if (sdl.es.mode != SDL_ES_DEATH || !(g = sdl_art_grey())) {
+        sdl_backdrop(w, h, sdl.es.mode == SDL_ES_DEATH ? 170 : 195);
+        return;
+    }
+    sdl_fill(0, 0, w, h, 14, 16, 20, 255);
+    {
+        float sc = max((float) w / sdl.art_w, (float) h / sdl.art_h);
+        SDL_FRect d;
+
+        d.w = sdl.art_w * sc, d.h = sdl.art_h * sc;
+        d.x = (w - d.w) / 2, d.y = (h - d.h) / 3;
+        SDL_RenderTexture(sdl.ren, g, NULL, &d);
+    }
+}
+
+/* is (x, y) on a tombstone w x h: a rounded head on a block? */
+static boolean
+sdl_on_stone(int x, int y, int w, int h)
+{
+    if (x < 0 || x >= w || y < 0 || y >= h)
+        return FALSE;
+    if (y >= w / 2)
+        return TRUE;
+    {
+        double dx = (x + 0.5 - w / 2.0) / (w / 2.0),
+               dy = (y + 0.5 - w / 2.0) / (w / 2.0);
+
+        return dx * dx + dy * dy <= 1.0;
+    }
+}
+
+/* the tombstone's face, w x h: lit from the upper left, weathered, a
+   crack, an edge; made once for its size */
+static SDL_Texture *
+sdl_stone(int w, int h, double s)
+{
+    SDL_Surface *g;
+    Uint32 *px;
+    unsigned long seed = 0x2545F491UL;
+    int x, y, i, pitch;
+
+    if (sdl.stone && sdl.stone_w == w && sdl.stone_h == h)
+        return sdl.stone;
+    if (sdl.stone)
+        SDL_DestroyTexture(sdl.stone), sdl.stone = 0;
+    if (w < 8 || h < 8
+        || !(g = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_ARGB8888)))
+        return 0;
+    px = (Uint32 *) g->pixels, pitch = g->pitch / 4;
+#define PUT(xx, yy, r, grey, b) \
+    do { if (sdl_on_stone((xx), (yy), w, h)) \
+             px[(yy) * pitch + (xx)] = 0xFF000000U | ((Uint32) (r) << 16) \
+                                       | ((Uint32) (grey) << 8) | (Uint32) (b); \
+    } while (0)
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            double t = (double) x / max(1, w - 1); /* a sideways gradient */
+
+            px[y * pitch + x] = 0;
+            PUT(x, y, (int) (0xA4 + (0x5C - 0xA4) * t),
+                (int) (0xA4 + (0x5E - 0xA4) * t),
+                (int) (0xA0 + (0x62 - 0xA0) * t));
+        }
+    /* weathering: specks, and moss creeping up from the ground */
+    for (i = 0; i < 520; i++) {
+        int sz, grey, r, green, b, k2, j;
+
+        seed = seed * 1103515245UL + 12345UL;
+        x = (int) ((seed >> 8) % (unsigned long) w);
+        seed = seed * 1103515245UL + 12345UL;
+        y = (int) ((seed >> 8) % (unsigned long) h);
+        sz = max(1, S((seed >> 4) % 3 ? 1 : 2));
+        if (i < 380) { /* just darker or lighter than the stone */
+            grey = (int) ((seed >> 12) % 24) + 8;
+            if ((seed >> 20) & 1)
+                r = 88 - grey, green = 90 - grey, b = 94 - grey;
+            else
+                r = 124 + grey, green = 124 + grey, b = 121 + grey;
+        } else { /* moss: low down, thicker toward the ground */
+            unsigned long k = (seed >> 9) % (unsigned long) max(1, S(70));
+
+            y = h - 1 - (int) (k * k / (unsigned long) max(1, S(70)));
+            r = 70 + (int) (seed % 16), green = 88 + (int) (seed % 18), b = 60;
+            sz = max(2, S(3));
+        }
+        for (k2 = 0; k2 < sz; k2++)
+            for (j = 0; j < sz; j++)
+                PUT(x + j, y + k2, r, green, b);
+    }
+    /* a crack */
+    {
+        int pts[4][2], seg;
+
+        pts[0][0] = w - w / 5, pts[0][1] = w / 3;
+        pts[1][0] = pts[0][0] - S(9), pts[1][1] = pts[0][1] + S(26);
+        pts[2][0] = pts[0][0] - S(4), pts[2][1] = pts[0][1] + S(44);
+        pts[3][0] = pts[0][0] - S(16), pts[3][1] = pts[0][1] + S(70);
+        for (seg = 0; seg < 3; seg++) {
+            int n = max(abs(pts[seg + 1][0] - pts[seg][0]),
+                        abs(pts[seg + 1][1] - pts[seg][1])), k;
+
+            for (k = 0; k <= n; k++) {
+                int cx = pts[seg][0] + (pts[seg + 1][0] - pts[seg][0]) * k
+                                           / max(1, n),
+                    cy = pts[seg][1] + (pts[seg + 1][1] - pts[seg][1]) * k
+                                           / max(1, n), q;
+
+                for (q = 0; q < max(1, S(1)); q++)
+                    PUT(cx + q, cy, 58, 59, 62);
+            }
+        }
+    }
+    /* the edge, a little in from the outline */
+    {
+        int e = max(2, S(2)), dx, dy;
+
+        for (y = 0; y < h; y++)
+            for (x = 0; x < w; x++) {
+                boolean edge = FALSE;
+
+                if (!sdl_on_stone(x, y, w, h))
+                    continue;
+                for (dy = -e; dy <= e && !edge; dy += e)
+                    for (dx = -e; dx <= e && !edge; dx += e)
+                        if (!sdl_on_stone(x + dx, y + dy, w, h + e + 1))
+                            edge = TRUE;
+                if (edge)
+                    px[y * pitch + x] = 0xFF000000U | (40U << 16) | (42U << 8)
+                                        | 45U;
+            }
+    }
+#undef PUT
+    sdl.stone = SDL_CreateTextureFromSurface(sdl.ren, g);
+    sdl.stone_w = w, sdl.stone_h = h;
+    SDL_DestroySurface(g);
+    return sdl.stone;
+}
+
+/* text cut into the stone: dark, with a lit lower edge; wrapped to
+   the width of r, centred; returns its height */
+static int
+sdl_carve(TTF_Font *f, const char *t, const int r[4], double s)
+{
+    static const SDL_Color white = { 255, 255, 255, 255 };
+    SDL_Surface *surf;
+    SDL_Texture *tex;
+    SDL_FRect d;
+    int k = max(1, S(1)), hh;
+
+    TTF_SetFontWrapAlignment(f, TTF_HORIZONTAL_ALIGN_CENTER);
+    if (!t || !*t
+        || !(surf = TTF_RenderText_Blended_Wrapped(f, t, 0, white,
+                                                   max(20, r[2] - r[0]))))
+        return 0;
+    tex = SDL_CreateTextureFromSurface(sdl.ren, surf);
+    d.w = (float) surf->w, d.h = (float) surf->h;
+    d.x = (float) ((r[0] + r[2]) / 2 - surf->w / 2), d.y = (float) r[1];
+    hh = surf->h;
+    SDL_DestroySurface(surf);
+    if (!tex)
+        return hh;
+    d.x += k, d.y += k;
+    (void) SDL_SetTextureColorMod(tex, 178, 178, 174);
+    SDL_RenderTexture(sdl.ren, tex, NULL, &d);
+    d.x -= k, d.y -= k;
+    (void) SDL_SetTextureColorMod(tex, 46, 47, 50);
+    SDL_RenderTexture(sdl.ren, tex, NULL, &d);
+    SDL_DestroyTexture(tex);
+    return hh;
+}
+
+/* the tombstone, with the game's four lines carved in it */
+static void
+sdl_es_stone(const int box[4], double s)
+{
+    int w = box[2] - box[0], h = box[3] - box[1], i, r[4], y;
+    SDL_Texture *t;
+
+    /* the earth it stands in: a dark low mound */
+    {
+        int cx = (box[0] + box[2]) / 2, rx = w / 2 + S(50), ry = S(26);
+
+        for (y = -ry; y <= ry; y++) {
+            double f = 1.0 - (double) (y * y) / (ry * ry);
+            int half = (int) (rx * sqrt(max(0.0, f)));
+
+            sdl_fill(cx - half, box[3] + y, 2 * half, 1, 14, 16, 15, 255);
+        }
+    }
+    if ((t = sdl_stone(w, h, s)) != 0) {
+        SDL_FRect d;
+
+        d.x = (float) box[0], d.y = (float) box[1];
+        d.w = (float) w, d.h = (float) h;
+        SDL_RenderTexture(sdl.ren, t, NULL, &d);
+    }
+    /* the words */
+    r[0] = box[0], r[2] = box[2];
+    r[1] = box[1] + S(34) + (S(76) - TTF_GetFontHeight(sdl_face(SDL_FACE_TITLE,
+                                                                S(66)))) / 2;
+    (void) sdl_carve(sdl_face(SDL_FACE_TITLE, S(66)), "RIP", r, s);
+    sdl_fill(box[0] + S(46), box[1] + S(122) - max(1, S(2)) / 2,
+             w - 2 * S(46), max(1, S(2)), 70, 71, 74, 255);
+    r[0] = box[0] + S(22), r[2] = box[2] - S(22), r[1] = box[1] + S(138);
+    for (i = 0; i < fxv_end.nstone; i++)
+        r[1] += sdl_carve(sdl_face(SDL_FACE_TITLE,
+                                   i == 0 ? S(27) : max(10, S(19))),
+                          fxv_end.stone[i], r, s)
+                + S(i == 0 ? 10 : 6);
+}
+
+/* a wrapped paragraph's height at width px */
+static int
+sdl_para_h(TTF_Font *f, const char *t, int px)
+{
+    int w = 0, h = 0;
+
+    if (!TTF_GetStringSizeWrapped(f, t, 0, max(20, px), &w, &h))
+        return 0;
+    return h;
+}
+
+static void
+sdl_es_draw_death(int w, int h, double s)
+{
+    int x0 = (w - S(900)) / 2, top = max(S(14), (h - S(640)) / 2);
+    int stone[4], panel[4], r[4], i, y;
+    char buf[BUFSZ];
+    TTF_Font *f;
+
+    r[0] = 0, r[1] = top, r[2] = w, r[3] = top + S(22);
+    sdl_cs_line(sdl_face(SDL_FACE_UI_BOLD, max(10, S(15))),
+                "R E S T    I N    P E A C E", r, 1, FXV_RGB(150, 60, 52), 1);
+    f = sdl_face(SDL_FACE_TITLE, S(44));
+    sdl_fit_in(f, buf, sizeof buf, fxv_end.title, w - S(40));
+    r[1] = top + S(26), r[3] = top + S(86);
+    sdl_cs_line(f, buf, r, 1, ES_BONE, max(2, S(3)));
+    f = sdl_face(SDL_FACE_TITLE, max(10, S(20)));
+    sdl_fit_in(f, buf, sizeof buf, fxv_end.cause, w - S(40));
+    r[1] = top + S(88), r[3] = top + S(118);
+    sdl_cs_line(f, buf, r, 1, FXV_RGB(190, 192, 198), 1);
+
+    /* the stone on the left, the last words and the tally on the right */
+    stone[0] = x0 + S(40), stone[1] = top + S(156);
+    stone[2] = x0 + S(310), stone[3] = top + S(510);
+    sdl_es_stone(stone, s);
+
+    panel[0] = x0 + S(370), panel[1] = top + S(156);
+    panel[2] = x0 + S(900), panel[3] = top + S(510);
+    sdl_rbox(panel[0], panel[1], panel[2] - panel[0], panel[3] - panel[1],
+             FXV_CORNER, FXV_RGB(64, 68, 78));
+    sdl_fill(panel[0] + 1, panel[1] + 1, panel[2] - panel[0] - 2,
+             panel[3] - panel[1] - 2, 8, 9, 12, 190);
+
+    r[0] = panel[0] + S(26), r[1] = panel[1] + S(16);
+    r[2] = panel[2] - S(20), r[3] = panel[1] + S(40);
+    sdl_cs_line(sdl_face(SDL_FACE_UI_BOLD, max(10, S(15))), "FINAL WORDS", r,
+                0, CS_ACCENT, 0);
+    /* the words themselves, under a large opening quote */
+    (void) sdl_face_text(sdl_face(SDL_FACE_TITLE, S(72)), "\xE2\x80\x9C",
+                         panel[0] + S(20), panel[1] + S(32), 0,
+                         FXV_RGB(120, 50, 44), 0);
+    {
+        int area[4], n0 = 0, hsum;
+
+        f = sdl_face(SDL_FACE_TITLE, max(11, S(23)));
+        TTF_SetFontStyle(f, TTF_STYLE_ITALIC | TTF_STYLE_BOLD);
+        area[0] = panel[0] + S(70), area[1] = panel[1] + S(52);
+        area[2] = panel[2] - S(28), area[3] = panel[1] + S(196);
+        if (!fxv_end.nlast) {
+            r[0] = area[0], r[1] = area[1], r[2] = area[2], r[3] = area[3];
+            sdl_cs_para(f, "(nothing more was said)", r, ES_FAINT);
+        } else {
+            /* drop the oldest until the rest fit */
+            for (;;) {
+                hsum = 0;
+                for (i = n0; i < fxv_end.nlast; i++)
+                    hsum += sdl_para_h(f, fxv_end.last[i], area[2] - area[0])
+                            + S(6);
+                if (hsum <= area[3] - area[1] || n0 >= fxv_end.nlast - 1)
+                    break;
+                n0++;
+            }
+            r[0] = area[0], r[1] = area[1], r[2] = area[2], r[3] = area[3];
+            for (i = n0; i < fxv_end.nlast; i++) {
+                sdl_cs_para(f, fxv_end.last[i], r,
+                            i == fxv_end.nlast - 1 ? ES_BONE : CS_DIM);
+                r[1] += S(6);
+            }
+        }
+        TTF_SetFontStyle(f, TTF_STYLE_BOLD);
+    }
+
+    /* the tally */
+    y = panel[1] + S(212);
+    sdl_fill(panel[0] + S(26), y, panel[2] - panel[0] - S(52), 1, 60, 64, 74,
+             255);
+    for (i = 0; i < 6; i++) {
+        int cw = (panel[2] - panel[0] - S(52)) / 3;
+        int cx = panel[0] + S(26) + (i % 3) * cw;
+        int cy = panel[1] + S(226) + (i / 3) * S(62);
+
+        r[0] = cx, r[1] = cy, r[2] = cx + cw, r[3] = cy + S(36);
+        sdl_cs_line(sdl_face(SDL_FACE_TITLE, S(30)), fxv_end.stat[i].value, r,
+                    0, ES_BONE, 0);
+        r[1] = cy + S(36), r[3] = cy + S(54);
+        sdl_cs_line(sdl_face(SDL_FACE_UI_BOLD, max(9, S(12))),
+                    fxv_end.stat[i].label, r, 0, CS_DIM, 0);
+    }
+
+    sdl.es.btn[0] = (w - S(240)) / 2, sdl.es.btn[1] = top + S(548);
+    sdl.es.btn[2] = (w + S(240)) / 2, sdl.es.btn[3] = top + S(594);
+    sdl_button(sdl.es.btn, "Continue", TRUE, sdl.es.hot, TRUE,
+               sdl.es.down && sdl.es.hot, TRUE, s);
+    sdl_cs_hints(w, h, s, "Enter, Space or Esc: continue");
+}
+
+/* a rank in a circle: gold, silver and bronze for the first three */
+static void
+sdl_es_badge(int cx, int cy, int rank, double s)
+{
+    static const fxv_color medal[3] = {
+        FXV_RGB(229, 186, 96), FXV_RGB(196, 202, 212), FXV_RGB(196, 132, 84)
+    };
+    int rad = S(17), r[4];
+    char buf[16];
+
+    if (rank >= 1 && rank <= 3) {
+        sdl_dot((float) cx, (float) cy, (float) rad, medal[rank - 1], FALSE);
+    } else {
+        sdl_dot((float) cx, (float) cy, (float) rad, CS_SEP, FALSE);
+        sdl_dot((float) cx, (float) cy, (float) (rad - max(1, S(1))),
+                FXV_RGB(10, 11, 14), FALSE);
+    }
+    if (rank > 0)
+        Sprintf(buf, "%d", rank);
+    else
+        Strcpy(buf, "-");
+    r[0] = cx - rad, r[1] = cy - rad, r[2] = cx + rad, r[3] = cy + rad;
+    sdl_cs_line(sdl_face(SDL_FACE_UI_BOLD, max(10, S(16))), buf, r, 1,
+                (rank >= 1 && rank <= 3) ? CS_BG : CS_DIM, 0);
+}
+
+static void
+sdl_es_draw_scores(int w, int h, double s)
+{
+    int pw = min(w - S(48), S(1040)), pl = (w - pw) / 2, pr = pl + pw;
+    int top = max(S(14), (h - S(700)) / 2), rh = S(64), hh = S(36);
+    int ptop = top + (fxv_sl_note[0] ? S(118) : S(90)),
+        pbot = h - S(34) - S(46) - S(34);
+    int xpts = pl + S(196), xwho = pl + S(222), xfate = pl + S(222) + S(260),
+        xhp = pr - S(110);
+    int r[4], i, y;
+    char buf[BUFSZ];
+    TTF_Font *f;
+
+    r[0] = 0, r[1] = top, r[2] = w, r[3] = top + S(62);
+    sdl_cs_line(sdl_face(SDL_FACE_TITLE, S(48)), "High Scores", r, 1,
+                CS_ACCENT, max(2, S(3)));
+    f = sdl_face(SDL_FACE_UI, max(10, S(19)));
+    sdl_fit_in(f, buf, sizeof buf, fxv_sl_note, w - S(40));
+    r[1] = top + S(66), r[3] = top + S(96);
+    sdl_cs_line(f, buf, r, 1, CS_TEXT, 1);
+
+    /* the table */
+    if (fxv_sl_nent) {
+        int need = hh + fxv_sl_nent * rh + S(10);
+
+        if (ptop + need < pbot)
+            pbot = ptop + need;
+    } else {
+        pbot = min(pbot, ptop + S(120));
+    }
+    sdl_rbox(pl, ptop, pr - pl, pbot - ptop, FXV_CORNER, CS_SEP);
+    sdl_fill(pl + 1, ptop + 1, pr - pl - 2, pbot - ptop - 2, 10, 11, 14, 205);
+
+    if (!fxv_sl_nent) {
+        r[0] = pl, r[1] = ptop, r[2] = pr, r[3] = pbot;
+        sdl_cs_line(sdl_face(SDL_FACE_UI, max(10, S(16))),
+                    "No scores to show.", r, 1, CS_DIM, 0);
+    } else {
+        TTF_Font *head = sdl_face(SDL_FACE_UI_BOLD, max(9, S(13)));
+
+        y = ptop + S(10);
+        (void) sdl_face_text(head, "RANK", pl + S(18), y, 0, CS_DIM, 0);
+        (void) sdl_face_text(head, "POINTS", xpts, y, 2, CS_DIM, 0);
+        (void) sdl_face_text(head, "HERO", xwho, y, 0, CS_DIM, 0);
+        (void) sdl_face_text(head, "FATE", xfate, y, 0, CS_DIM, 0);
+        (void) sdl_face_text(head, "HP", pr - S(20), y, 2, CS_DIM, 0);
+
+        sdl.es.fit = max(1, (pbot - ptop - hh - S(6)) / rh);
+        if (sdl.es.top > fxv_sl_nent - sdl.es.fit)
+            sdl.es.top = max(0, fxv_sl_nent - sdl.es.fit);
+        for (i = sdl.es.top; i < fxv_sl_nent && i < sdl.es.top + sdl.es.fit;
+             i++) {
+            struct fxv_sl_entry *e = &fxv_sl_ent[i];
+            int row[4];
+
+            y = ptop + hh + (i - sdl.es.top) * rh;
+            row[0] = pl + S(6), row[1] = y, row[2] = pr - S(6);
+            row[3] = y + rh - S(4);
+            if (e->hero) {
+                sdl_edged(row, FXV_RGB(52, 44, 26), FXV_RGB(120, 96, 50), 1);
+                sdl_fill(row[0], row[1] + S(8), S(4),
+                         row[3] - row[1] - 2 * S(8), FXV_R(CS_ACCENT),
+                         FXV_G(CS_ACCENT), FXV_B(CS_ACCENT), 255);
+            } else if ((i - sdl.es.top) % 2) {
+                sdl_edged(row, FXV_RGB(27, 30, 36), FXV_RGB(27, 30, 36), 1);
+            }
+            sdl_es_badge(pl + S(36), (row[1] + row[3]) / 2, e->rank, s);
+
+            Sprintf(buf, "%ld", e->points);
+            r[0] = pl + S(60), r[1] = row[1], r[2] = xpts, r[3] = row[3];
+            sdl_cs_line(sdl_face(SDL_FACE_TITLE, max(11, S(22))), buf, r, 2,
+                        e->hero ? CS_ACCENT : CS_TEXT, 0);
+
+            f = sdl_face(SDL_FACE_UI_BOLD, max(10, S(18)));
+            sdl_fit_in(f, buf, sizeof buf, e->name, xfate - S(16) - xwho);
+            r[0] = xwho, r[1] = row[1] + S(9), r[2] = xfate - S(16);
+            r[3] = row[1] + S(33);
+            sdl_cs_line(f, buf, r, 0, e->hero ? CS_ACCENT : CS_TEXT, 0);
+            f = sdl_face(SDL_FACE_UI, max(9, S(14)));
+            sdl_fit_in(f, buf, sizeof buf, e->who, xfate - S(16) - xwho);
+            r[1] = row[1] + S(33), r[3] = row[1] + S(54);
+            sdl_cs_line(f, buf, r, 0, CS_DIM, 0);
+
+            f = sdl_face(SDL_FACE_UI, max(10, S(16)));
+            sdl_fit_in(f, buf, sizeof buf, e->fate, xhp - S(16) - xfate);
+            r[0] = xfate, r[2] = xhp - S(16);
+            r[1] = row[1] + (e->place[0] ? S(9) : 0);
+            r[3] = e->place[0] ? row[1] + S(33) : row[3];
+            sdl_cs_line(f, buf, r, 0, CS_TEXT, 0);
+            if (e->place[0]) {
+                f = sdl_face(SDL_FACE_UI, max(9, S(14)));
+                sdl_fit_in(f, buf, sizeof buf, e->place, xhp - S(16) - xfate);
+                r[1] = row[1] + S(33), r[3] = row[1] + S(54);
+                sdl_cs_line(f, buf, r, 0, CS_DIM, 0);
+            }
+            if (e->maxhp)
+                Sprintf(buf, "%s / %d", !strcmp(e->hp, "-") ? "0" : e->hp,
+                        e->maxhp);
+            else
+                buf[0] = '\0';
+            r[0] = xhp, r[1] = row[1], r[2] = pr - S(20), r[3] = row[3];
+            sdl_cs_line(sdl_face(SDL_FACE_UI, max(10, S(16))), buf, r, 2,
+                        CS_DIM, 0);
+        }
+        /* more above or below */
+        f = sdl_face(SDL_FACE_UI, max(9, S(14)));
+        if (sdl.es.top > 0)
+            (void) sdl_face_text(f, "more above  (scroll or Up)", w / 2,
+                                 ptop - S(22), 1, CS_DIM, 0);
+        if (sdl.es.top + sdl.es.fit < fxv_sl_nent)
+            (void) sdl_face_text(f, "more below  (scroll or Down)", w / 2,
+                                 pbot + S(2), 1, CS_DIM, 0);
+    }
+
+    y = max(pbot + S(30), min(h - S(34) - S(56), pbot + S(40)));
+    sdl.es.btn[0] = (w - S(240)) / 2, sdl.es.btn[1] = y;
+    sdl.es.btn[2] = (w + S(240)) / 2, sdl.es.btn[3] = y + S(46);
+    sdl_button(sdl.es.btn, "Done", TRUE, sdl.es.hot, TRUE,
+               sdl.es.down && sdl.es.hot, TRUE, s);
+    sdl_cs_hints(w, h, s,
+                 fxv_sl_nent > sdl.es.fit
+                     ? "Up, Down or wheel: scroll      Enter or Esc: done"
+                     : "Enter or Esc: done");
+}
+
+static void
+sdl_draw_es(void)
+{
+    int w, h;
+    double s;
+
+    SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    s = fxv_cs_scale(w, h);
+    sdl_es_backdrop(w, h);
+    if (sdl.es.mode == SDL_ES_DEATH)
+        sdl_es_draw_death(w, h, s);
+    else
+        sdl_es_draw_scores(w, h, s);
+}
+
+#undef S
+
+/* show an end screen until it's dismissed */
+static void
+sdl_es_run(int mode)
+{
+    int c;
+
+    sdl.es.mode = mode;
+    sdl.es.hot = sdl.es.down = FALSE;
+    sdl.es.btn[0] = sdl.es.btn[1] = sdl.es.btn[2] = sdl.es.btn[3] = 0;
+    sdl.bar_open = -1;
+    for (;;) {
+        sdl.dirty = TRUE;
+        c = sdl_wait_key();
+        if (c == '\n' || c == '\r' || c == ' ' || c == '\033')
+            break;
+        if (mode != SDL_ES_SCORES)
+            continue;
+        switch (c) {
+        case SDL_CSK_UP: sdl.es.top--; break;
+        case SDL_CSK_DOWN: sdl.es.top++; break;
+        case SDL_CSK_PGUP: sdl.es.top -= sdl.es.fit; break;
+        case SDL_CSK_PGDN: sdl.es.top += sdl.es.fit; break;
+        case SDL_CSK_HOME: sdl.es.top = 0; break;
+        case SDL_CSK_END: sdl.es.top = fxv_sl_nent; break;
+        default: break;
+        }
+        sdl.es.top = max(0, sdl.es.top); /* (and kept short when drawn) */
+    }
+    sdl.es.mode = -1;
+    sdl.dirty = TRUE;
+}
+
+/* the tombstone: its four lines go first in the end-of-game window,
+   whose farewell follows; the death screen shows them both */
+static void
+sdl_outrip(winid w, int how, time_t when)
+{
+    struct sdl_win *sw = sdl_getwin(w);
+    char buf[BUFSZ];
+
+    if (!sw)
+        return;
+    sdl_free_items(sw);
+    sw->rip = TRUE;
+    Snprintf(buf, 17, "%s", svp.plname); /* what fits on the stone */
+    sdl_putstr(w, 0, buf);
+    Sprintf(buf, "%ld Au", gd.done_money);
+    buf[16] = '\0';
+    sdl_putstr(w, 0, buf);
+    formatkiller(buf, sizeof buf, how, FALSE);
+    sdl_putstr(w, 0, buf);
+    Sprintf(buf, "%4ld", yyyymmdd(when) / 10000L);
+    sdl_putstr(w, 0, buf);
+}
+
+/* show the death screen (from the tombstone's window) or the score list
+   (from topten()'s) */
+static void
+sdl_end_screens(struct sdl_win *sw, boolean scores)
+{
+    int i;
+
+    if (scores) {
+        fxv_scores_clear();
+        for (i = 0; i < sw->nitems; i++)
+            fxv_scores_add(sw->items[i].attr, sw->items[i].text);
+        sdl.es.top = fxv_scores_parse(); /* the hero's entry in view */
+        sdl.es.fit = 6;
+        sdl_es_run(SDL_ES_SCORES);
+        fxv_scores_clear();
+    } else {
+        char rip[BUFSZ * 4 + 8], *summary;
+        size_t n = 0;
+
+        rip[0] = '\0';
+        for (i = 0; i < sw->nitems && i < 4; i++)
+            Snprintf(eos(rip), sizeof rip - strlen(rip), "%s\n",
+                     sw->items[i].text);
+        for (i = 4; i < sw->nitems; i++)
+            n += strlen(sw->items[i].text) + 1;
+        summary = (char *) alloc(n + 1);
+        summary[0] = '\0';
+        for (i = 4; i < sw->nitems; i++)
+            Strcat(strcat(summary, sw->items[i].text), "\n");
+        fxv_end_gather(rip, summary);
+        free(summary);
+        sdl_es_run(SDL_ES_DEATH);
+    }
+}
+
+/* ---- back to the title screen after a game (as NetHackW) ----------- */
+
+/* Death, quit and save all lead back to the title screen, by starting
+   the program afresh (the core keeps its state in globals that aren't
+   made to be reset); closing the window doesn't. */
+/* (sdl_play_again: declared at the top) */
+static char **sdl_argv; /* this program's command line, as it started */
+
+static void
+sdl_relaunch(void)
+{
+#ifdef __linux__
+    if (sdl_play_again && sdl_argv && !sdl.closing
+        && !getenv("NETHACK_SDL_KEYS")) /* (not when testing) */
+        (void) execv("/proc/self/exe", sdl_argv);
+#endif
+}
+
+/* keep the command line, to start the same way again */
+static void
+sdl_keep_cmdline(void)
+{
+#ifdef __linux__
+    FILE *f = fopen("/proc/self/cmdline", "rb");
+    static char buf[4096];
+    size_t n, i;
+    int argc = 0, k;
+
+    if (!f)
+        return;
+    n = fread(buf, 1, sizeof buf - 1, f);
+    (void) fclose(f);
+    if (n == 0 || n >= sizeof buf - 1)
+        return; /* nothing, or too long to trust */
+    buf[n] = '\0';
+    for (i = 0; i < n; i++)
+        if (buf[i] == '\0')
+            argc++;
+    sdl_argv = (char **) alloc((argc + 1) * sizeof (char *));
+    for (i = 0, k = 0; i < n && k < argc; k++) {
+        sdl_argv[k] = &buf[i];
+        i += strlen(&buf[i]) + 1;
+    }
+    sdl_argv[k] = 0;
+    (void) atexit(sdl_relaunch);
+#endif
+}
+
 /* ---- what the shared effects need from this port (fxview.h) ------- */
 
 static fxv_ms
@@ -3827,9 +4607,23 @@ sdl_fxv_tiles_shown(void)
 }
 
 /* the core's fx events (fx.h) */
+/* the back-th newest message, and its turn (for the last words) */
+static const char *
+sdl_msg_back(int back, long *turn)
+{
+    int i = sdl.nmsgs - 1 - back;
+
+    if (back < 0 || i < 0 || i < sdl.nmsgs - SDL_MSGKEEP)
+        return (const char *) 0;
+    *turn = sdl.msg_turn[i % SDL_MSGKEEP];
+    return sdl.msgs[i % SDL_MSGKEEP];
+}
+
 static void
 sdl_fx_event(const struct fx_event *ev)
 {
+    if (ev->type == FXE_UI && ev->text && !strcmp(ev->text, "death"))
+        fxv_end_snapshot(sdl_msg_back); /* the death screen's last words */
     fxv_fx_event(ev);
     sdl.dirty = TRUE;
 }
@@ -3846,6 +4640,7 @@ sdl_init_nhwindows(int *argc, char **argv)
     };
 
     nhUse(argc), nhUse(argv);
+    sdl_keep_cmdline(); /* to come back to the title screen after a game */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         raw_printf("SDL: %s", SDL_GetError());
         nh_terminate(EXIT_FAILURE);
@@ -3938,7 +4733,10 @@ sdl_init_nhwindows(int *argc, char **argv)
     sdl.zoom_set = iflags.fx_map_zoom; /* fx_map_zoom, or automatic */
     sdl.zoom = sdl_zoom_for(sdl.zoom_set), sdl.zoom_used = -1;
     sdl.bar_open = sdl.bar_hot = sdl.bar_item = -1; /* menu bar closed */
-    sdl.cs.mode = -1;
+    sdl.cs.mode = sdl.es.mode = -1;
+    /* the score list goes in a window, to be shown as a table (as
+       NetHackW does) */
+    iflags.toptenwin = 1;
     sdl.herox = COLNO / 2, sdl.heroy = ROWNO / 2, sdl.recentre = TRUE;
     {
         int x, y;
@@ -4029,6 +4827,12 @@ sdl_exit_nhwindows(const char *str)
         TTF_CloseFont(sdl.msgfont), sdl.msgfont = 0;
     if (sdl.art)
         SDL_DestroyTexture(sdl.art), sdl.art = 0;
+    if (sdl.art_grey)
+        SDL_DestroyTexture(sdl.art_grey), sdl.art_grey = 0;
+    if (sdl.art_px)
+        SDL_DestroySurface(sdl.art_px), sdl.art_px = 0;
+    if (sdl.stone)
+        SDL_DestroyTexture(sdl.stone), sdl.stone = 0;
     if (sdl.tiles)
         SDL_DestroyTexture(sdl.tiles), sdl.tiles = 0;
     if (sdl.tiles_solid)
@@ -4115,6 +4919,10 @@ sdl_display_nhwindow(winid w, boolean blocking)
 
     if (!sw)
         return;
+    if (sw->rip || (w == gt.toptenwin && sw->nitems)) {
+        sdl_end_screens(sw, w == gt.toptenwin);
+        return;
+    }
     if (sw->type == NHW_MENU || sw->type == NHW_TEXT) {
         if (sw->nitems)
             (void) sdl_run_overlay(sw, PICK_NONE, (menu_item **) 0);
@@ -4584,7 +5392,7 @@ struct window_procs sdl_procs = {
 #endif
     sdl_get_color_string,
 #endif
-    genl_outrip,
+    sdl_outrip,
     genl_preference_update,
     genl_getmsghistory,
     genl_putmsghistory,

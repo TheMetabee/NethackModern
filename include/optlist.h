@@ -396,6 +396,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_hide_inventory, Advanced, 0, opt_in, set_in_game,
            Off, Yes, No, No, NoAlias, &iflags.fx_hide_inventory, Term_False,
            "NetHackW: keep the inventory side panel hidden")
+    NHOPTB(fx_action_buttons, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_action_buttons, Term_False,
+           "NetHackW: buttons for what can be done here (stairs, doors, search)")
     NHOPTB(fx_lighting, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_lighting, Term_False,
            "NetHackW: soft light on the map; remembered squares dimmed")

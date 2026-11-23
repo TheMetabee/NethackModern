@@ -758,8 +758,13 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     x += equipx + 18;
     th_rule(hdc, x - 9, y1, y2 + rowh - 2);
 
-    /* the action bar at the right end */
-    actx = th_paint_actions(hdc, width, y1, y2, rowh);
+    /* the action bar at the right end, unless fx_action_buttons is off */
+    if (iflags.fx_action_buttons) {
+        actx = th_paint_actions(hdc, width, y1, y2, rowh);
+    } else {
+        th_nbtn = 0; /* (nothing to click) */
+        actx = width;
+    }
 
     /* conditions as chips, wrapping onto the second row; which, and
        their colours, are shared (fxview.c) */

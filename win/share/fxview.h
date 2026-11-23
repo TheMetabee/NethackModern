@@ -341,4 +341,40 @@ void fxv_cs_info(int role, int what, char *buf);
 double fxv_cs_scale(int w, int h);
 void fxv_cs_layout(struct fxv_cs_layout *, int w, int h, boolean name);
 
+/* the death screen and the score list: what they show, gathered from
+   the game as it ends and from the lines topten() writes */
+#define FXV_END_LASTN 4
+struct fxv_end {
+    char title[BUFSZ], cause[BUFSZ], stone[4][BUFSZ];
+    int nstone;
+    char last[FXV_END_LASTN][BUFSZ]; /* the last turn's messages */
+    int nlast;
+    struct {
+        const char *label;
+        char value[32];
+    } stat[6];
+};
+extern struct fxv_end fxv_end;
+void fxv_end_snapshot(const char *(*line)(int back, long *turn));
+void fxv_end_gather(const char *rip, const char *summary);
+#define FXV_SL_MAXLINES 400
+#define FXV_SL_MAXENTRIES 120
+struct fxv_sl_entry {
+    int rank;           /* 0: the hero's, when not on the list */
+    long points;
+    char name[PL_NSIZ];
+    char who[BUFSZ];    /* "chaotic female human Wizard" */
+    char fate[BUFSZ];   /* "Killed by a jackal" */
+    char place[BUFSZ];  /* "Died in The Dungeons of Doom on level 2" */
+    char hp[16];
+    int maxhp;
+    boolean hero;
+};
+extern struct fxv_sl_entry fxv_sl_ent[FXV_SL_MAXENTRIES];
+extern int fxv_sl_nent;
+extern char fxv_sl_note[BUFSZ];
+void fxv_scores_add(int attr, const char *text);
+void fxv_scores_clear(void);
+int fxv_scores_parse(void);
+
 #endif /* FXVIEW_H */
