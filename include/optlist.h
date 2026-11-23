@@ -432,6 +432,21 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTC(fx_window_size, Advanced, 12, opt_in, set_in_game,
                 No, Yes, No, Yes, NoAlias,
                 "SDL: window size as WIDTHxHEIGHT, or auto")
+    NHOPTC(fx_font_text, Advanced, FX_FONTSZ, opt_in, set_in_game,
+                Yes, Yes, No, Yes, NoAlias,
+                "SDL: font for menus, status and the messages list (name, then bold/italic), or auto")
+    NHOPTC(fx_font_message, Advanced, FX_FONTSZ, opt_in, set_in_game,
+                Yes, Yes, No, Yes, NoAlias,
+                "SDL: font for messages on the map (name, then bold/italic), or auto")
+    NHOPTC(fx_font_float, Advanced, FX_FONTSZ, opt_in, set_in_game,
+                Yes, Yes, No, Yes, NoAlias,
+                "SDL: font for floating numbers on the map (name, then bold/italic), or auto")
+    NHOPTC(fx_font_title, Advanced, FX_FONTSZ, opt_in, set_in_game,
+                Yes, Yes, No, Yes, NoAlias,
+                "SDL: font for the title and end screens' headings (name, then bold/italic), or auto")
+    NHOPTC(fx_font_screen, Advanced, FX_FONTSZ, opt_in, set_in_game,
+                Yes, Yes, No, Yes, NoAlias,
+                "SDL: font for the rest of those screens (name, then bold/italic), or auto")
     NHOPTB(fx_theme, Advanced, 0, opt_out, set_in_config,
            On, Yes, No, No, NoAlias, &iflags.fx_theme, Term_False,
            "NetHackW: modern dark theme and fonts (overrides windowcolors)")

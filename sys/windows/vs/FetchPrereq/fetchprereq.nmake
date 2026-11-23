@@ -15,6 +15,14 @@ PDCURL=https://github.com/Bill-Gray/PDCursesMod/archive/refs/tags/v
 CURLPDCSRC=$(PDCURL)$(PDCURSES_VERSION).zip
 CURLPDCDST=$(PDCDIST)
 
+# NetHack Modern: SDL3 and SDL3_ttf for NetHackSDL.exe, the official
+# prebuilt Visual C packages (the same versions the Linux AppImage
+# builds from source in sys/unix/appimage/build-sdl3.sh)
+SDL_VERSION = 3.4.20
+TTF_VERSION = 3.2.2
+SDLURL=https://github.com/libsdl-org/SDL/releases/download/release-$(SDL_VERSION)/SDL3-devel-$(SDL_VERSION)-VC.zip
+TTFURL=https://github.com/libsdl-org/SDL_ttf/releases/download/release-$(TTF_VERSION)/SDL3_ttf-devel-$(TTF_VERSION)-VC.zip
+
 #
 #  relative directories from root of NetHack tree.
 #
@@ -28,7 +36,21 @@ SUBMDIR=$(ROOTDIR)\$(SUBMSDIR)
 
 default: fetchall
 
-fetchall: libdir fetch-pdcurses
+fetchall: libdir fetch-pdcurses fetch-sdl3
+
+# lib\SDL3 and lib\SDL3_ttf, each with include\ and lib\<platform>\
+fetch-sdl3:
+	cd $(LIBDIR)
+	curl -L -R $(SDLURL) -o SDL3.zip
+	if not exist SDL3\*.* mkdir SDL3
+	tar -xC SDL3 --strip-components=1 -f SDL3.zip
+	if exist SDL3.zip del SDL3.zip
+	curl -L -R $(TTFURL) -o SDL3_ttf.zip
+	if not exist SDL3_ttf\*.* mkdir SDL3_ttf
+	tar -xC SDL3_ttf --strip-components=1 -f SDL3_ttf.zip
+	if exist SDL3_ttf.zip del SDL3_ttf.zip
+	cd ..\sys\windows\vs\fetchprereq
+	@echo SDL3 $(SDL_VERSION) and SDL3_ttf $(TTF_VERSION) have been fetched into $(LIBDIR)
 
 fetch-pdcurses:
 	cd $(LIBDIR)
@@ -45,6 +67,8 @@ libdir:
 
 clean:
 	@if exist $(LIBDIR)\$(PDCDIST) rmdir /Q $(LIBDIR)\$(PDCDIST) /s
+	@if exist $(LIBDIR)\SDL3 rmdir /Q $(LIBDIR)\SDL3 /s
+	@if exist $(LIBDIR)\SDL3_ttf rmdir /Q $(LIBDIR)\SDL3_ttf /s
 
 rebuild:
 	@if exist $(LIBDIR)\$(PDCDIST) echo nothing to do for lib\$(PDCDIST)

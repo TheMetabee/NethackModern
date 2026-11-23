@@ -4064,6 +4064,226 @@ optfn_fx_text_size(int optidx, int req, boolean negated, char *opts,
                                   &iflags.fx_text_size, 8, 96);
 }
 
+/* NetHack Modern: the SDL window's fonts, one option each. The value
+   is a font's name, then "bold", "italic" or "bold italic" if wanted
+   (no word: regular), or a font file; "auto" (stored as "") leaves
+   the window's own choice, its look as it comes */
+staticfn int handler_fx_font(int);
+
+static const short fx_font_opt[FX_NFONT] = {
+    opt_fx_font_text, opt_fx_font_message, opt_fx_font_float,
+    opt_fx_font_title, opt_fx_font_screen
+};
+static const char *const fx_font_what[FX_NFONT] = {
+    "Text: menus, status, messages list", "Messages on the map",
+    "Floating numbers on the map", "Screen titles", "Screen text"
+};
+
+staticfn int
+optfn_fx_font_common(int which, int req, boolean negated, char *opts)
+{
+    char *op;
+
+    if (req == do_init) {
+        iflags.fx_font[which][0] = '\0';
+        return optn_ok;
+    }
+    if (req == do_set) {
+        if (negated) {
+            iflags.fx_font[which][0] = '\0';
+            return optn_ok;
+        }
+        op = string_for_opt(opts, FALSE);
+        if (op == empty_optstr)
+            return optn_err;
+        (void) mungspaces(op);
+        if (!*op || !strcmpi(op, "auto") || !strcmpi(op, "default"))
+            iflags.fx_font[which][0] = '\0';
+        else
+            nmcpy(iflags.fx_font[which], op, FX_FONTSZ);
+        return optn_ok;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Strcpy(opts, iflags.fx_font[which][0] ? iflags.fx_font[which]
+                                              : "auto");
+        return optn_ok;
+    }
+    if (req == do_handler)
+        return handler_fx_font(which);
+    return optn_ok;
+}
+
+staticfn int
+optfn_fx_font_text(int optidx UNUSED, int req, boolean negated, char *opts,
+                   char *op UNUSED)
+{
+    return optfn_fx_font_common(FX_FONT_TEXT, req, negated, opts);
+}
+
+staticfn int
+optfn_fx_font_message(int optidx UNUSED, int req, boolean negated,
+                      char *opts, char *op UNUSED)
+{
+    return optfn_fx_font_common(FX_FONT_MESSAGE, req, negated, opts);
+}
+
+staticfn int
+optfn_fx_font_float(int optidx UNUSED, int req, boolean negated, char *opts,
+                    char *op UNUSED)
+{
+    return optfn_fx_font_common(FX_FONT_FLOAT, req, negated, opts);
+}
+
+staticfn int
+optfn_fx_font_title(int optidx UNUSED, int req, boolean negated, char *opts,
+                    char *op UNUSED)
+{
+    return optfn_fx_font_common(FX_FONT_TITLE, req, negated, opts);
+}
+
+staticfn int
+optfn_fx_font_screen(int optidx UNUSED, int req, boolean negated,
+                     char *opts, char *op UNUSED)
+{
+    return optfn_fx_font_common(FX_FONT_SCREEN, req, negated, opts);
+}
+
+/* set fx_font_* number 'which' to 'val', as the options do */
+staticfn void
+fx_font_set(int which, const char *val)
+{
+    char opt[BUFSZ + 40];
+    int optidx = fx_font_opt[which];
+
+    Snprintf(opt, sizeof opt, "%s:%s", allopt[optidx].name, val);
+    (void) (*allopt[optidx].optfn)(optidx, do_set, FALSE, opt,
+                                   empty_optstr);
+}
+
+/* pick a font for fx_font_* number 'which': its own (auto), one of the
+   fonts the window port knows of, then a style; or type one in */
+staticfn int
+handler_fx_font(int which)
+{
+    static const char *const styles[] = {
+        "Regular", "Bold", "Italic", "Bold italic"
+    };
+    const char *const *names = 0;
+    int nnames = fx_font_lister ? (*fx_font_lister)(which, &names) : 0;
+    const char *now = iflags.fx_font[which][0] ? iflags.fx_font[which]
+                                               : "auto";
+    winid tmpwin;
+    anything any;
+    menu_item *pick = (menu_item *) 0;
+    char prompt[BUFSZ], buf[BUFSZ], let;
+    int i, n;
+
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    any.a_int = 1;
+    add_menu(tmpwin, &nul_glyphinfo, &any, '-', 0, ATR_NONE, NO_COLOR,
+             "Auto (the window's own)", MENU_ITEMFLAGS_NONE);
+    any.a_int = 2;
+    add_menu(tmpwin, &nul_glyphinfo, &any, '+', 0, ATR_NONE, NO_COLOR,
+             "Type a font name or file...", MENU_ITEMFLAGS_NONE);
+    if (nnames) {
+        any = cg.zeroany;
+        add_menu_heading(tmpwin, "Fonts on this computer");
+    }
+    for (i = 0; i < nnames; i++) {
+        any.a_int = 3 + i;
+        let = (i < 26) ? 'a' + i : (i < 52) ? 'A' + i - 26 : 0;
+        add_menu(tmpwin, &nul_glyphinfo, &any, let, 0, ATR_NONE, NO_COLOR,
+                 names[i], MENU_ITEMFLAGS_NONE);
+    }
+    Snprintf(prompt, sizeof prompt, "%s (now %s):", fx_font_what[which],
+             now);
+    end_menu(tmpwin, prompt);
+    n = select_menu(tmpwin, PICK_ONE, &pick);
+    destroy_nhwindow(tmpwin);
+    if (n <= 0)
+        return optn_ok;
+    i = pick->item.a_int;
+    free((genericptr_t) pick), pick = (menu_item *) 0;
+    if (i == 1) {
+        fx_font_set(which, "auto");
+        return optn_ok;
+    }
+    if (i == 2) {
+        getlin("Font name or file, then bold, italic or bold italic:", buf);
+        (void) mungspaces(buf);
+        if (buf[0] && buf[0] != '\033')
+            fx_font_set(which, buf);
+        return optn_ok;
+    }
+    Strcpy(buf, names[i - 3]);
+    /* then its style */
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    for (i = 0; i < SIZE(styles); i++) {
+        any.a_int = i + 1;
+        add_menu(tmpwin, &nul_glyphinfo, &any, 'a' + i, 0, ATR_NONE,
+                 NO_COLOR, styles[i], MENU_ITEMFLAGS_NONE);
+    }
+    Snprintf(prompt, sizeof prompt, "%s in which style?", buf);
+    end_menu(tmpwin, prompt);
+    n = select_menu(tmpwin, PICK_ONE, &pick);
+    destroy_nhwindow(tmpwin);
+    if (n <= 0)
+        return optn_ok;
+    i = pick->item.a_int - 1;
+    free((genericptr_t) pick);
+    if (i > 0) {
+        Strcat(buf, " ");
+        Strcat(buf, styles[i]);
+        lcase(buf + strlen(buf) - strlen(styles[i]));
+    }
+    fx_font_set(which, buf);
+    return optn_ok;
+}
+
+/* NetHack Modern: #fonts, the SDL window's fonts, one after another
+   until the player is done */
+int
+dofonts(void)
+{
+    winid tmpwin;
+    anything any;
+    menu_item *pick;
+    char line[BUFSZ];
+    int i;
+
+    if (fx_font_dialog) { /* the window has its own (SDL) */
+        (*fx_font_dialog)();
+        return ECMD_OK;
+    }
+    for (;;) {
+        tmpwin = create_nhwindow(NHW_MENU);
+        start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+        any = cg.zeroany;
+        for (i = 0; i < FX_NFONT; i++) {
+            any.a_int = i + 1;
+            Snprintf(line, sizeof line, "%-36s %s", fx_font_what[i],
+                     iflags.fx_font[i][0] ? iflags.fx_font[i] : "auto");
+            add_menu(tmpwin, &nul_glyphinfo, &any, 'a' + i, 0, ATR_NONE,
+                     NO_COLOR, line, MENU_ITEMFLAGS_NONE);
+        }
+        end_menu(tmpwin, "Fonts: which one to change?");
+        pick = (menu_item *) 0;
+        i = select_menu(tmpwin, PICK_ONE, &pick) > 0
+                ? pick->item.a_int - 1 : -1;
+        destroy_nhwindow(tmpwin);
+        if (pick)
+            free((genericptr_t) pick);
+        if (i < 0)
+            break;
+        (void) handler_fx_font(i);
+    }
+    return ECMD_OK;
+}
+
 /* NetHack Modern: the SDL window's size, WIDTHxHEIGHT or auto */
 staticfn int
 optfn_fx_window_size(int optidx, int req, boolean negated, char *opts,

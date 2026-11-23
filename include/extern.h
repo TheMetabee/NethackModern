@@ -2345,6 +2345,7 @@ extern boolean parseoptions(char *, boolean, boolean) NONNULLARG1;
 extern void freeroleoptvals(void);
 extern char *get_option_value(const char *, boolean) NONNULLARG1;
 extern int doset_simple(void);
+extern int dofonts(void); /* NetHack Modern */
 extern int doset(void);
 extern int dotogglepickup(void);
 extern int toggle_bool_option(const char *);

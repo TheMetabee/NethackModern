@@ -75,13 +75,21 @@ int windows_startup_state = 0;    /* we flag whether to continue with this */
                                   /* 0 = keep starting up, everything is good */
 
 extern int redirect_stdout;       /* from sys/share/pcsys.c */
+/* NetHack Modern: NetHackSDL.exe has the SDL window and no other */
+#if defined(SDL_GRAPHICS) && !defined(MSWIN_GRAPHICS) && !defined(TTY_GRAPHICS)
+#define SDL_ONLY
+int GUILaunched = TRUE; /* (no console; NetHackW.c sets it for NetHackW) */
+#else
 extern int GUILaunched;
+#endif
 HANDLE hStdOut;
 char default_window_sys[7] =
 #if defined(MSWIN_GRAPHICS)
             "mswin";
 #elif defined(TTY_GRAPHICS)
             "tty";
+#elif defined(SDL_ONLY)
+            "sdl";
 #endif
 #ifdef WANT_GETHDATE
 static struct stat hbuf;
@@ -228,7 +236,7 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
 #ifdef WIN32CON
     rcfile_only_this_option(opt_windowsterminal);
 #endif
-#if !defined(MSWIN_GRAPHICS)
+#if !defined(MSWIN_GRAPHICS) && !defined(SDL_ONLY)
     nethack_enter_consoletty();
     consoletty_open(1);
 #endif
@@ -246,6 +254,9 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
         windowtype = "tty";
 #endif
     }
+#ifdef SDL_ONLY
+    windowtype = "sdl"; /* whatever the config file asks: it's all we have */
+#endif
 #ifdef MSWIN_GRAPHICS
     if (!strcmp(windowtype, "tty"))
         windowtype = "mswin";
@@ -314,6 +325,9 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
     if (argc >= 1 && !strcmpi(default_window_sys, "mswin")
         && (strstri(argv[0], "nethackw.exe") || GUILaunched))
         iflags.windowtype_locked = TRUE;
+#endif
+#ifdef SDL_ONLY
+    iflags.windowtype_locked = TRUE;
 #endif
 #ifdef WINCHAIN
     commit_windowchain();

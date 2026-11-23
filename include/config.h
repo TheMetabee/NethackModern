@@ -141,6 +141,12 @@
 #endif
 #endif
 
+#ifdef SDL_GRAPHICS /* NetHack Modern: win/sdl (Unix builds set it) */
+#ifndef DEFAULT_WINDOW_SYS
+#define DEFAULT_WINDOW_SYS "sdl"
+#endif
+#endif
+
 #ifdef SHIM_GRAPHICS
 #ifndef DEFAULT_WINDOW_SYS
 #define DEFAULT_WINDOW_SYS "shim"

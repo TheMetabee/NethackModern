@@ -250,6 +250,17 @@ enum windowsterminal_how {
 };
 #endif
 #endif
+
+/* NetHack Modern: the SDL window's fonts, one option each (fx_font_*) */
+#define FX_FONT_TEXT 0    /* menus, status, the messages list */
+#define FX_FONT_MESSAGE 1 /* messages on the map */
+#define FX_FONT_FLOAT 2   /* floating numbers and words on the map */
+#define FX_FONT_TITLE 3   /* the big headings of the title, character
+                           * and end screens */
+#define FX_FONT_SCREEN 4  /* the rest of the text on those screens */
+#define FX_NFONT 5
+#define FX_FONTSZ 80
+
 /*
  * Stuff that really isn't option or platform related and does not
  * get saved and restored.  They are set and cleared during the game
@@ -312,6 +323,8 @@ struct instance_flags {
                                 * left/centre/right */
     int fx_shade;              /* NetHack Modern: 0 light, 1 medium, 2 dark,
                                 * 3 deep: shade of what's out of sight */
+    char fx_font[FX_NFONT][FX_FONTSZ]; /* NetHack Modern: the SDL window's
+                                * fonts (FX_FONT_*), "" for its own */
     boolean pending_customizations; /* at least one custom. was specified */
     xint8 debug_fuzzer;    /* fuzz testing */
     int at_midnight;       /* only valid during end of game disclosure */

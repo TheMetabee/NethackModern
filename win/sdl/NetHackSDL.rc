@@ -1,0 +1,5 @@
+/* NetHack Modern: resources for NetHackSDL.exe, the SDL window on
+   Windows; just the program's icon, sys/windows/nethack.ico (found on
+   the resource compiler's include path, as NetHackW.rc finds it) */
+
+1 ICON "nethack.ico"

@@ -1730,6 +1730,8 @@ struct ext_func_tab extcmdlist[] = {
               do_fight, PREFIXCMD, NULL },
     { 'f',    "fire", "fire ammunition from quiver",
               dofire, 0, NULL },
+    { '\0',   "fonts", "choose the fonts of the SDL window", /* Modern */
+              dofonts, IFBURIED | GENERALCMD, NULL },
     { M('f'), "force", "force a lock",
               doforce, AUTOCOMPLETE, NULL },
     { M('g'), "genocided",

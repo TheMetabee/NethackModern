@@ -212,6 +212,14 @@ typedef void (*fx_handler_fn)(const struct fx_event *);
 /* fx.c */
 extern void fx_set_handler(fx_handler_fn);
 extern void fx_set_audio_handler(fx_handler_fn);
+/* the font names a window port can offer for fx_font_* number 'which'
+   (FX_FONT_*; the SDL one sets it, offering only monospace fonts for
+   the text): points *names at them, sorted, and returns how many */
+typedef int (*fx_font_lister_fn)(int which, const char *const **names);
+extern fx_font_lister_fn fx_font_lister;
+/* a window port's own window for choosing those fonts (#fonts), if it
+   has one; else #fonts uses menus */
+extern void (*fx_font_dialog)(void);
 extern boolean fx_active(void);
 extern void fx_debug_log(const char *);
 extern void fx_sync(void);

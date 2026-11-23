@@ -293,9 +293,376 @@ sdl_text_size(float px)
     sdl.dirty = TRUE;
 }
 
-/* the first readable TrueType monospace font we can find */
+/* where to find one of the game's own files (tiles.bmp, splash_art.png,
+   fonts/...): on Unix the game runs in its own folder; on Windows it
+   moves to the player's, so look beside the program. A full path stays
+   as it is. (The result lasts until a few more calls.) */
+static const char *
+sdl_gamefile(const char *name)
+{
+#ifdef _WIN32
+    static char buf[4][BUFSZ * 2];
+    static int k;
+    const char *base;
+
+    if (*name == '/' || *name == '\\' || (*name && name[1] == ':'))
+        return name;
+    if ((base = SDL_GetBasePath()) != 0) {
+        k = (k + 1) % SIZE(buf);
+        Snprintf(buf[k], sizeof buf[k], "%s%s", base, name);
+        return buf[k];
+    }
+#endif
+    return name;
+}
+
+/* ---- fonts: the window's own, or the player's (fx_font_*) ---------- */
+
+/* where a font comes from: a file (and the face in it, for a font
+   collection), and the style to fake on top when the family has no
+   file of its own for that style */
+struct sdl_fontsrc {
+    char path[BUFSZ];
+    int face;
+    int style; /* TTF_STYLE_BOLD, TTF_STYLE_ITALIC to add */
+};
+
+/* the sources, one per use: the five fx_font_* options, plus the screen
+   text in bold and the light floating words */
+enum sdl_src_id {
+    SRC_TEXT, SRC_MSG, SRC_FLOAT, SRC_TITLE, SRC_SCREEN,
+    SRC_SCREEN_BOLD, SRC_FLOAT_LIGHT, SDL_NSRC
+};
+static struct sdl_fontsrc sdl_fsrc[SDL_NSRC];
+static boolean sdl_fsrc_ok[SDL_NSRC];
+static char sdl_fapplied[FX_NFONT][FX_FONTSZ]; /* the options, as used */
+
+/* every font file on this computer, by its family and style names;
+   found the first time a font is asked for by name */
+struct sdl_fontfile {
+    char *family, *style, *path;
+    int face;
+    boolean bold, italic;
+    boolean plain; /* no other weight or width: "Regular", "Bold"... */
+    boolean mono;  /* every character the same width */
+};
+static struct sdl_fontfile *sdl_ff;
+static int sdl_nff, sdl_ffcap, sdl_scan_depth;
+static const char **sdl_fams; /* the families, sorted, once each */
+static int sdl_nfams;
+static const char **sdl_mono_fams; /* those with a monospace file */
+static int sdl_nmono;
+static boolean sdl_fonts_scanned;
+
+/* a font file, or one face of a font collection (.ttc) */
 static TTF_Font *
-sdl_open_font(float pt)
+sdl_open_face(const char *path, int face, float pt)
+{
+    SDL_PropertiesID p;
+    TTF_Font *f;
+
+    if (face == 0)
+        return TTF_OpenFont(path, pt);
+    if ((p = SDL_CreateProperties()) == 0)
+        return (TTF_Font *) 0;
+    (void) SDL_SetStringProperty(p, TTF_PROP_FONT_CREATE_FILENAME_STRING,
+                                 path);
+    (void) SDL_SetNumberProperty(p, TTF_PROP_FONT_CREATE_FACE_NUMBER, face);
+    (void) SDL_SetFloatProperty(p, TTF_PROP_FONT_CREATE_SIZE_FLOAT, pt);
+    f = TTF_OpenFontWithProperties(p);
+    SDL_DestroyProperties(p);
+    return f;
+}
+
+static TTF_Font *
+sdl_src_open(const struct sdl_fontsrc *s, float pt)
+{
+    TTF_Font *f = sdl_open_face(s->path, s->face, pt);
+
+    if (f && s->style)
+        TTF_SetFontStyle(f, s->style);
+    return f;
+}
+
+static void
+sdl_ff_add(const char *path, int face, TTF_Font *f)
+{
+    static const char *const plain[] = {
+        "Regular", "Book", "Roman", "Normal", "Bold", "Italic", "Oblique",
+        "Bold Italic", "Bold Oblique", "BoldItalic"
+    };
+    const char *fam = TTF_GetFontFamilyName(f), *sty = TTF_GetFontStyleName(f);
+    struct sdl_fontfile *e;
+    int i;
+
+    if (!fam || !*fam)
+        return;
+    if (!sty)
+        sty = "";
+    if (sdl_nff == sdl_ffcap) {
+        struct sdl_fontfile *more;
+
+        sdl_ffcap = sdl_ffcap ? 2 * sdl_ffcap : 256;
+        more = (struct sdl_fontfile *) alloc(sdl_ffcap * sizeof *more);
+        if (sdl_nff)
+            (void) memcpy(more, sdl_ff, sdl_nff * sizeof *more);
+        if (sdl_ff)
+            free(sdl_ff);
+        sdl_ff = more;
+    }
+    e = &sdl_ff[sdl_nff++];
+    e->family = dupstr(fam);
+    e->style = dupstr(sty);
+    e->path = dupstr(path);
+    e->face = face;
+    e->italic = (strstri(sty, "italic") || strstri(sty, "oblique"));
+    e->bold = (strstri(sty, "bold") && !strstri(sty, "semi")
+               && !strstri(sty, "demi") && !strstri(sty, "extra")
+               && !strstri(sty, "ultra"));
+    e->mono = TTF_FontIsFixedWidth(f);
+    e->plain = !*sty;
+    for (i = 0; i < SIZE(plain); i++)
+        if (!strcmpi(sty, plain[i]))
+            e->plain = TRUE;
+}
+
+static SDL_EnumerationResult SDLCALL
+sdl_scan_cb(void *ud, const char *dir, const char *fname)
+{
+    char path[BUFSZ];
+    const char *dot = strrchr(fname, '.');
+    SDL_PathInfo info;
+    TTF_Font *f;
+    int n, k;
+
+    if (*fname == '.')
+        return SDL_ENUM_CONTINUE;
+    Snprintf(path, sizeof path, "%s%s", dir, fname);
+    if (!SDL_GetPathInfo(path, &info))
+        return SDL_ENUM_CONTINUE;
+    if (info.type == SDL_PATHTYPE_DIRECTORY) {
+        if (sdl_scan_depth < 4) {
+            sdl_scan_depth++;
+            (void) SDL_EnumerateDirectory(path, sdl_scan_cb, ud);
+            sdl_scan_depth--;
+        }
+        return SDL_ENUM_CONTINUE;
+    }
+    if (!dot || (strcmpi(dot, ".ttf") && strcmpi(dot, ".otf")
+                 && strcmpi(dot, ".ttc") && strcmpi(dot, ".otc")))
+        return SDL_ENUM_CONTINUE;
+    if ((f = TTF_OpenFont(path, 12.0f)) == 0)
+        return SDL_ENUM_CONTINUE;
+    n = TTF_GetNumFontFaces(f);
+    sdl_ff_add(path, 0, f);
+    TTF_CloseFont(f);
+    for (k = 1; k < n && k < 32; k++)
+        if ((f = sdl_open_face(path, k, 12.0f)) != 0) {
+            sdl_ff_add(path, k, f);
+            TTF_CloseFont(f);
+        }
+    return SDL_ENUM_CONTINUE;
+}
+
+static void
+sdl_scan_dir(const char *dir)
+{
+    SDL_PathInfo info;
+
+    if (SDL_GetPathInfo(dir, &info) && info.type == SDL_PATHTYPE_DIRECTORY)
+        (void) SDL_EnumerateDirectory(dir, sdl_scan_cb, (void *) 0);
+}
+
+static int QSORTCALLBACK
+sdl_fam_cmp(const genericptr a, const genericptr b)
+{
+    return strcmpi(*(const char *const *) a, *(const char *const *) b);
+}
+
+/* look through the font folders, once */
+static void
+sdl_scan_fonts(void)
+{
+    char buf[BUFSZ];
+    const char *e;
+    int i, j;
+
+    if (sdl_fonts_scanned)
+        return;
+    sdl_fonts_scanned = TRUE;
+    sdl_scan_dir(sdl_gamefile("fonts"));
+#ifdef _WIN32
+    if ((e = getenv("WINDIR")) != 0) {
+        Snprintf(buf, sizeof buf, "%s\\Fonts", e);
+        sdl_scan_dir(buf);
+    }
+    if ((e = getenv("LOCALAPPDATA")) != 0) {
+        Snprintf(buf, sizeof buf, "%s\\Microsoft\\Windows\\Fonts", e);
+        sdl_scan_dir(buf);
+    }
+#else
+    sdl_scan_dir("/usr/share/fonts");
+    sdl_scan_dir("/usr/local/share/fonts");
+#ifdef __APPLE__
+    sdl_scan_dir("/System/Library/Fonts");
+    sdl_scan_dir("/Library/Fonts");
+#endif
+    if ((e = getenv("HOME")) != 0) {
+        Snprintf(buf, sizeof buf, "%s/.local/share/fonts", e);
+        sdl_scan_dir(buf);
+        Snprintf(buf, sizeof buf, "%s/.fonts", e);
+        sdl_scan_dir(buf);
+        Snprintf(buf, sizeof buf, "%s/Library/Fonts", e);
+        sdl_scan_dir(buf);
+    }
+#endif
+    /* the family names, each once, sorted; and those with a monospace
+       file, for the text (its columns line up by the character width) */
+    if (!sdl_nff)
+        return;
+    sdl_fams = (const char **) alloc(sdl_nff * sizeof *sdl_fams);
+    sdl_mono_fams = (const char **) alloc(sdl_nff * sizeof *sdl_fams);
+    for (i = 0; i < sdl_nff; i++)
+        sdl_fams[i] = sdl_ff[i].family;
+    qsort((genericptr_t) sdl_fams, sdl_nff, sizeof *sdl_fams, sdl_fam_cmp);
+    for (i = 0, j = 0; i < sdl_nff; i++)
+        if (!j || strcmpi(sdl_fams[j - 1], sdl_fams[i]))
+            sdl_fams[j++] = sdl_fams[i];
+    sdl_nfams = j;
+    for (i = 0; i < sdl_nfams; i++)
+        for (j = 0; j < sdl_nff; j++)
+            if (sdl_ff[j].mono && !strcmpi(sdl_ff[j].family, sdl_fams[i])) {
+                sdl_mono_fams[sdl_nmono++] = sdl_fams[i];
+                break;
+            }
+}
+
+/* the families to offer for fx_font_* number 'which': monospace ones
+   for the text, any for the rest */
+static int
+sdl_fam_list(int which, const char *const **names)
+{
+    sdl_scan_fonts();
+    if (which == FX_FONT_TEXT) {
+        *names = sdl_mono_fams;
+        return sdl_nmono;
+    }
+    *names = sdl_fams;
+    return sdl_nfams;
+}
+
+/* for the options (fx_font_lister) */
+static int
+sdl_font_lister(int which, const char *const **names)
+{
+    return sdl_fam_list(which, names);
+}
+
+/* "Name", "Name bold", "Name italic", "Name bold italic", or a font
+   file (then a style is faked): where to find it; FALSE if nowhere.
+   'addstyle' asks for more (TTF_STYLE_BOLD for the bold of a font). */
+static boolean
+sdl_font_resolve(const char *spec, int addstyle, struct sdl_fontsrc *out)
+{
+    char name[BUFSZ], *sp;
+    const char *dot;
+    int want = addstyle, i, best = -1, score, bestscore = -1;
+
+    Snprintf(name, sizeof name, "%s", spec);
+    (void) mungspaces(name);
+    /* style words at the end */
+    while ((sp = strrchr(name, ' ')) != 0) {
+        if (!strcmpi(sp + 1, "bold"))
+            want |= TTF_STYLE_BOLD;
+        else if (!strcmpi(sp + 1, "italic") || !strcmpi(sp + 1, "oblique"))
+            want |= TTF_STYLE_ITALIC;
+        else if (strcmpi(sp + 1, "regular"))
+            break;
+        *sp = '\0';
+    }
+    if (!*name)
+        return FALSE;
+    dot = strrchr(name, '.');
+    if (strchr(name, '/') || strchr(name, '\\')
+        || (dot && (!strcmpi(dot, ".ttf") || !strcmpi(dot, ".otf")
+                    || !strcmpi(dot, ".ttc")))) {
+        const char *path = sdl_gamefile(name);
+        TTF_Font *f = TTF_OpenFont(path, 12.0f);
+
+        if (!f)
+            return FALSE;
+        TTF_CloseFont(f);
+        Snprintf(out->path, sizeof out->path, "%s", path);
+        out->face = 0;
+        out->style = want;
+        return TRUE;
+    }
+    sdl_scan_fonts();
+    /* the family's file that has the most of the style asked for (none
+       with more), plain ones first: "Bold" before "Bold Condensed" */
+    for (i = 0; i < sdl_nff; i++) {
+        const struct sdl_fontfile *e = &sdl_ff[i];
+
+        if (strcmpi(e->family, name))
+            continue;
+        if ((e->bold && !(want & TTF_STYLE_BOLD))
+            || (e->italic && !(want & TTF_STYLE_ITALIC)))
+            continue;
+        score = (e->bold ? 4 : 0) + (e->italic ? 4 : 0) + (e->plain ? 2 : 0);
+        if (score > bestscore)
+            best = i, bestscore = score;
+    }
+    if (best < 0)
+        return FALSE;
+    Snprintf(out->path, sizeof out->path, "%s", sdl_ff[best].path);
+    out->face = sdl_ff[best].face;
+    out->style = want & ~((sdl_ff[best].bold ? TTF_STYLE_BOLD : 0)
+                          | (sdl_ff[best].italic ? TTF_STYLE_ITALIC : 0));
+    return TRUE;
+}
+
+/* the bold that goes with a font file, beside it, if there is one:
+   consola.ttf, consolab.ttf; DejaVuSansMono.ttf, DejaVuSansMono-Bold.ttf;
+   LiberationMono-Regular.ttf, LiberationMono-Bold.ttf */
+static boolean
+sdl_bold_beside(const char *path, struct sdl_fontsrc *out)
+{
+    static const char *const ends[] = { "-Bold", "b", "bd", "Bold", "-B" };
+    char base[BUFSZ], ext[16], try[BUFSZ + 32];
+    char *dot, *slash, *cut;
+    SDL_PathInfo info;
+    int i;
+
+    Snprintf(base, sizeof base, "%s", path);
+    dot = strrchr(base, '.');
+    slash = strrchr(base, '/');
+    if (!slash || strrchr(base, '\\') > slash)
+        slash = strrchr(base, '\\');
+    if (!dot || (slash && dot < slash) || strlen(dot) >= sizeof ext)
+        return FALSE;
+    Strcpy(ext, dot);
+    *dot = '\0';
+    /* "-Regular" and "-R" are replaced, not added to */
+    if ((cut = strrchr(base, '-')) != 0 && (!slash || cut > slash)
+        && (!strcmpi(cut, "-Regular") || !strcmp(cut, "-R")))
+        *cut = '\0';
+    for (i = 0; i < SIZE(ends); i++) {
+        Snprintf(try, sizeof try, "%s%s%s", base, ends[i], ext);
+        if (strcmp(try, path) && SDL_GetPathInfo(try, &info)
+            && info.type == SDL_PATHTYPE_FILE) {
+            Snprintf(out->path, sizeof out->path, "%s", try);
+            out->face = 0;
+            out->style = 0;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* the window's own text font: $NETHACK_FONT, then the first readable
+   TrueType monospace font we can find */
+static boolean
+sdl_default_text(struct sdl_fontsrc *out)
 {
     static const char *const tries[] = {
         "fonts/DejaVuSansMono.ttf",
@@ -313,17 +680,91 @@ sdl_open_font(float pt)
     TTF_Font *f;
     int i;
 
-    if (env && *env && (f = TTF_OpenFont(env, pt)) != 0) {
-        Snprintf(sdl.fontpath, sizeof sdl.fontpath, "%s", env);
-        return f;
+    out->face = 0;
+    out->style = 0;
+    if (env && *env && (f = TTF_OpenFont(env, 12.0f)) != 0) {
+        TTF_CloseFont(f);
+        Snprintf(out->path, sizeof out->path, "%s", env);
+        return TRUE;
     }
-    for (i = 0; i < SIZE(tries); i++)
-        if ((f = TTF_OpenFont(tries[i], pt)) != 0) {
-            Snprintf(sdl.fontpath, sizeof sdl.fontpath, "%s", tries[i]);
-            return f;
+    for (i = 0; i < SIZE(tries); i++) {
+        const char *path = sdl_gamefile(tries[i]);
+
+        if ((f = TTF_OpenFont(path, 12.0f)) != 0) {
+            TTF_CloseFont(f);
+            Snprintf(out->path, sizeof out->path, "%s", path);
+            return TRUE;
         }
-    return (TTF_Font *) 0;
+    }
+    return FALSE;
 }
+
+/* work out every source from the fx_font_* options: what the player
+   named, where it can be found; the window's own look for the rest */
+static void
+sdl_fonts_resolve(void)
+{
+    struct sdl_fontsrc bold;
+    boolean bold_ok;
+    int i;
+
+    (void) memset(&bold, 0, sizeof bold);
+    for (i = 0; i < FX_NFONT; i++)
+        Strcpy(sdl_fapplied[i], iflags.fx_font[i]);
+    for (i = 0; i < SDL_NSRC; i++)
+        sdl_fsrc_ok[i] = FALSE;
+#define FXF(n) iflags.fx_font[n]
+#define TRY(src, n, add) \
+    (*FXF(n) && sdl_font_resolve(FXF(n), (add), &sdl_fsrc[src]))
+    /* text: the player's, or the window's monospace one */
+    sdl_fsrc_ok[SRC_TEXT] = TRY(SRC_TEXT, FX_FONT_TEXT, 0)
+                            || sdl_default_text(&sdl_fsrc[SRC_TEXT]);
+    if (!sdl_fsrc_ok[SRC_TEXT])
+        return;
+    Snprintf(sdl.fontpath, sizeof sdl.fontpath, "%s",
+             sdl_fsrc[SRC_TEXT].path);
+    /* that, in bold: its family's real bold if it has one (a faked one
+       is heavy), for messages and numbers on the map */
+    bold_ok = (*FXF(FX_FONT_TEXT)
+               && sdl_font_resolve(FXF(FX_FONT_TEXT), TTF_STYLE_BOLD, &bold))
+              || (sdl_fsrc[SRC_TEXT].face == 0
+                  && sdl_bold_beside(sdl_fsrc[SRC_TEXT].path, &bold));
+    if (!bold_ok) {
+        bold = sdl_fsrc[SRC_TEXT];
+        bold.style |= TTF_STYLE_BOLD;
+    }
+    if (!(sdl_fsrc_ok[SRC_MSG] = TRY(SRC_MSG, FX_FONT_MESSAGE, 0)))
+        sdl_fsrc[SRC_MSG] = bold, sdl_fsrc_ok[SRC_MSG] = TRUE;
+    if (TRY(SRC_FLOAT, FX_FONT_FLOAT, 0)) {
+        sdl_fsrc_ok[SRC_FLOAT] = sdl_fsrc_ok[SRC_FLOAT_LIGHT] = TRUE;
+        sdl_fsrc[SRC_FLOAT_LIGHT] = sdl_fsrc[SRC_FLOAT];
+    } else {
+        sdl_fsrc[SRC_FLOAT] = bold;
+        sdl_fsrc[SRC_FLOAT_LIGHT] = sdl_fsrc[SRC_TEXT];
+        sdl_fsrc_ok[SRC_FLOAT] = sdl_fsrc_ok[SRC_FLOAT_LIGHT] = TRUE;
+    }
+    /* the screens keep their own serif and sans unless named */
+    sdl_fsrc_ok[SRC_TITLE] = TRY(SRC_TITLE, FX_FONT_TITLE, 0);
+    if ((sdl_fsrc_ok[SRC_SCREEN] = TRY(SRC_SCREEN, FX_FONT_SCREEN, 0)) != 0)
+        sdl_fsrc_ok[SRC_SCREEN_BOLD]
+            = TRY(SRC_SCREEN_BOLD, FX_FONT_SCREEN, TTF_STYLE_BOLD);
+#undef TRY
+#undef FXF
+}
+
+/* have the fx_font_* options changed since the fonts were opened? */
+static boolean
+sdl_fonts_changed(void)
+{
+    int i;
+
+    for (i = 0; i < FX_NFONT; i++)
+        if (strcmp(sdl_fapplied[i], iflags.fx_font[i]))
+            return TRUE;
+    return FALSE;
+}
+
+static void sdl_fonts_reload(void);
 
 /* ---- keys ---------------------------------------------------------- */
 
@@ -365,6 +806,7 @@ enum sdl_bar_kind {
     BAR_BORDER,    /* fx_bar_border on or off */
     BAR_INVEN,     /* the inventory panel shown or hidden */
     BAR_ACTIONS,   /* the action buttons shown or hidden */
+    BAR_FONTS,     /* the Fonts window */
     BAR_SEP
 };
 
@@ -398,6 +840,7 @@ static const struct sdl_bar_item bar_view[] = {
     BSEP,
     { "Larger text", "Alt+=", BAR_TEXT, NULL, 1 },
     { "Smaller text", "Alt+-", BAR_TEXT, NULL, -1 },
+    { "Fonts...", "#fonts", BAR_FONTS, NULL, 0 },
     BSEP,
     { "Shade: light", "", BAR_SHADE, NULL, 0 },
     { "Shade: medium", "", BAR_SHADE, NULL, 1 },
@@ -510,6 +953,9 @@ static const struct sdl_bar_topic {
 static int bar_x[BAR_NTOPIC + 1]; /* topic left edges, and the end */
 static int bar_inv[2];            /* the inventory toggle's left, right */
 static void sdl_toggle_inven(void);
+
+static void sdl_thick_line(float, float, float, float, float, fxv_color);
+static void sdl_fonts_dialog(void);
 
 /* is this item a setting that's on now? (it gets a tick) */
 static boolean
@@ -667,8 +1113,18 @@ sdl_draw_bar(void)
             if (i == sdl.bar_item)
                 sdl_fill(bx + 4, iy, bw - 8, sdl.lh, 70, 92, 140, 150);
             /* settings show which one is on */
-            if (sdl_bar_checked(it))
-                (void) sdl_text(bx + 10, iy, "\xE2\x9C\x93", hi); /* tick */
+            if (sdl_bar_checked(it)) {
+                /* a tick, drawn: not every monospace font has U+2713
+                   (Windows' Consolas doesn't) */
+                float cw = (float) sdl.cw, t = max(1.5f, cw * 0.16f);
+                float x0 = (float) bx + 10 + cw * 0.2f,
+                      y0 = (float) iy + sdl.lh * 0.55f;
+                fxv_color c = FXV_RGB(hi.r, hi.g, hi.b);
+
+                sdl_thick_line(x0, y0, x0 + cw * 0.4f, y0 + cw * 0.4f, t, c);
+                sdl_thick_line(x0 + cw * 0.4f, y0 + cw * 0.4f,
+                               x0 + cw * 1.2f, y0 - cw * 0.6f, t, c);
+            }
             (void) sdl_text(bx + 12 + 2 * sdl.cw, iy, it->label, txt);
             {
                 char level[16];
@@ -749,6 +1205,9 @@ sdl_bar_do(const struct sdl_bar_item *it)
                         " (set it with O).");
         else
             sdl_toggle_inven();
+        break;
+    case BAR_FONTS:
+        sdl_fonts_dialog();
         break;
     case BAR_ACTIONS: /* (kept in nethackmodern.rc at once) */
         iflags.fx_action_buttons = !iflags.fx_action_buttons;
@@ -1368,6 +1827,8 @@ sdl_zoom_for(int px)
 static void
 sdl_sync_options(void)
 {
+    if (sdl_fonts_changed())
+        sdl_fonts_reload();
     if (iflags.fx_text_size != sdl.text_set) {
         sdl.text_set = iflags.fx_text_size;
         sdl_text_size(sdl.text_set ? (float) sdl.text_set
@@ -1446,10 +1907,11 @@ sdl_fx_font(int which, int ts)
         for (i = 0; i < 3; i++) {
             if (sdl.fxfont[i])
                 TTF_CloseFont(sdl.fxfont[i]);
-            sdl.fxfont[i] = TTF_OpenFont(sdl.fontpath,
-                                         max(8.0f, scale[i] * ts));
-            if (sdl.fxfont[i] && i != 2)
-                TTF_SetFontStyle(sdl.fxfont[i], TTF_STYLE_BOLD);
+            /* 0 and 1 bold, 2 light (as the window has them), or all
+               as the player chose (fx_font_float) */
+            sdl.fxfont[i] = sdl_src_open(
+                &sdl_fsrc[i == 2 ? SRC_FLOAT_LIGHT : SRC_FLOAT],
+                max(8.0f, scale[i] * ts));
         }
         sdl.fx_ts = ts;
     }
@@ -2386,7 +2848,8 @@ sdl_draw_status(void)
                                            "Ch" };
     const SDL_Color text = sdl_col(FXV_RGB(222, 226, 233)),
                     dim = sdl_col(FXV_RGB(138, 146, 160));
-    int w, h, x = 12, y1, y2, rowh = sdl_rowh(), i, sw, colw, top;
+    int w, h, x = 12, y1, y2, rowh = sdl_rowh(), i, sw, top;
+    int col0, col1, sgap, statw; /* the stats' columns, and between them */
     int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
     int arrow[6], idw, barw;
     boolean show_eq;
@@ -2410,7 +2873,14 @@ sdl_draw_status(void)
              sdl_leveldesc);
     idw = max(sdl_text_w(sdl_title), sdl_text_w(where));
     barw = max(170, sdl.cw * 22);
-    colw = sdl.cw * 11; /* room for "St 18/04" in a monospace font */
+    /* the stats' columns hold what they show and no more: a name, a
+       value (only Strength can be like 18/50; the rest are two digits),
+       and room for the arrow after a change */
+    sw = sdl_text_w("Wi ");
+    col0 = sw + sdl_text_w("18/**") + 5 + sdl.cw;
+    col1 = sw + sdl_text_w("25") + 5 + sdl.cw;
+    sgap = sdl.cw;
+    statw = col0 + 2 * col1 + 2 * sgap;
     {
         int acw, eqw = 6 * (rowh - 3) + 5 * 4 + 18, over, take, w1, w2;
 
@@ -2432,13 +2902,18 @@ sdl_draw_status(void)
             w2 += sdl_text_w(buf);
         }
         acw = max(w1, w2);
-        over = (12 + idw + 18 + barw + 18 + 3 * colw + 10 + acw + 18 + eqw)
+        over = (12 + idw + 18 + barw + 18 + statw + 10 + acw + 18 + eqw)
                - w;
         take = min(max(over, 0), barw - max(110, sdl.cw * 12));
         barw -= take, over -= take;
-        take = min(max(over, 0), 3 * (colw - sdl.cw * 10));
-        colw -= (take + 2) / 3, over -= take;
-        take = min(max(over, 0), idw - max(90, sdl.cw * 10));
+        take = min(max(over, 0), 2 * (sgap - 4));
+        sgap -= (take + 1) / 2, statw -= 2 * ((take + 1) / 2), over -= take;
+        /* (never narrower than "Law Dlvl 1": the level is always shown
+           whole, the alignment at least as three letters) */
+        Snprintf(buf, sizeof buf, "Law %s", sdl_leveldesc);
+        take = min(max(over, 0),
+                   idw - min(idw, max(max(90, sdl.cw * 10),
+                                      sdl_text_w(buf))));
         idw -= take, over -= take;
         show_eq = (over <= 0);
     }
@@ -2446,7 +2921,30 @@ sdl_draw_status(void)
     /* identity: title, then alignment and where */
     sdl_fit(buf, sizeof buf, sdl_title, idw);
     (void) sdl_text(x, y1, buf, sdl_gold);
-    sdl_fit(buf, sizeof buf, where, idw);
+    {
+        /* where: if it's too wide, it closes up, then the alignment goes
+           to three letters ("Law Dlvl 1", which the column always has
+           room for); only on a tiny window is it left out */
+        const char *al = (u.ualign.type == A_CHAOTIC) ? "Chaotic"
+                         : (u.ualign.type == A_NEUTRAL) ? "Neutral"
+                                                        : "Lawful";
+        char alt[BUFSZ];
+        int k;
+
+        for (k = 0; k < 4; k++) {
+            if (k == 0)
+                Strcpy(alt, where);
+            else if (k == 1)
+                Snprintf(alt, sizeof alt, "%s - %s", al, sdl_leveldesc);
+            else if (k == 2)
+                Snprintf(alt, sizeof alt, "%.3s %s", al, sdl_leveldesc);
+            else
+                Strcpy(alt, sdl_leveldesc);
+            if (sdl_text_w(alt) <= idw)
+                break;
+        }
+        sdl_fit(buf, sizeof buf, alt, idw);
+    }
     (void) sdl_text(x, y2, buf, dim);
     x += idw + 18;
     sdl_rule(x - 9, y1, 2 * rowh - 2);
@@ -2465,10 +2963,11 @@ sdl_draw_status(void)
 
     /* the six stats, two rows of three, with an arrow for 50 turns after
        one changes (fxview.c) */
-    sw = sdl_text_w("Wi ");
     fxv_stat_arrows(arrow);
     for (i = 0; i < 6; i++) {
-        int sx = x + (i % 3) * colw, sy = (i < 3) ? y1 : y2, v = ACURR(i);
+        int sx = x + (i % 3 == 0 ? 0 : i % 3 == 1 ? col0 + sgap
+                                       : col0 + col1 + 2 * sgap),
+            sy = (i < 3) ? y1 : y2, v = ACURR(i);
 
         (void) sdl_text(sx, sy, statnm[i], dim);
         if (i == A_STR && v > 18) {
@@ -2489,7 +2988,7 @@ sdl_draw_status(void)
                       arrow[i] > 0 ? FXV_RGB(104, 210, 98)
                                    : FXV_RGB(235, 84, 76));
     }
-    x += 3 * colw + 10;
+    x += statw + 10;
     sdl_rule(x - 9, y1, 2 * rowh - 2);
 
     /* armour class and level; gold and the turn */
@@ -2921,6 +3420,7 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
 #define SDL_FACE_UI 1
 #define SDL_FACE_UI_BOLD 2
 #define SDL_NFACE 3
+static boolean sdl_face_tried[SDL_NFACE]; /* (cleared when fonts change) */
 
 static TTF_Font *
 sdl_face(int which, int px)
@@ -2941,20 +3441,25 @@ sdl_face(int which, int px)
         "/usr/share/fonts/truetype/ubuntu/", "/System/Library/Fonts/",
         "C:\\Windows\\Fonts\\",
     };
-    static boolean tried[SDL_NFACE];
+    static const int src_of[SDL_NFACE] = {
+        SRC_TITLE, SRC_SCREEN, SRC_SCREEN_BOLD
+    };
     TTF_Font *f;
 
     if (which < 0 || which >= SDL_NFACE)
         which = SDL_FACE_UI;
-    if (!sdl.face[which] && !tried[which]) {
+    if (!sdl.face[which] && !sdl_face_tried[which]) {
         char path[BUFSZ];
         int i, j;
 
-        tried[which] = TRUE;
+        sdl_face_tried[which] = TRUE;
+        /* the player's (fx_font_title, fx_font_screen) */
+        if (sdl_fsrc_ok[src_of[which]])
+            sdl.face[which] = sdl_src_open(&sdl_fsrc[src_of[which]], 20.0f);
         for (i = 0; i < SIZE(names[0]) && !sdl.face[which]; i++)
             for (j = 0; j < SIZE(dirs) && !sdl.face[which]; j++) {
                 Snprintf(path, sizeof path, "%s%s", dirs[j], names[which][i]);
-                sdl.face[which] = TTF_OpenFont(path, 20.0f);
+                sdl.face[which] = TTF_OpenFont(sdl_gamefile(path), 20.0f);
             }
         if (!sdl.face[which] && sdl.fontpath[0]
             && (sdl.face[which] = TTF_OpenFont(sdl.fontpath, 20.0f)) != 0
@@ -2965,6 +3470,38 @@ sdl_face(int which, int px)
     (void) TTF_SetFontSize(f, (float) max(8, px));
     TTF_SetFontKerning(f, false); /* (it set "T" apart from what follows) */
     return f;
+}
+
+/* (re)open every font from the fx_font_* options: at the start, and
+   whenever the player changes one */
+static void
+sdl_fonts_reload(void)
+{
+    TTF_Font *f;
+    int i;
+
+    sdl_fonts_resolve();
+    if (!sdl_fsrc_ok[SRC_TEXT])
+        return; /* (no font at all: the caller says so) */
+    if ((f = sdl_src_open(&sdl_fsrc[SRC_TEXT], sdl.text_px)) != 0) {
+        if (sdl.font)
+            TTF_CloseFont(sdl.font);
+        sdl.font = f;
+    }
+    if (sdl.msgfont)
+        TTF_CloseFont(sdl.msgfont), sdl.msgfont = 0;
+    sdl.msgfont = sdl_src_open(&sdl_fsrc[SRC_MSG], sdl.text_px);
+    for (i = 0; i < 3; i++)
+        if (sdl.fxfont[i])
+            TTF_CloseFont(sdl.fxfont[i]), sdl.fxfont[i] = 0;
+    sdl.fx_ts = 0; /* sdl_fx_font() opens them again */
+    for (i = 0; i < SDL_NFACE; i++) {
+        if (sdl.face[i])
+            TTF_CloseFont(sdl.face[i]), sdl.face[i] = 0;
+        sdl_face_tried[i] = FALSE;
+    }
+    sdl_text_size(sdl.text_px); /* character width, line height */
+    sdl.dirty = TRUE;
 }
 
 /* a line in one of those fonts: 'how' 0 from x, 1 centred on x, 2 up
@@ -3030,7 +3567,7 @@ sdl_backdrop(int w, int h, int dim)
         SDL_Surface *s;
 
         tried = TRUE;
-        if ((s = SDL_LoadPNG("splash_art.png")) != 0) {
+        if ((s = SDL_LoadPNG(sdl_gamefile("splash_art.png"))) != 0) {
             sdl.art = SDL_CreateTextureFromSurface(sdl.ren, s);
             sdl.art_w = (float) s->w, sdl.art_h = (float) s->h;
             sdl.art_px = SDL_ConvertSurface(s, SDL_PIXELFORMAT_XRGB8888);
@@ -3102,6 +3639,535 @@ sdl_button(const int r[4], const char *label, boolean primary, boolean hot,
     (void) sdl_face_text(f, label, (r[0] + r[2]) / 2,
                          (r[1] + r[3]) / 2 - TTF_GetFontHeight(f) / 2, 1,
                          ink, 0);
+}
+
+/* ---- the Fonts window (View > Fonts..., #fonts) --------------------- */
+
+/* A row for each fx_font_* option: what it's for, a drop-down of the
+   fonts on this computer (Auto first: the window's own), a drop-down of
+   styles, and a line of text in the font as it is now. A choice takes
+   at once, and is kept like the other fx_ options. */
+
+#define FD_NCTL (2 * FX_NFONT + 1) /* two drop-downs a row, then Done */
+#define FD_DONE (2 * FX_NFONT)
+#define FD_NSTYLE 4
+
+static const char *const sdl_fd_what[FX_NFONT] = {
+    "Text", "Messages on the map", "Floating numbers", "Screen titles",
+    "Screen text"
+};
+static const char *const sdl_fd_why[FX_NFONT] = {
+    "menus, status, the messages list", "what just happened, over the map",
+    "damage, healing, level ups", "title, character and end screens",
+    "the rest of those screens"
+};
+static const char *const sdl_fd_styles[FD_NSTYLE] = {
+    "Regular", "Bold", "Italic", "Bold italic"
+};
+
+static struct {
+    int focus;           /* the control with the keyboard, FD_* */
+    int hot;             /* the control under the mouse, -1 none */
+    int open;            /* the control whose list is open, -1 none */
+    int top, sel, nshow; /* that list: first shown, highlighted, rows */
+    int list_hot;        /* its item under the mouse, -1 none */
+    int ctl[FD_NCTL][4]; /* where each control is, as last drawn */
+    int list[4];         /* where the open list is */
+    int ih;              /* a list item's height */
+    boolean done;
+} fd;
+
+/* an option's value as a family (1.., or 0 for auto, -1 for a name or
+   file not among the fonts found, put in 'other') and a style */
+static void
+sdl_fd_parse(int row, int *fam, int *style, char *other, size_t osz)
+{
+    char name[FX_FONTSZ], *sp;
+    const char *const *fams;
+    int i, nf;
+
+    *fam = 0, *style = 0;
+    other[0] = '\0';
+    if (!iflags.fx_font[row][0])
+        return;
+    Strcpy(name, iflags.fx_font[row]);
+    while ((sp = strrchr(name, ' ')) != 0) {
+        if (!strcmpi(sp + 1, "bold"))
+            *style |= 1;
+        else if (!strcmpi(sp + 1, "italic") || !strcmpi(sp + 1, "oblique"))
+            *style |= 2;
+        else if (strcmpi(sp + 1, "regular"))
+            break;
+        *sp = '\0';
+    }
+    *fam = -1;
+    nf = sdl_fam_list(row, &fams);
+    for (i = 0; i < nf; i++)
+        if (!strcmpi(fams[i], name)) {
+            *fam = i + 1;
+            return;
+        }
+    Snprintf(other, osz, "%s", name);
+}
+
+/* a row's family number 'fam' (1..) as a name */
+static const char *
+sdl_fd_famname(int row, int fam)
+{
+    const char *const *fams;
+    int nf = sdl_fam_list(row, &fams);
+
+    return (fam > 0 && fam <= nf) ? fams[fam - 1] : "";
+}
+
+/* set a row's option from a family and style, and use it */
+static void
+sdl_fd_set(int row, int fam, int style, const char *other)
+{
+    char val[FX_FONTSZ];
+    const char *name = (fam > 0) ? sdl_fd_famname(row, fam) : other;
+
+    if (fam == 0 || !name || !*name) {
+        val[0] = '\0';
+    } else {
+        Snprintf(val, sizeof val, "%s%s", name,
+                 style == 1 ? " bold" : style == 2 ? " italic"
+                 : style == 3 ? " bold italic" : "");
+    }
+    Strcpy(iflags.fx_font[row], val);
+    if (sdl_fonts_changed())
+        sdl_fonts_reload();
+    fx_options_remember(); /* (kept in nethackmodern.rc) */
+}
+
+static int
+sdl_fd_nitems(int ctl)
+{
+    const char *const *fams;
+
+    return (ctl & 1) ? FD_NSTYLE : sdl_fam_list(ctl / 2, &fams) + 1;
+}
+
+static const char *
+sdl_fd_item(int ctl, int i)
+{
+    if (ctl & 1)
+        return sdl_fd_styles[i];
+    return i ? sdl_fd_famname(ctl / 2, i) : "Auto (the window's own)";
+}
+
+/* the item a control's value is, in its list */
+static int
+sdl_fd_current(int ctl)
+{
+    char other[FX_FONTSZ];
+    int fam, style;
+
+    sdl_fd_parse(ctl / 2, &fam, &style, other, sizeof other);
+    return (ctl & 1) ? style : max(0, fam);
+}
+
+/* open a control's list, its value highlighted and in view */
+static void
+sdl_fd_open(int ctl)
+{
+    char other[FX_FONTSZ];
+    int fam, style;
+
+    if (ctl == FD_DONE) {
+        fd.done = TRUE;
+        return;
+    }
+    if (ctl & 1) { /* the style: only once there's a font to style */
+        sdl_fd_parse(ctl / 2, &fam, &style, other, sizeof other);
+        if (fam == 0)
+            return;
+    }
+    fd.open = ctl;
+    fd.sel = sdl_fd_current(ctl);
+    fd.top = -1; /* placed when drawn, once the list's size is known */
+    fd.list_hot = -1;
+}
+
+/* the open list's item 'i' was chosen */
+static void
+sdl_fd_choose(int i)
+{
+    char other[FX_FONTSZ];
+    int row = fd.open / 2, fam, style;
+
+    sdl_fd_parse(row, &fam, &style, other, sizeof other);
+    if (fd.open & 1)
+        style = i;
+    else
+        fam = i;
+    sdl_fd_set(row, fam, style, other);
+    fd.open = -1;
+}
+
+/* the font a row stands for, at 'px', to show it in */
+static TTF_Font *
+sdl_fd_sample_font(int row, int px, TTF_Font **opened)
+{
+    static const int src[3] = { SRC_TEXT, SRC_MSG, SRC_FLOAT };
+
+    *opened = (TTF_Font *) 0;
+    if (row == FX_FONT_TITLE)
+        return sdl_face(SDL_FACE_TITLE, px);
+    if (row == FX_FONT_SCREEN)
+        return sdl_face(SDL_FACE_UI, px);
+    if (sdl_fsrc_ok[src[row]])
+        *opened = sdl_src_open(&sdl_fsrc[src[row]], (float) px);
+    return *opened ? *opened : sdl.font;
+}
+
+static void
+sdl_fd_draw(void)
+{
+    const fxv_color gold = FXV_RGB(229, 186, 96), ink = FXV_RGB(222, 226, 233),
+                    dim = FXV_RGB(138, 146, 160),
+                    edge = FXV_RGB(52, 58, 70);
+    int w, h, pw, ph, px0, py0, y, row, c, i;
+    double s;
+    TTF_Font *f;
+
+#define FD(v) ((int) ((v) * s + 0.5))
+    SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    s = fxv_scr_scale(w, h);
+    sdl_draw_screen();
+    sdl_fill(0, 0, w, h, 0, 0, 0, 150);
+    pw = min(w - 24, FD(900));
+    ph = min(h - 24, FD(118) + FX_NFONT * FD(80) + FD(70));
+    px0 = (w - pw) / 2, py0 = (h - ph) / 2;
+    {
+        int r[4];
+
+        r[0] = px0, r[1] = py0, r[2] = px0 + pw, r[3] = py0 + ph;
+        sdl_edged(r, FXV_RGB(20, 23, 29), edge, 1);
+    }
+    f = sdl_face(SDL_FACE_TITLE, max(14, FD(34)));
+    (void) sdl_face_text(f, "Fonts", px0 + FD(28), py0 + FD(18), 0, gold, 0);
+    f = sdl_face(SDL_FACE_UI, max(10, FD(14)));
+    (void) sdl_face_text(f, "Each takes at once. Auto is the window's own.",
+                         px0 + FD(30), py0 + FD(68), 0, dim, 0);
+    y = py0 + FD(104);
+    for (row = 0; row < FX_NFONT; row++, y += FD(80)) {
+        char other[FX_FONTSZ];
+        int fam, style, bx = px0 + FD(270), bw, sw2 = FD(160);
+        TTF_Font *sf, *opened;
+
+        sdl_fd_parse(row, &fam, &style, other, sizeof other);
+        f = sdl_face(SDL_FACE_UI_BOLD, max(10, FD(16)));
+        (void) sdl_face_text(f, sdl_fd_what[row], px0 + FD(30), y + FD(4), 0,
+                             ink, 0);
+        f = sdl_face(SDL_FACE_UI, max(9, FD(13)));
+        (void) sdl_face_text(f, sdl_fd_why[row], px0 + FD(30), y + FD(28), 0,
+                             dim, 0);
+        bw = px0 + pw - FD(30) - sw2 - FD(12) - bx;
+        for (i = 0; i < 2; i++) {
+            int *r = fd.ctl[2 * row + i];
+            const char *label;
+            boolean on, off;
+
+            c = 2 * row + i;
+            r[0] = i ? bx + bw + FD(12) : bx;
+            r[1] = y;
+            r[2] = r[0] + (i ? sw2 : bw);
+            r[3] = y + FD(34);
+            off = (i == 1 && fam == 0);
+            on = (fd.open == c || fd.focus == c);
+            label = i ? (off ? "-" : sdl_fd_styles[style])
+                      : fam > 0 ? sdl_fd_famname(row, fam)
+                      : fam < 0 ? other : "Auto";
+            sdl_edged(r, (fd.hot == c && !off) ? FXV_RGB(33, 37, 46)
+                                               : FXV_RGB(24, 27, 33),
+                      on ? gold : edge, on ? max(2, FD(2)) : 1);
+            f = sdl_face(SDL_FACE_UI, max(10, FD(16)));
+            (void) sdl_face_text(f, label, r[0] + FD(12),
+                                 (r[1] + r[3]) / 2
+                                     - TTF_GetFontHeight(f) / 2,
+                                 0, off ? edge : ink, 0);
+            if (!off) { /* the drop-down's arrow */
+                float ax = (float) r[2] - FD(18), ay = (float) (r[1] + r[3]) / 2;
+
+                sdl_thick_line(ax - FD(5), ay - FD(2), ax, ay + FD(3),
+                               max(1.5f, (float) s * 1.5f), dim);
+                sdl_thick_line(ax, ay + FD(3), ax + FD(5), ay - FD(2),
+                               max(1.5f, (float) s * 1.5f), dim);
+            }
+        }
+        /* how it looks now */
+        sf = sdl_fd_sample_font(row, max(10, FD(row == FX_FONT_TITLE ? 24 : 18)),
+                            &opened);
+        (void) sdl_face_text(sf, row == FX_FONT_FLOAT ? "-12  +8  Level 3!"
+                                 : "The quick brown fox jumps over 1234",
+                             bx, y + FD(40), 0,
+                             row == FX_FONT_FLOAT ? FXV_RGB(255, 120, 100)
+                                                  : ink,
+                             row == FX_FONT_MESSAGE ? 1 : 0);
+        if (opened)
+            TTF_CloseFont(opened);
+    }
+    {
+        int *r = fd.ctl[FD_DONE];
+
+        r[2] = px0 + pw - FD(30), r[0] = r[2] - FD(150);
+        r[3] = py0 + ph - FD(20), r[1] = r[3] - FD(44);
+        sdl_button(r, "Done", TRUE, fd.hot == FD_DONE,
+                   fd.focus == FD_DONE, FALSE, TRUE, s);
+    }
+    /* the open list, over everything */
+    if (fd.open >= 0) {
+        int *cr = fd.ctl[fd.open], n = sdl_fd_nitems(fd.open), cur, lw, lh2;
+
+        fd.ih = max(sdl.lh, FD(28));
+        lw = max(cr[2] - cr[0], fd.open & 1 ? 0 : FD(320));
+        fd.nshow = min(n, max(3, (h - cr[3] - FD(12)) / fd.ih));
+        fd.nshow = min(fd.nshow, 14);
+        if (fd.top < 0)
+            fd.top = fd.sel - fd.nshow / 2;
+        if (fd.sel < fd.top)
+            fd.top = fd.sel;
+        if (fd.sel >= fd.top + fd.nshow)
+            fd.top = fd.sel - fd.nshow + 1;
+        fd.top = max(0, min(fd.top, n - fd.nshow));
+        lh2 = fd.nshow * fd.ih + FD(8);
+        fd.list[0] = min(cr[0], w - lw - 4), fd.list[2] = fd.list[0] + lw;
+        fd.list[1] = cr[3] + FD(2);
+        if (fd.list[1] + lh2 > h - 4) /* no room below: above it */
+            fd.list[1] = max(4, cr[1] - FD(2) - lh2);
+        fd.list[3] = fd.list[1] + lh2;
+        sdl_edged(fd.list, FXV_RGB(16, 18, 23), gold, 1);
+        cur = sdl_fd_current(fd.open);
+        f = sdl_face(SDL_FACE_UI, max(10, FD(16)));
+        for (i = 0; i < fd.nshow; i++) {
+            int it = fd.top + i, iy = fd.list[1] + FD(4) + i * fd.ih;
+
+            if (it == fd.sel || it == fd.list_hot)
+                sdl_fill(fd.list[0] + 3, iy, lw - 6, fd.ih,
+                         70, 92, 140, it == fd.sel ? 170 : 90);
+            if (it == cur) { /* a tick by the one in use */
+                float tx = (float) fd.list[0] + FD(10),
+                      ty = (float) iy + fd.ih * 0.55f, tk = (float) FD(9);
+
+                sdl_thick_line(tx, ty, tx + tk * 0.45f, ty + tk * 0.45f,
+                               max(1.5f, (float) s * 1.6f), gold);
+                sdl_thick_line(tx + tk * 0.45f, ty + tk * 0.45f,
+                               tx + tk * 1.3f, ty - tk * 0.6f,
+                               max(1.5f, (float) s * 1.6f), gold);
+            }
+            (void) sdl_face_text(f, sdl_fd_item(fd.open, it),
+                                 fd.list[0] + FD(30),
+                                 iy + (fd.ih - TTF_GetFontHeight(f)) / 2, 0,
+                                 it == cur ? gold : ink, 0);
+        }
+        if (n > fd.nshow) { /* where in the list this is */
+            int th = fd.list[3] - fd.list[1] - 8,
+                bh = max(FD(16), th * fd.nshow / n),
+                by = fd.list[1] + 4 + (th - bh) * fd.top / max(1, n - fd.nshow);
+
+            sdl_fill(fd.list[2] - FD(7), by, FD(4), bh, 138, 146, 160, 160);
+        }
+    }
+    sdl_present();
+#undef FD
+}
+
+static boolean
+sdl_fd_in(const int r[4], float x, float y)
+{
+    return x >= r[0] && x < r[2] && y >= r[1] && y < r[3];
+}
+
+/* a key (or a test key from NETHACK_SDL_KEYS) */
+static void
+sdl_fd_key(int k)
+{
+    int n;
+
+    if (fd.open >= 0) {
+        n = sdl_fd_nitems(fd.open);
+        switch (k) {
+        case SDLK_ESCAPE:
+            fd.open = -1;
+            return;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+        case SDLK_SPACE:
+            sdl_fd_choose(fd.sel);
+            return;
+        case SDLK_UP:
+            fd.sel = max(0, fd.sel - 1);
+            return;
+        case SDLK_DOWN:
+            fd.sel = min(n - 1, fd.sel + 1);
+            return;
+        case SDLK_PAGEUP:
+            fd.sel = max(0, fd.sel - max(1, fd.nshow - 1));
+            return;
+        case SDLK_PAGEDOWN:
+            fd.sel = min(n - 1, fd.sel + max(1, fd.nshow - 1));
+            return;
+        case SDLK_HOME:
+            fd.sel = 0;
+            return;
+        case SDLK_END:
+            fd.sel = n - 1;
+            return;
+        default:
+            /* a letter: the next item that starts with it */
+            if (k < 0x80 && isalnum(k)) {
+                int i, j;
+
+                for (j = 1; j <= n; j++) {
+                    i = (fd.sel + j) % n;
+                    if (lowc(*sdl_fd_item(fd.open, i)) == lowc((char) k)) {
+                        fd.sel = i;
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+    }
+    switch (k) {
+    case SDLK_ESCAPE:
+        fd.done = TRUE;
+        break;
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+    case SDLK_SPACE:
+        sdl_fd_open(fd.focus);
+        break;
+    case SDLK_UP:
+    case 'k':
+        fd.focus = (fd.focus == FD_DONE) ? FD_DONE - 2
+                                          : max(fd.focus & 1, fd.focus - 2);
+        break;
+    case SDLK_DOWN:
+    case 'j':
+        fd.focus = (fd.focus + 2 >= FD_DONE) ? FD_DONE : fd.focus + 2;
+        break;
+    case SDLK_LEFT:
+    case 'h':
+        if (fd.focus != FD_DONE)
+            fd.focus &= ~1;
+        break;
+    case SDLK_RIGHT:
+    case 'l':
+        if (fd.focus != FD_DONE)
+            fd.focus |= 1;
+        break;
+    case SDLK_TAB:
+        fd.focus = (fd.focus + 1) % FD_NCTL;
+        break;
+    default:
+        break;
+    }
+}
+
+static void
+sdl_fonts_dialog(void)
+{
+    static boolean scanned;
+    SDL_Event e;
+    int i;
+
+    if (!scanned) { /* looking through the fonts can take a moment */
+        int w, h;
+        TTF_Font *f;
+
+        scanned = TRUE;
+        SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+        sdl_draw_screen();
+        sdl_fill(0, 0, w, h, 0, 0, 0, 150);
+        f = sdl_face(SDL_FACE_UI_BOLD, 20);
+        (void) sdl_face_text(f, "Looking for fonts...", w / 2, h / 2, 1,
+                             FXV_RGB(229, 186, 96), 0);
+        SDL_RenderPresent(sdl.ren);
+        sdl_scan_fonts();
+    }
+    (void) memset(&fd, 0, sizeof fd);
+    fd.hot = fd.open = fd.list_hot = -1;
+    while (!fd.done && !sdl.closing) {
+        sdl_fd_draw();
+        /* test keys first (NETHACK_SDL_KEYS), as the game would get them */
+        if (sdl.kq_head != sdl.kq_tail) {
+            int k = sdl.keyq[sdl.kq_head];
+
+            sdl.kq_head = (sdl.kq_head + 1) % SDL_KEYQ;
+            sdl_fd_key(k == '\033' ? (int) SDLK_ESCAPE
+                   : (k == '\n' || k == '\r') ? (int) SDLK_RETURN : k);
+            continue;
+        }
+        if (!SDL_WaitEventTimeout(&e, 500))
+            continue;
+        do {
+            SDL_Event ev = e;
+
+            switch (e.type) {
+            case SDL_EVENT_QUIT:
+                fd.done = TRUE;
+                sdl_handle_event(&e); /* (saves, as closing does) */
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                sdl_fd_key((int) e.key.key);
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+                fd.hot = fd.list_hot = -1;
+                if (fd.open >= 0 && sdl_fd_in(fd.list, ev.motion.x, ev.motion.y)) {
+                    i = (int) (ev.motion.y - fd.list[1] - 4) / max(1, fd.ih);
+                    if (i >= 0 && i < fd.nshow)
+                        fd.list_hot = fd.top + i;
+                } else {
+                    for (i = 0; i < FD_NCTL; i++)
+                        if (sdl_fd_in(fd.ctl[i], ev.motion.x, ev.motion.y))
+                            fd.hot = i;
+                }
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (e.button.button != SDL_BUTTON_LEFT)
+                    break;
+                (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+                if (fd.open >= 0) {
+                    if (sdl_fd_in(fd.list, ev.button.x, ev.button.y)) {
+                        i = (int) (ev.button.y - fd.list[1] - 4)
+                            / max(1, fd.ih);
+                        if (i >= 0 && i < fd.nshow)
+                            sdl_fd_choose(fd.top + i);
+                        break;
+                    }
+                    if (sdl_fd_in(fd.ctl[fd.open], ev.button.x, ev.button.y)) {
+                        fd.open = -1; /* its control again: shut it */
+                        break;
+                    }
+                    fd.open = -1;
+                }
+                for (i = 0; i < FD_NCTL; i++)
+                    if (sdl_fd_in(fd.ctl[i], ev.button.x, ev.button.y)) {
+                        fd.focus = i;
+                        sdl_fd_open(i);
+                        break;
+                    }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                if (fd.open >= 0 && e.wheel.y != 0.0f) {
+                    fd.top += (e.wheel.y > 0) ? -3 : 3;
+                    fd.top = max(0, min(fd.top,
+                                        sdl_fd_nitems(fd.open) - fd.nshow));
+                    fd.sel = max(fd.top, min(fd.sel, fd.top + fd.nshow - 1));
+                }
+                break;
+            default:
+                if (e.type >= SDL_EVENT_WINDOW_FIRST
+                    && e.type <= SDL_EVENT_WINDOW_LAST)
+                    sdl_handle_event(&e); /* (resizes) */
+                break;
+            }
+        } while (SDL_PollEvent(&e));
+    }
+    sdl.dirty = TRUE;
 }
 
 /* a thick line, for the speaker's waves and cross */
@@ -4594,8 +5660,23 @@ sdl_relaunch(void)
     if (sdl_play_again && sdl_argv && !sdl.closing
         && !getenv("NETHACK_SDL_KEYS")) /* (not when testing) */
         (void) execv("/proc/self/exe", sdl_argv);
+#elif defined(_WIN32)
+    /* no exec on Windows: start a new copy, and this one ends */
+    if (sdl_play_again && sdl_argv && !sdl.closing
+        && !getenv("NETHACK_SDL_KEYS")) {
+        SDL_Process *p;
+
+        sdl_play_again = FALSE; /* once only */
+        p = SDL_CreateProcess((const char *const *) sdl_argv, false);
+        if (p)
+            SDL_DestroyProcess(p); /* (it goes on running) */
+    }
 #endif
 }
+
+#ifdef _WIN32
+extern char *exename(void); /* sys/windows/windmain.c */
+#endif
 
 /* keep the command line, to start the same way again */
 static void
@@ -4623,6 +5704,22 @@ sdl_keep_cmdline(void)
         i += strlen(&buf[i]) + 1;
     }
     sdl_argv[k] = 0;
+    (void) atexit(sdl_relaunch);
+#elif defined(_WIN32)
+    /* the game has moved to its own folder by now, so name the program
+       by its full path; the arguments as the C runtime split them */
+    static char path[BUFSZ * 2];
+    const char *base = SDL_GetBasePath();
+    int i;
+
+    if (!base || !__argv || __argc < 1)
+        return;
+    Snprintf(path, sizeof path, "%s%s", base, exename());
+    sdl_argv = (char **) alloc((__argc + 1) * sizeof (char *));
+    sdl_argv[0] = path;
+    for (i = 1; i < __argc; i++)
+        sdl_argv[i] = __argv[i];
+    sdl_argv[__argc] = 0;
     (void) atexit(sdl_relaunch);
 #endif
 }
@@ -4737,16 +5834,16 @@ sdl_init_nhwindows(int *argc, char **argv)
     /* fx_text_size, or the size that suits the screen */
     sdl.text_set = iflags.fx_text_size;
     sdl.text_px = sdl.text_set ? (float) sdl.text_set : sdl.auto_text_px;
-    sdl.font = sdl_open_font(sdl.text_px);
+    /* the fonts (fx_font_*, or the window's own); messages on the map
+       are bold unless chosen otherwise, as NetHackW's (semibold) are */
+    sdl_fonts_reload();
     if (!sdl.font) {
         raw_print("SDL: no TrueType font found; set NETHACK_FONT to one");
         nh_terminate(EXIT_FAILURE);
     }
-    sdl_text_size(sdl.text_px);
-    /* messages on the map are bold, as NetHackW's (semibold) are */
-    if ((sdl.msgfont = TTF_OpenFont(sdl.fontpath, sdl.text_px)) != 0)
-        TTF_SetFontStyle(sdl.msgfont, TTF_STYLE_BOLD);
-    s = SDL_LoadBMP("tiles.bmp");
+    fx_font_lister = sdl_font_lister; /* for the options' font menus */
+    fx_font_dialog = sdl_fonts_dialog; /* #fonts */
+    s = SDL_LoadBMP(sdl_gamefile("tiles.bmp"));
     if (s) {
         SDL_Surface *argb;
 
@@ -4820,6 +5917,8 @@ sdl_init_nhwindows(int *argc, char **argv)
 
         if (!who || !*who)
             who = getenv("LOGNAME");
+        if (!who || !*who)
+            who = getenv("USERNAME"); /* Windows */
         if (!*svp.plname || (who && !strcmp(who, svp.plname)))
             while (!sdl_name_screen())
                 sdl_title_screen();

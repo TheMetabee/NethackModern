@@ -68,14 +68,19 @@ default: packageall
 NHDATFILEBASE=nhdat$(NHV)
 PKGFILES=Guidebook.txt Guidebook.pdf license NetHack.exe NetHack.txt \
 	 NetHackW.exe opthelp $(NHDATFILEBASE) record symbols.template \
-	sysconf.template nethackrc.template sounds
+	sysconf.template nethackrc.template sounds $(SDLFILES)
+# NetHack Modern: NetHackSDL.exe, the SDL window, and what it reads
+SDLFILES=NetHackSDL.exe SDL3.dll SDL3_ttf.dll tiles.bmp splash_art.png
 FILESTOZIP=$(VSBINDIR)\Guidebook.txt $(VSBINDIR)\Guidebook.pdf $(VSBINDIR)\license \
 	$(VSBINDIR)\NetHack.exe $(VSBINDIR)\NetHack.txt $(VSBINDIR)\NetHackW.exe \
 	$(VSBINDIR)\opthelp $(VSBINDIR)\$(NHDATFILEBASE) $(VSBINDIR)\record \
-	$(VSBINDIR)\symbols.template $(VSBINDIR)\sysconf.template $(VSBINDIR)\nethackrc.template
-DBGSYMS = NetHack.PDB NetHackW.PDB
+	$(VSBINDIR)\symbols.template $(VSBINDIR)\sysconf.template $(VSBINDIR)\nethackrc.template \
+	$(VSBINDIR)\NetHackSDL.exe $(VSBINDIR)\SDL3.dll $(VSBINDIR)\SDL3_ttf.dll \
+	$(VSBINDIR)\tiles.bmp $(VSBINDIR)\splash_art.png
+DBGSYMS = NetHack.PDB NetHackW.PDB NetHackSDL.PDB
 PDBTOZIP = ..\NetHack\symbols\$(Configuration)\$(Platform)\NetHack.PDB \
-	   ..\NetHackW\symbols\$(Configuration)\$(Platform)\NetHackW.PDB
+	   ..\NetHackW\symbols\$(Configuration)\$(Platform)\NetHackW.PDB \
+	   ..\NetHackSDL\symbols\$(Configuration)\$(Platform)\NetHackSDL.PDB
 MAINZIP = $(VSPACKAGEDIR)\nethack-$(NHV)-win-$(PlatformFileName).zip
 DBGSYMZIP = $(VSPACKAGEDIR)\nethack-$(NHV)-win-$(PlatformFileName)-debugsymbols.zip
 
@@ -103,6 +108,16 @@ $(VSBINDIR)\NetHack.txt: $(BinDir)\NetHack.txt
 	copy /Y $(DocDir)\NetHack.txt $@
 $(VSBINDIR)\NetHackW.exe: $(BinDir)\NetHackW.exe
 	copy /Y $(BinDir)\NetHackW.exe $@
+$(VSBINDIR)\NetHackSDL.exe: $(BinDir)\NetHackSDL.exe
+	copy /Y $(BinDir)\NetHackSDL.exe $@
+$(VSBINDIR)\SDL3.dll: $(BinDir)\SDL3.dll
+	copy /Y $(BinDir)\SDL3.dll $@
+$(VSBINDIR)\SDL3_ttf.dll: $(BinDir)\SDL3_ttf.dll
+	copy /Y $(BinDir)\SDL3_ttf.dll $@
+$(VSBINDIR)\tiles.bmp: $(BinDir)\tiles.bmp
+	copy /Y $(BinDir)\tiles.bmp $@
+$(VSBINDIR)\splash_art.png: $(BinDir)\splash_art.png
+	copy /Y $(BinDir)\splash_art.png $@
 $(VSBINDIR)\opthelp: $(BinDir)\opthelp
 	copy /Y $(BinDir)\opthelp $@
 $(VSBINDIR)\nhdat$(NHV): $(BinDir)\nhdat$(NHV)

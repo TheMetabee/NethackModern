@@ -86,6 +86,9 @@ fx_set_audio_handler(fx_handler_fn fn)
     fx.audio_handler = fn;
 }
 
+fx_font_lister_fn fx_font_lister; /* set by a window port that has one */
+void (*fx_font_dialog)(void);     /* likewise */
+
 staticfn void
 fx_log_open(void)
 {
