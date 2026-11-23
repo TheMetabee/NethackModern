@@ -10,6 +10,7 @@
 #include "mhfont.h"
 #include "mhtheme.h"
 #include "mhinput.h"
+#include "fxview.h"
 
 #ifndef STATUS_HILITES
 #error STATUS_HILITES not defined
@@ -404,7 +405,6 @@ th_draw_bar(HDC hdc, const RECT *rc, COLORREF c, int radius)
 {
     int l = rc->left, t = rc->top, r = rc->right, b = rc->bottom;
     int h = b - t, y, saved;
-    COLORREF white = RGB(255, 255, 255), black = RGB(0, 0, 0);
 
     if (r <= l || h <= 0)
         return;
@@ -415,18 +415,18 @@ th_draw_bar(HDC hdc, const RECT *rc, COLORREF c, int radius)
         ExtSelectClipRgn(hdc, rgn, RGN_AND);
         DeleteObject(rgn);
     }
-    switch (iflags.fx_bar_style) {
-    case 1: /* smooth: lighter at the top, darker at the bottom */
-    case 3: /* striped starts from the same gradient */
-        for (y = 0; y < h; y++) {
-            double k = (h > 1) ? (double) y / (h - 1) : 0.0;
+    /* each row's colour in the chosen fx_bar_style is shared (fxview.c);
+       the striped style adds darker diagonal stripes */
+    for (y = 0; y < h; y++) {
+        double k = (h > 1) ? (double) y / (h - 1) : 0.0;
 
-            th_row(hdc, l, r, t + y,
-                   th_mix(th_mix(c, white, 0.22), th_mix(c, black, 0.3), k));
-        }
-        if (iflags.fx_bar_style == 3) {
-            /* darker diagonal stripes */
-            HPEN pen = CreatePen(PS_SOLID, max(2, h / 6), th_mix(c, black, 0.3));
+        th_row(hdc, l, r, t + y, fxv_bar_row(c, k, y, h));
+    }
+    {
+        COLORREF stripe = fxv_bar_stripe(c);
+
+        if (stripe) {
+            HPEN pen = CreatePen(PS_SOLID, max(2, h / 6), stripe);
             HGDIOBJ op = SelectObject(hdc, pen);
             int x, step = max(7, h / 2);
 
@@ -437,37 +437,6 @@ th_draw_bar(HDC hdc, const RECT *rc, COLORREF c, int radius)
             SelectObject(hdc, op);
             DeleteObject(pen);
         }
-        break;
-    case 2: /* gloss: a glassy shine over the top half */
-        for (y = 0; y < h; y++) {
-            double k = (h > 1) ? (double) y / (h - 1) : 0.0;
-            COLORREF row;
-
-            if (k < 0.5)
-                row = th_mix(th_mix(c, white, 0.5), th_mix(c, white, 0.15),
-                             k / 0.5);
-            else
-                row = th_mix(c, th_mix(c, black, 0.28), (k - 0.5) / 0.5);
-            th_row(hdc, l, r, t + y, row);
-        }
-        if (h > 3)
-            th_row(hdc, l, r, t, th_mix(c, white, 0.7)); /* bright rim */
-        break;
-    case 4: /* bevel: raised, light top edge and dark bottom edge */
-        for (y = 0; y < h; y++)
-            th_row(hdc, l, r, t + y, c);
-        th_row(hdc, l, r, t, th_mix(c, white, 0.45));
-        if (h > 2)
-            th_row(hdc, l, r, b - 1, th_mix(c, black, 0.45));
-        break;
-    default: { /* flat */
-        HBRUSH br = CreateSolidBrush(c);
-        RECT rr = *rc;
-
-        FillRect(hdc, &rr, br);
-        DeleteObject(br);
-        break;
-    }
     }
     RestoreDC(hdc, saved);
 }
@@ -482,20 +451,20 @@ th_bar(HDC hdc, int x, int y, int w, int h, const char *label, int cur,
     int fw;
 
     pct = (pct < 0) ? 0 : (pct > 100) ? 100 : pct;
-    th_round(hdc, x, y, x + w, y + h, 5, TH_BG_HEADER); /* softly squared */
+    th_round(hdc, x, y, x + w, y + h, 7, TH_BG_HEADER); /* slightly rounded */
     fw = (w * pct) / 100;
     if (fw > 0) {
         RECT fr;
 
         SetRect(&fr, x, y, x + max(fw, 3), y + h);
-        th_draw_bar(hdc, &fr, fill, 5); /* in the chosen style */
+        th_draw_bar(hdc, &fr, fill, 7); /* in the chosen style */
     }
     if (iflags.fx_bar_border) { /* a crisp 1-pixel outline */
         HPEN pen = CreatePen(PS_SOLID, 1, RGB(4, 5, 7));
         HGDIOBJ op = SelectObject(hdc, pen),
                 ob = SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
-        RoundRect(hdc, x, y, x + w + 1, y + h + 1, 5, 5);
+        RoundRect(hdc, x, y, x + w + 1, y + h + 1, 7, 7);
         SelectObject(hdc, ob);
         SelectObject(hdc, op);
         DeleteObject(pen);
@@ -572,8 +541,8 @@ th_paint_doll(HDC hdc, int x0, int y1, int rowh)
             edge = o->cursed ? RGB(210, 64, 60)
                    : o->blessed ? RGB(92, 190, 92) : TH_SEPARATOR;
         /* the slot: a rounded box, its edge telling blessed/cursed */
-        th_round(hdc, cx, cy, cx + cell, cy + cell, 6, edge);
-        th_round(hdc, cx + 1, cy + 1, cx + cell - 1, cy + cell - 1, 5,
+        th_round(hdc, cx, cy, cx + cell, cy + cell, 3, edge);
+        th_round(hdc, cx + 1, cy + 1, cx + cell - 1, cy + cell - 1, 2,
                  o ? TH_BG_HEADER : TH_BG_PANEL);
         if (o) {
             glyph_info gi;
@@ -697,7 +666,7 @@ th_paint_actions(HDC hdc, int width, int y1, int y2, int rowh)
         if (x - bw < width / 2)
             break;
         SetRect(&b->r, x - bw, ys[row] + 1, x, ys[row] + rowh - 3);
-        th_round(hdc, b->r.left, b->r.top, b->r.right, b->r.bottom, 8,
+        th_round(hdc, b->r.left, b->r.top, b->r.right, b->r.bottom, 4,
                  (i == th_hotbtn) ? TH_SEPARATOR : TH_BG_HEADER);
         ty = b->r.top + (b->r.bottom - b->r.top - tm.tmHeight) / 2;
         th_text(hdc, b->r.left + 10, ty, b->label, TH_TEXT);
@@ -734,8 +703,8 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     int dollx, actx;
     int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
     int hpct = hpmax > 0 ? (hp * 100) / hpmax : 0;
-    COLORREF hpc = (hpct > 66) ? RGB(92, 190, 92)
-                   : (hpct > 33) ? RGB(214, 170, 52) : RGB(210, 64, 60);
+    COLORREF hpc = fxv_hp_color(hpct); /* shared (fxview.c) */
+    int arrow[6];
 
     SelectObject(hdc, fn->hFont);
     GetTextMetrics(hdc, &tm);
@@ -775,17 +744,13 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
         th_rule(hdc, x - 9, y1, y2 + rowh - 2);
     }
 
-    /* the six stats, two rows of three */
+    /* the six stats, two rows of three; for 50 turns after one changes,
+       an arrow shows which way it went (tracked in fxview.c) */
     colw = tm.tmAveCharWidth * 9;
+    fxv_stat_arrows(arrow);
     for (i = 0; i < 6; i++) {
         int sx = x + (i % 3) * colw, sy = (i < 3) ? y1 : y2;
         int v = ACURR(i);
-        /* NetHack Modern: remember each stat, and for 50 turns after it
-           changes show which way it went */
-        static int seen[6];
-        static int dir[6];
-        static long when[6];
-        static boolean have_seen;
 
         th_text(hdc, sx, sy, statnm[i], TH_TEXT_DIM);
         if (i == A_STR && v > 18) {
@@ -799,18 +764,7 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
             Sprintf(buf, "%d", v);
         }
         th_text(hdc, sx + th_width(hdc, "Wi "), sy, buf, TH_TEXT);
-        if (!have_seen && i == 5) {
-            int k;
-
-            for (k = 0; k < 6; k++)
-                seen[k] = ACURR(k); /* a baseline, no arrows at the start */
-            have_seen = TRUE;
-        } else if (have_seen && v != seen[i]) {
-            dir[i] = (v > seen[i]) ? 1 : -1;
-            when[i] = svm.moves;
-            seen[i] = v;
-        }
-        if (have_seen && dir[i] && svm.moves - when[i] < 50) {
+        if (arrow[i]) {
             /* a small triangle after the value */
             POINT tri[3];
             int ax = sx + th_width(hdc, "Wi ") + th_width(hdc, buf) + 5;
@@ -818,12 +772,12 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
             /* centred on the digits, not the whole line */
             int ay = sy + tm.tmInternalLeading
                      + (tm.tmAscent - tm.tmInternalLeading) / 2;
-            HBRUSH br = CreateSolidBrush(dir[i] > 0 ? RGB(104, 210, 98)
+            HBRUSH br = CreateSolidBrush(arrow[i] > 0 ? RGB(104, 210, 98)
                                                     : RGB(235, 84, 76));
             HGDIOBJ ob = SelectObject(hdc, br),
                     op = SelectObject(hdc, GetStockObject(NULL_PEN));
 
-            if (dir[i] > 0) {
+            if (arrow[i] > 0) {
                 tri[0].x = ax, tri[0].y = ay + as / 2;
                 tri[1].x = ax + as, tri[1].y = ay + as / 2;
                 tri[2].x = ax + as / 2, tri[2].y = ay - as / 2;
@@ -873,53 +827,12 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     /* the action bar at the right end */
     actx = th_paint_actions(hdc, width, y1, y2, rowh);
 
-    /* conditions as chips, wrapping onto the second row */
+    /* conditions as chips, wrapping onto the second row; which, and
+       their colours, are shared (fxview.c) */
     {
-        struct {
-            const char *name;
-            COLORREF c;
-        } chip[24];
-        int nchip = 0, cx = x, cy = y1, cap = near_capacity();
+        struct fxv_chip chip[24];
+        int nchip = fxv_status_chips(chip, SIZE(chip)), cx = x, cy = y1;
 
-        if (u.uhs != NOT_HUNGRY) {
-            static char hbuf[20];
-
-            th_trim(hbuf, hu_stat[u.uhs], sizeof hbuf);
-            chip[nchip].name = hbuf;
-            chip[nchip++].c = (u.uhs == SATIATED) ? RGB(214, 190, 80)
-                              : (u.uhs == HUNGRY) ? RGB(242, 152, 62)
-                                                  : RGB(235, 84, 76);
-        }
-        if (cap > UNENCUMBERED) {
-            chip[nchip].name = enc_stat[cap];
-            chip[nchip++].c = (cap == SLT_ENCUMBER) ? RGB(214, 190, 80)
-                              : (cap == MOD_ENCUMBER) ? RGB(242, 152, 62)
-                                                      : RGB(235, 84, 76);
-        }
-#define CHIP(cond, nm, col) \
-    if ((cond) && nchip < SIZE(chip)) {   \
-        chip[nchip].name = (nm);          \
-        chip[nchip++].c = (col);          \
-    }
-        CHIP(Stoned, "Stoning", RGB(235, 84, 76))
-        CHIP(Slimed, "Slimed", RGB(235, 84, 76))
-        CHIP(Strangled, "Strangled", RGB(235, 84, 76))
-        CHIP(Sick && (u.usick_type & SICK_VOMITABLE), "Food poisoned",
-             RGB(235, 84, 76))
-        CHIP(Sick && (u.usick_type & SICK_NONVOMITABLE), "Ill",
-             RGB(235, 84, 76))
-        CHIP(Stunned, "Stunned", RGB(242, 152, 62))
-        CHIP(Confusion, "Confused", RGB(200, 120, 235))
-        CHIP(Hallucination, "Hallucinating", RGB(242, 134, 242))
-        CHIP(Blind, "Blind", RGB(160, 166, 180))
-        CHIP(Deaf, "Deaf", RGB(160, 166, 180))
-        CHIP(u.ustuck && !u.uswallow, "Held", RGB(242, 152, 62))
-        CHIP(u.utrap, "Trapped", RGB(242, 152, 62))
-        CHIP(Wounded_legs, "Wounded legs", RGB(242, 152, 62))
-        CHIP(Levitation, "Levitating", RGB(116, 172, 255))
-        CHIP(Flying && !Levitation, "Flying", RGB(116, 172, 255))
-        CHIP(u.usteed, "Riding", RGB(116, 172, 255))
-#undef CHIP
         for (i = 0; i < nchip; i++) {
             int cw = th_width(hdc, chip[i].name) + 16;
 
@@ -927,7 +840,7 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
                 cx = x, cy = y2;
             if (cx + cw > actx - 12)
                 break; /* no room before the action bar */
-            th_round(hdc, cx, cy + 1, cx + cw, cy + rowh - 3, rowh / 2,
+            th_round(hdc, cx, cy + 1, cx + cw, cy + rowh - 3, 4,
                      TH_BG_HEADER);
             th_text(hdc, cx + 8, cy + (rowh - 3 - tm.tmHeight) / 2 + 1,
                     chip[i].name, chip[i].c);

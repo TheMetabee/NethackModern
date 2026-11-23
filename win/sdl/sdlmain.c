@@ -99,6 +99,7 @@ static struct {
 static void sdl_render(void);
 static void sdl_zoom(int);
 static int sdl_page_lines(void);
+static int sdl_status_h(void);
 static int sdl_wait_key(void);
 static void sdl_add_msg(const char *);
 
@@ -242,6 +243,8 @@ enum sdl_bar_kind {
     BAR_TEXT,      /* text size: +1 larger, -1 smaller */
     BAR_VOLUME,    /* 1/2 effects up/down, 3/4 ambience up/down */
     BAR_SHADE,     /* fx_shade 0..3, or 4: lighting off */
+    BAR_STYLE,     /* fx_bar_style 0..4 */
+    BAR_BORDER,    /* fx_bar_border on or off */
     BAR_SEP
 };
 
@@ -281,6 +284,13 @@ static const struct sdl_bar_item bar_view[] = {
     { "Shade: dark", "", BAR_SHADE, NULL, 2 },
     { "Shade: deep", "", BAR_SHADE, NULL, 3 },
     { "Lighting off", "", BAR_SHADE, NULL, 4 },
+    BSEP,
+    { "Bars: flat", "", BAR_STYLE, NULL, 0 },
+    { "Bars: smooth", "", BAR_STYLE, NULL, 1 },
+    { "Bars: gloss", "", BAR_STYLE, NULL, 2 },
+    { "Bars: striped", "", BAR_STYLE, NULL, 3 },
+    { "Bars: bevel", "", BAR_STYLE, NULL, 4 },
+    { "Bar border", "", BAR_BORDER, NULL, 0 },
     BSEP,
     BK("Previous messages", "Ctrl+P", "\x10"),
     BK("Dungeon overview", "Ctrl+O", "\x0f"),
@@ -388,6 +398,10 @@ sdl_bar_checked(const struct sdl_bar_item *it)
                                  && iflags.fx_shade == it->arg);
     case BAR_ZOOM:
         return it->arg == 0 && sdl.zoom < 0; /* "Whole level": auto */
+    case BAR_STYLE:
+        return iflags.fx_bar_style == it->arg;
+    case BAR_BORDER:
+        return iflags.fx_bar_border;
     default:
         return FALSE;
     }
@@ -563,6 +577,12 @@ sdl_bar_do(const struct sdl_bar_item *it)
             iflags.fx_lighting = TRUE;
             iflags.fx_shade = it->arg;
         }
+        break;
+    case BAR_STYLE: /* the HP and Pw bars' look (kept in nethackmodern.rc) */
+        iflags.fx_bar_style = it->arg;
+        break;
+    case BAR_BORDER:
+        iflags.fx_bar_border = !iflags.fx_bar_border;
         break;
     default:
         break;
@@ -896,7 +916,7 @@ sdl_layout(int *top, int *bottom, int *ts, int *ox, int *oy)
 
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
     *top = sdl_bar_h() + SDL_MSGSHOW * sdl.lh + 8;
-    *bottom = h - (2 * sdl.lh + 8);
+    *bottom = h - sdl_status_h(); /* the character panel */
     aw = w, ah = max(1, *bottom - *top);
     if (sdl.zoom >= 0) {
         z = sdl.zoom;
@@ -1475,20 +1495,317 @@ sdl_draw_messages(void)
         sdl_text(8, y0 + 3 + row * sdl.lh, sdl.prompt, sdl_gold);
 }
 
+/* ---- the character panel along the bottom (as NetHackW's) ---------- */
+
+/* what the core said for the fields the panel shows as text; the rest
+   it reads from the game itself, as NetHackW does */
+static char sdl_title[BUFSZ], sdl_leveldesc[BUFSZ];
+
+static void
+sdl_status_update(int idx, genericptr_t ptr, int chg, int percent,
+                  int color, unsigned long *colormasks)
+{
+    char *dst = (idx == BL_TITLE) ? sdl_title
+                : (idx == BL_LEVELDESC) ? sdl_leveldesc : (char *) 0;
+
+    nhUse(chg), nhUse(percent), nhUse(color), nhUse(colormasks);
+    if (idx == BL_FLUSH || idx == BL_RESET) {
+        sdl.dirty = TRUE;
+        return;
+    }
+    if (dst && ptr) {
+        /* without the padding the core puts round some values */
+        int n;
+
+        Snprintf(dst, BUFSZ, "%s", (const char *) ptr);
+        (void) mungspaces(dst);
+        for (n = 0; dst[n]; n++)
+            if (dst[n] == ':' && dst == sdl_leveldesc)
+                dst[n] = ' '; /* "Dlvl:1" reads as "Dlvl 1" */
+    }
+}
+
+static int
+sdl_rowh(void)
+{
+    return sdl.lh + sdl.lh / 4;
+}
+
+/* the panel's height */
+static int
+sdl_status_h(void)
+{
+    return 2 * sdl_rowh() + 14;
+}
+
+static int
+sdl_text_w(const char *s)
+{
+    int w = 0, h = 0;
+
+    if (s && *s)
+        (void) TTF_GetStringSize(sdl.font, s, 0, &w, &h);
+    return w;
+}
+
+static SDL_Color
+sdl_col(fxv_color c)
+{
+    SDL_Color s;
+
+    s.r = (Uint8) FXV_R(c), s.g = (Uint8) FXV_G(c), s.b = (Uint8) FXV_B(c);
+    s.a = 255;
+    return s;
+}
+
+/* a filled box with slightly rounded corners (radius r, small) */
+static void
+sdl_rbox(int x, int y, int w, int h, int r, fxv_color c)
+{
+    Uint8 crd = (Uint8) FXV_R(c), cgr = (Uint8) FXV_G(c),
+          cbl = (Uint8) FXV_B(c);
+
+    r = min(r, min(w, h) / 2);
+    if (r <= 0) {
+        sdl_fill(x, y, w, h, crd, cgr, cbl, 255);
+        return;
+    }
+    sdl_fill(x + r, y, w - 2 * r, h, crd, cgr, cbl, 255);
+    sdl_fill(x, y + r, r, h - 2 * r, crd, cgr, cbl, 255);
+    sdl_fill(x + w - r, y + r, r, h - 2 * r, crd, cgr, cbl, 255);
+    sdl_dot((float) (x + r), (float) (y + r), (float) r, c, FALSE);
+    sdl_dot((float) (x + w - r - 1), (float) (y + r), (float) r, c, FALSE);
+    sdl_dot((float) (x + r), (float) (y + h - r - 1), (float) r, c, FALSE);
+    sdl_dot((float) (x + w - r - 1), (float) (y + h - r - 1), (float) r, c,
+            FALSE);
+}
+
+/* a thin vertical rule between sections */
+static void
+sdl_rule(int x, int y, int h)
+{
+    sdl_fill(x, y, 1, h, 52, 58, 70, 255);
+}
+/* how far row 'row' of a box 'h' high with corners of radius r is
+   inset from each side, so the box is drawn with rounded corners */
+static int
+sdl_round_inset(int row, int h, int r)
+{
+    double dy;
+
+    r = min(r, h / 2);
+    if (r <= 0)
+        return 0;
+    if (row < r)
+        dy = r - row - 0.5;
+    else if (row >= h - r)
+        dy = row - (h - r) + 0.5;
+    else
+        return 0;
+    return (int) (r - sqrt(max(0.0, (double) r * r - dy * dy)) + 0.5);
+}
+
+#define SDL_BAR_RADIUS 4
+
+/* a labelled bar, "HP 29 / 32" over a fill in the chosen fx_bar_style,
+   its background, fill and outline all with slightly rounded corners */
+static void
+sdl_bar(int x, int y, int w, int h, const char *label, int cur, int mx,
+        fxv_color fill)
+{
+    const int r = SDL_BAR_RADIUS;
+    char buf[64];
+    int pct = (mx > 0) ? (cur * 100) / mx : 0, fw, row;
+    fxv_color stripe;
+
+    pct = max(0, min(100, pct));
+    fw = (w * pct) / 100;
+    if (fw > 0)
+        fw = max(fw, 2 * r);
+    stripe = fxv_bar_stripe(fill);
+    for (row = 0; row < h; row++) {
+        int in = sdl_round_inset(row, h, r);
+        int fin = sdl_round_inset(row, h, min(r, fw / 2));
+
+        /* the background, then the fill (each row's colour shared,
+           fxview.c), then the striped style's darker diagonals */
+        sdl_fill(x + in, y + row, w - 2 * in, 1, 33, 37, 46, 255);
+        if (fw > 0) {
+            fxv_color c = fxv_bar_row(fill, (h > 1) ? (double) row / (h - 1)
+                                                    : 0.0,
+                                      row, h);
+            int x0 = x + fin, x1 = x + fw - fin;
+
+            sdl_fill(x0, y + row, x1 - x0, 1, (Uint8) FXV_R(c),
+                     (Uint8) FXV_G(c), (Uint8) FXV_B(c), 255);
+            if (stripe) {
+                int step = max(7, h / 2), t = max(2, h / 6), sx;
+
+                for (sx = x - h; sx < x + fw; sx += step) {
+                    int a = max(x0, sx + h - row), b = min(x1, a + t);
+
+                    if (sx + h - row + t > x0 && b > a)
+                        sdl_fill(a, y + row, b - a, 1,
+                                 (Uint8) FXV_R(stripe), (Uint8) FXV_G(stripe),
+                                 (Uint8) FXV_B(stripe), 255);
+                }
+            }
+        }
+        if (iflags.fx_bar_border) {
+            /* a crisp 1-pixel outline following the corners */
+            if (row == 0 || row == h - 1)
+                sdl_fill(x + in, y + row, w - 2 * in, 1, 4, 5, 7, 255);
+            else {
+                int pin = sdl_round_inset(row - (row < h / 2 ? 1 : -1), h, r);
+                int len = max(1, pin - in + 1);
+
+                sdl_fill(x + in, y + row, len, 1, 4, 5, 7, 255);
+                sdl_fill(x + w - in - len, y + row, len, 1, 4, 5, 7, 255);
+            }
+        }
+    }
+    Snprintf(buf, sizeof buf, "%s  %d / %d", label, cur, mx);
+    (void) sdl_text(x + (w - sdl_text_w(buf)) / 2, y + (h - sdl.lh) / 2,
+                    buf, sdl_col(FXV_RGB(250, 250, 252)));
+}
+
+/* a small triangle, pointing up or down, centred at x,y */
+static void
+sdl_arrow(float x, float y, float s, boolean up, fxv_color c)
+{
+    SDL_Vertex v[3];
+    SDL_FColor fc;
+    int i;
+
+    fc.r = FXV_R(c) / 255.0f, fc.g = FXV_G(c) / 255.0f;
+    fc.b = FXV_B(c) / 255.0f, fc.a = 1.0f;
+    v[0].position.x = x - s / 2, v[1].position.x = x + s / 2;
+    v[2].position.x = x;
+    v[0].position.y = v[1].position.y = up ? y + s / 2 : y - s / 2;
+    v[2].position.y = up ? y - s / 2 : y + s / 2;
+    for (i = 0; i < 3; i++)
+        v[i].color = fc, v[i].tex_coord.x = v[i].tex_coord.y = 0;
+    (void) SDL_RenderGeometry(sdl.ren, NULL, v, 3, NULL, 0);
+}
+
 static void
 sdl_draw_status(void)
 {
-    int w, h, i;
-    struct sdl_win *st = (WIN_STATUS >= 0 && WIN_STATUS < SDL_MAXWIN)
-                             ? &sdl.win[WIN_STATUS] : 0;
+    static const char *const statnm[6] = { "St", "Dx", "Co", "In", "Wi",
+                                           "Ch" };
+    const SDL_Color text = sdl_col(FXV_RGB(222, 226, 233)),
+                    dim = sdl_col(FXV_RGB(138, 146, 160));
+    int w, h, x = 12, y1, y2, rowh = sdl_rowh(), i, sw, colw, top;
+    int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
+    int arrow[6];
+    char buf[BUFSZ];
 
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
-    sdl_fill(0, h - (2 * sdl.lh + 8), w, 2 * sdl.lh + 8, 8, 8, 12, 230);
-    if (!st || st->type != NHW_STATUS)
-        return;
-    for (i = 0; i < 2; i++)
-        sdl_text(8, h - (2 * sdl.lh + 4) + i * sdl.lh, st->status[i],
-                 sdl_white);
+    top = h - sdl_status_h();
+    sdl_fill(0, top, w, sdl_status_h(), 24, 27, 33, 255);
+    sdl_fill(0, top, w, 1, 52, 58, 70, 255);
+    if (!program_state.in_moveloop || !sdl_title[0])
+        return; /* nothing to show before the game starts */
+    y1 = top + 7, y2 = y1 + rowh;
+
+    /* identity: title, then alignment and where */
+    (void) sdl_text(x, y1, sdl_title, sdl_gold);
+    Snprintf(buf, sizeof buf, "%s   -   %s",
+             (u.ualign.type == A_CHAOTIC) ? "Chaotic"
+             : (u.ualign.type == A_NEUTRAL) ? "Neutral" : "Lawful",
+             sdl_leveldesc);
+    (void) sdl_text(x, y2, buf, dim);
+    x += max(sdl_text_w(sdl_title), sdl_text_w(buf)) + 18;
+    sdl_rule(x - 9, y1, 2 * rowh - 2);
+
+    /* HP and Pw */
+    {
+        int bw = max(170, sdl.cw * 22), bh = rowh - 6;
+
+        sdl_bar(x, y1 + 2, bw, bh, "HP", hp, hpmax,
+                fxv_hp_color(hpmax > 0 ? (hp * 100) / hpmax : 0));
+        sdl_bar(x, y2 + 2, bw, bh, "Pw", u.uen, u.uenmax,
+                FXV_RGB(70, 120, 220));
+        x += bw + 18;
+        sdl_rule(x - 9, y1, 2 * rowh - 2);
+    }
+
+    /* the six stats, two rows of three, with an arrow for 50 turns after
+       one changes (fxview.c) */
+    colw = sdl.cw * 11; /* room for "St 18/04" in a monospace font */
+    sw = sdl_text_w("Wi ");
+    fxv_stat_arrows(arrow);
+    for (i = 0; i < 6; i++) {
+        int sx = x + (i % 3) * colw, sy = (i < 3) ? y1 : y2, v = ACURR(i);
+
+        (void) sdl_text(sx, sy, statnm[i], dim);
+        if (i == A_STR && v > 18) {
+            if (v > STR18(100))
+                Snprintf(buf, sizeof buf, "%d", v - 100);
+            else if (v < STR18(100))
+                Snprintf(buf, sizeof buf, "18/%02d", v - 18);
+            else
+                Strcpy(buf, "18/**");
+        } else {
+            Snprintf(buf, sizeof buf, "%d", v);
+        }
+        (void) sdl_text(sx + sw, sy, buf, text);
+        if (arrow[i])
+            sdl_arrow((float) (sx + sw + sdl_text_w(buf) + 5 + sdl.cw / 2),
+                      (float) (sy + sdl.lh / 2), (float) sdl.cw * 0.8f,
+                      arrow[i] > 0,
+                      arrow[i] > 0 ? FXV_RGB(104, 210, 98)
+                                   : FXV_RGB(235, 84, 76));
+    }
+    x += 3 * colw + 10;
+    sdl_rule(x - 9, y1, 2 * rowh - 2);
+
+    /* armour class and level; gold and the turn */
+    {
+        int w1, w2;
+
+        Snprintf(buf, sizeof buf, "AC %d", u.uac);
+        (void) sdl_text(x, y1, buf, text);
+        w1 = sdl_text_w(buf) + 16;
+        if (Upolyd)
+            Snprintf(buf, sizeof buf, "HD %d", mons[u.umonnum].mlevel);
+        else if (flags.showexp)
+            Snprintf(buf, sizeof buf, "Lvl %d  (%ld xp)", u.ulevel,
+                     u.uexp);
+        else
+            Snprintf(buf, sizeof buf, "Lvl %d", u.ulevel);
+        (void) sdl_text(x + w1, y1, buf, text);
+        w1 += sdl_text_w(buf);
+        Snprintf(buf, sizeof buf, "$ %ld", money_cnt(gi.invent));
+        (void) sdl_text(x, y2, buf, sdl_col(FXV_RGB(242, 210, 96)));
+        w2 = max(sdl_text_w(buf), sdl_text_w("AC 10")) + 16;
+        if (flags.time) {
+            Snprintf(buf, sizeof buf, "Turn %ld", svm.moves);
+            (void) sdl_text(x + w2, y2, buf, dim);
+            w2 += sdl_text_w(buf);
+        }
+        x += max(w1, w2) + 18;
+        sdl_rule(x - 9, y1, 2 * rowh - 2);
+    }
+
+    /* conditions as chips, wrapping onto the second row (fxview.c) */
+    {
+        struct fxv_chip chip[24];
+        int nchip = fxv_status_chips(chip, SIZE(chip)), cx = x, cy = y1;
+
+        for (i = 0; i < nchip; i++) {
+            int cw = sdl_text_w(chip[i].name) + 16;
+
+            if (cx + cw > w - 12 && cy == y1)
+                cx = x, cy = y2;
+            if (cx + cw > w - 12)
+                break;
+            sdl_rbox(cx, cy + 1, cw, rowh - 4, 4, FXV_RGB(33, 37, 46));
+            (void) sdl_text(cx + 8, cy + 1 + (rowh - 4 - sdl.lh) / 2,
+                            chip[i].name, sdl_col(chip[i].c));
+            cx += cw + 6;
+        }
+    }
 }
 
 /* the whole screen, without any menu over it */
@@ -2478,7 +2795,7 @@ struct window_procs sdl_procs = {
     genl_status_init,
     genl_status_finish,
     genl_status_enablefield,
-    genl_status_update,
+    sdl_status_update,
     genl_can_suspend_no,
     sdl_update_inventory,
     sdl_ctrl_nhwindow,

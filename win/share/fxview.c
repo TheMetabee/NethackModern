@@ -2950,3 +2950,143 @@ fxv_health_bar(int pct, int x, int y, int tw, int th, int bar[4],
          : pct > 25 ? FXV_RGB(240, 200, 40) : FXV_RGB(230, 50, 40);
     return TRUE;
 }
+
+/* ---- the status panel's game logic -------------------------------- */
+
+extern const char *const hu_stat[];  /* eat.c */
+extern const char *const enc_stat[]; /* botl.c */
+
+/* the conditions shown as coloured chips: hunger, burden, then the rest
+   worst first; returns how many (at most max) */
+int
+fxv_status_chips(struct fxv_chip *chip, int max)
+{
+    static char hunger[20];
+    int n = 0, cap = near_capacity();
+
+    if (u.uhs != NOT_HUNGRY && n < max) {
+        /* without the trailing spaces hu_stat[] pads with */
+        int i;
+
+        Snprintf(hunger, sizeof hunger, "%s", hu_stat[u.uhs]);
+        for (i = (int) strlen(hunger); i > 0 && hunger[i - 1] == ' '; i--)
+            hunger[i - 1] = '\0';
+        chip[n].name = hunger;
+        chip[n++].c = (u.uhs == SATIATED) ? FXV_RGB(214, 190, 80)
+                      : (u.uhs == HUNGRY) ? FXV_RGB(242, 152, 62)
+                                          : FXV_RGB(235, 84, 76);
+    }
+    if (cap > UNENCUMBERED && n < max) {
+        chip[n].name = enc_stat[cap];
+        chip[n++].c = (cap == SLT_ENCUMBER) ? FXV_RGB(214, 190, 80)
+                      : (cap == MOD_ENCUMBER) ? FXV_RGB(242, 152, 62)
+                                              : FXV_RGB(235, 84, 76);
+    }
+#define CHIP(cond, nm, col) \
+    if ((cond) && n < max) {    \
+        chip[n].name = (nm);    \
+        chip[n++].c = (col);    \
+    }
+    CHIP(Stoned, "Stoning", FXV_RGB(235, 84, 76))
+    CHIP(Slimed, "Slimed", FXV_RGB(235, 84, 76))
+    CHIP(Strangled, "Strangled", FXV_RGB(235, 84, 76))
+    CHIP(Sick && (u.usick_type & SICK_VOMITABLE), "Food poisoned",
+         FXV_RGB(235, 84, 76))
+    CHIP(Sick && (u.usick_type & SICK_NONVOMITABLE), "Ill",
+         FXV_RGB(235, 84, 76))
+    CHIP(Stunned, "Stunned", FXV_RGB(242, 152, 62))
+    CHIP(Confusion, "Confused", FXV_RGB(200, 120, 235))
+    CHIP(Hallucination, "Hallucinating", FXV_RGB(242, 134, 242))
+    CHIP(Blind, "Blind", FXV_RGB(160, 166, 180))
+    CHIP(Deaf, "Deaf", FXV_RGB(160, 166, 180))
+    CHIP(u.ustuck && !u.uswallow, "Held", FXV_RGB(242, 152, 62))
+    CHIP(u.utrap, "Trapped", FXV_RGB(242, 152, 62))
+    CHIP(Wounded_legs, "Wounded legs", FXV_RGB(242, 152, 62))
+    CHIP(Levitation, "Levitating", FXV_RGB(116, 172, 255))
+    CHIP(Flying && !Levitation, "Flying", FXV_RGB(116, 172, 255))
+    CHIP(u.usteed, "Riding", FXV_RGB(116, 172, 255))
+#undef CHIP
+    return n;
+}
+
+/* the HP bar's colour for how full it is */
+fxv_color
+fxv_hp_color(int pct)
+{
+    return (pct > 66) ? FXV_RGB(92, 190, 92)
+           : (pct > 33) ? FXV_RGB(214, 170, 52) : FXV_RGB(210, 64, 60);
+}
+
+/* which way each of the six stats went (+1 up, -1 down, 0 neither) in
+   the last 50 turns; the first call takes a baseline. Call it whenever
+   the status is drawn. */
+void
+fxv_stat_arrows(int dir[6])
+{
+    static int seen[6], went[6];
+    static long when[6];
+    static boolean have_seen;
+    int i;
+
+    for (i = 0; i < 6; i++) {
+        int v = ACURR(i);
+
+        if (!have_seen) {
+            seen[i] = v;
+        } else if (v != seen[i]) {
+            went[i] = (v > seen[i]) ? 1 : -1;
+            when[i] = svm.moves;
+            seen[i] = v;
+        }
+        dir[i] = (have_seen && went[i] && svm.moves - when[i] < 50)
+                     ? went[i] : 0;
+    }
+    have_seen = TRUE;
+}
+
+/* the colour of row k (0 at the top, 1 at the bottom) of an HP or Pw bar
+   of colour c in the chosen fx_bar_style: flat, smooth (and striped,
+   which adds darker stripes, fxv_bar_stripe()), gloss, or bevel (whose
+   top and bottom pixel rows the front end lightens and darkens) */
+static fxv_color
+fxv_mix(fxv_color a, fxv_color b, double k)
+{
+    return FXV_RGB((int) (FXV_R(a) + (FXV_R(b) - FXV_R(a)) * k),
+                   (int) (FXV_G(a) + (FXV_G(b) - FXV_G(a)) * k),
+                   (int) (FXV_B(a) + (FXV_B(b) - FXV_B(a)) * k));
+}
+
+fxv_color
+fxv_bar_row(fxv_color c, double k, int row, int rows)
+{
+    fxv_color white = FXV_RGB(255, 255, 255), black = FXV_RGB(0, 0, 0);
+
+    switch (iflags.fx_bar_style) {
+    case 1: /* smooth: lighter at the top, darker at the bottom */
+    case 3: /* striped starts from the same gradient */
+        return fxv_mix(fxv_mix(c, white, 0.22), fxv_mix(c, black, 0.3), k);
+    case 2: /* gloss: a glassy shine over the top half, a bright rim */
+        if (row == 0 && rows > 3)
+            return fxv_mix(c, white, 0.7);
+        if (k < 0.5)
+            return fxv_mix(fxv_mix(c, white, 0.5), fxv_mix(c, white, 0.15),
+                           k / 0.5);
+        return fxv_mix(c, fxv_mix(c, black, 0.28), (k - 0.5) / 0.5);
+    case 4: /* bevel: raised, light top edge and dark bottom edge */
+        if (row == 0)
+            return fxv_mix(c, white, 0.45);
+        if (row == rows - 1 && rows > 2)
+            return fxv_mix(c, black, 0.45);
+        return c;
+    default: /* flat */
+        return c;
+    }
+}
+
+/* the striped style's stripe colour (fx_bar_style 3), or 0 if none */
+fxv_color
+fxv_bar_stripe(fxv_color c)
+{
+    return (iflags.fx_bar_style == 3) ? fxv_mix(c, FXV_RGB(0, 0, 0), 0.3)
+                                      : 0;
+}

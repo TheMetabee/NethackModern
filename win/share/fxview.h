@@ -179,6 +179,17 @@ boolean fxv_missile_turn(const struct fxv_missile *, int dx, int dy,
 boolean fxv_health_bar(int pct, int x, int y, int tw, int th, int bar[4],
                        int fill[4], fxv_color *);
 
+/* the status panel's game logic (the drawing is each front end's) */
+struct fxv_chip {
+    const char *name;
+    fxv_color c;
+};
+int fxv_status_chips(struct fxv_chip *, int max);
+fxv_color fxv_hp_color(int pct);
+void fxv_stat_arrows(int dir[6]);
+fxv_color fxv_bar_row(fxv_color c, double k, int row, int rows);
+fxv_color fxv_bar_stripe(fxv_color c);
+
 /* lighting: a shade layer over the map, FXV_LIGHT_S pixels per square,
    smoothed between squares so light fades off instead of stopping at
    tile edges. fxv_light_layer() builds it and points *pixels at it:
