@@ -22,6 +22,8 @@
 #include "func_tab.h"
 #include "fxview.h"
 
+#include <math.h>
+
 #ifdef SDL_GRAPHICS
 
 /* ---- the port's state --------------------------------------------- */
@@ -70,6 +72,11 @@ static struct {
     int keyq[SDL_KEYQ], kq_head, kq_tail;
     boolean skip_text;         /* the key already gave us this character */
     boolean dirty;
+    boolean animating;         /* auras or flickering light on show */
+    SDL_Texture *disc, *light; /* for dots, and the shade layer */
+    TTF_Font *fxfont[3];       /* floating text, at sdl_fx_font() sizes */
+    int fx_ts;                 /* the tile size those fonts suit */
+    char fontpath[BUFSZ];      /* the font file in use */
     struct {                   /* the menu or text window open, if any */
         struct sdl_win *w;
         int first, how;
@@ -156,11 +163,15 @@ sdl_open_font(float pt)
     TTF_Font *f;
     int i;
 
-    if (env && *env && (f = TTF_OpenFont(env, pt)) != 0)
+    if (env && *env && (f = TTF_OpenFont(env, pt)) != 0) {
+        Snprintf(sdl.fontpath, sizeof sdl.fontpath, "%s", env);
         return f;
+    }
     for (i = 0; i < SIZE(tries); i++)
-        if ((f = TTF_OpenFont(tries[i], pt)) != 0)
+        if ((f = TTF_OpenFont(tries[i], pt)) != 0) {
+            Snprintf(sdl.fontpath, sizeof sdl.fontpath, "%s", tries[i]);
             return f;
+        }
     return (TTF_Font *) 0;
 }
 
@@ -171,6 +182,7 @@ sdl_push_key(int c)
 {
     int next = (sdl.kq_tail + 1) % SDL_KEYQ;
 
+    (void) fxv_snap(); /* a key snaps every sprite back to its square */
     if (next != sdl.kq_head) {
         sdl.keyq[sdl.kq_tail] = c;
         sdl.kq_tail = next;
@@ -264,7 +276,8 @@ sdl_handle_event(const SDL_Event *e)
 static boolean
 sdl_effects_moving(void)
 {
-    return (fxv.nparts || fxv.nfloaters || fxv.nanims || fxv.shake_dur);
+    return (sdl.animating || fxv.nparts || fxv.nfloaters || fxv.nanims
+            || fxv.shake_dur);
 }
 
 /* wait for a key, drawing (and animating) meanwhile */
@@ -321,14 +334,327 @@ sdl_layout(int *top, int *bottom, int *ts, int *ox, int *oy)
     *oy = (*top + *bottom) / 2 - sdl.camy * *ts - *ts / 2;
 }
 
+/* ---- the shared effects (win/share/fxview.c), drawn with SDL ----- */
+
+/* a soft-edged white disc, tinted and stretched for every dot */
+static SDL_Texture *
+sdl_disc(void)
+{
+    enum { D = 64 };
+    static Uint32 px[D * D];
+    int x, y;
+
+    if (sdl.disc)
+        return sdl.disc;
+    for (y = 0; y < D; y++)
+        for (x = 0; x < D; x++) {
+            double dx = x + 0.5 - D / 2.0, dy = y + 0.5 - D / 2.0;
+            double d = sqrt(dx * dx + dy * dy), a = (D / 2.0 - d) * 1.5;
+            Uint32 al = (Uint32) (a <= 0 ? 0 : a >= 1 ? 255 : a * 255);
+
+            px[y * D + x] = (al << 24) | 0xffffffU; /* ARGB8888 */
+        }
+    sdl.disc = SDL_CreateTexture(sdl.ren, SDL_PIXELFORMAT_ARGB8888,
+                                 SDL_TEXTUREACCESS_STATIC, D, D);
+    if (sdl.disc) {
+        (void) SDL_UpdateTexture(sdl.disc, NULL, px, D * 4);
+        (void) SDL_SetTextureScaleMode(sdl.disc, SDL_SCALEMODE_LINEAR);
+    }
+    return sdl.disc;
+}
+
+/* a filled dot of colour c; 'light' adds it onto what's there */
+static void
+sdl_dot(float x, float y, float r, fxv_color c, boolean light)
+{
+    SDL_Texture *t = sdl_disc();
+    SDL_FRect dst;
+
+    if (!t || r <= 0)
+        return;
+    dst.x = x - r, dst.y = y - r, dst.w = dst.h = 2 * r + 1;
+    (void) SDL_SetTextureColorMod(t, (Uint8) FXV_R(c), (Uint8) FXV_G(c),
+                                  (Uint8) FXV_B(c));
+    (void) SDL_SetTextureBlendMode(t, light ? SDL_BLENDMODE_ADD
+                                            : SDL_BLENDMODE_BLEND);
+    (void) SDL_RenderTexture(sdl.ren, t, NULL, &dst);
+}
+
+/* the fonts for floating text, sized to the map's tiles: 0 numbers,
+   1 big hits and "Level N!", 2 status names and sleeping z's */
+static TTF_Font *
+sdl_fx_font(int which, int ts)
+{
+    static const float scale[3] = { 0.55f, 0.80f, 0.42f };
+    int i;
+
+    if (sdl.fx_ts != ts) {
+        for (i = 0; i < 3; i++) {
+            if (sdl.fxfont[i])
+                TTF_CloseFont(sdl.fxfont[i]);
+            sdl.fxfont[i] = TTF_OpenFont(sdl.fontpath,
+                                         max(8.0f, scale[i] * ts));
+            if (sdl.fxfont[i] && i != 2)
+                TTF_SetFontStyle(sdl.fxfont[i], TTF_STYLE_BOLD);
+        }
+        sdl.fx_ts = ts;
+    }
+    return sdl.fxfont[which] ? sdl.fxfont[which] : sdl.font;
+}
+
+/* text in a given font: centred on cx,cy (or top left at it), with a
+   black outline 'o' pixels thick if o > 0, added on as light if asked */
+static void
+sdl_fx_text(TTF_Font *f, float cx, float cy, boolean centred,
+            const char *s, fxv_color c, int o, boolean light)
+{
+    SDL_Color col, black = { 0, 0, 0, 255 };
+    SDL_Surface *surf;
+    SDL_Texture *tex, *out = 0;
+    SDL_FRect dst;
+    int dx, dy;
+
+    if (!s || !*s || !f)
+        return;
+    col.r = (Uint8) FXV_R(c), col.g = (Uint8) FXV_G(c);
+    col.b = (Uint8) FXV_B(c), col.a = 255;
+    if (!(surf = TTF_RenderText_Blended(f, s, 0, col)))
+        return;
+    tex = SDL_CreateTextureFromSurface(sdl.ren, surf);
+    dst.w = (float) surf->w, dst.h = (float) surf->h;
+    SDL_DestroySurface(surf);
+    if (!tex)
+        return;
+    dst.x = centred ? cx - dst.w / 2 : cx;
+    dst.y = centred ? cy - dst.h / 2 : cy;
+    if (o > 0 && (surf = TTF_RenderText_Blended(f, s, 0, black)) != 0) {
+        out = SDL_CreateTextureFromSurface(sdl.ren, surf);
+        SDL_DestroySurface(surf);
+        for (dx = -o; out && dx <= o; dx += o)
+            for (dy = -o; dy <= o; dy += o) {
+                SDL_FRect r = dst;
+
+                if (!dx && !dy)
+                    continue;
+                r.x += dx, r.y += dy;
+                (void) SDL_RenderTexture(sdl.ren, out, NULL, &r);
+            }
+        if (out)
+            SDL_DestroyTexture(out);
+    }
+    if (light)
+        (void) SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_ADD);
+    (void) SDL_RenderTexture(sdl.ren, tex, NULL, &dst);
+    SDL_DestroyTexture(tex);
+}
+
+/* a tile drawn see-through */
+static void
+sdl_tile_alpha(int tile, float x, float y, float size, int alpha)
+{
+    if (!sdl.tiles)
+        return;
+    (void) SDL_SetTextureAlphaMod(sdl.tiles,
+                                  (Uint8) max(0, min(255, alpha)));
+    sdl_tile(tile, x, y, size);
+    (void) SDL_SetTextureAlphaMod(sdl.tiles, 255);
+}
+
+/* the floor tile under a creature on x,y; for plain lit room floor the
+   core sends no background glyph, so it's the room-floor tile */
+static int
+sdl_floor_tile(int x, int y)
+{
+    glyph_info under;
+
+    if (sdl.bkmap[x][y].glyph != NO_GLYPH
+        && sdl.bkmap[x][y].glyph != GLYPH_UNEXPLORED)
+        return sdl.bkmap[x][y].gm.tileidx;
+    map_glyphinfo(x, y, cmap_to_glyph(S_room), 0, &under);
+    return under.gm.tileidx;
+}
+
+/* creatures seen though invisible: floor back under them, and they're
+   laid on top partly see-through (moving ones are drawn as sprites) */
+static void
+sdl_draw_translucent(int ox, int oy, int ts, fxv_ms now)
+{
+    int x, y;
+
+    if (!iflags.fx_auras || Is_rogue_level(&u.uz))
+        return;
+    for (x = 1; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++) {
+            float px = (float) (ox + x * ts), py = (float) (oy + y * ts);
+
+            if (!(sdl.map[x][y].fxauras & FXA_INVIS)
+                || !glyph_is_monster(sdl.map[x][y].glyph)
+                || fxv_square_busy(x, y, now))
+                continue;
+            sdl_tile(sdl_floor_tile(x, y), px, py, (float) ts);
+            sdl_tile_alpha(sdl.map[x][y].gm.tileidx, px, py, (float) ts,
+                           FXV_INVIS_ALPHA);
+        }
+}
+
+/* creatures drawn off their squares: lunges, shakes, slides, fades */
+static void
+sdl_draw_sprites(int ox, int oy, int ts, fxv_ms now)
+{
+    int i;
+
+    for (i = 0; i < fxv.nanims; i++) {
+        struct fxv_anim *a = &fxv.anims[i];
+        float fx, fy, cx, cy;
+        int alpha;
+
+        if (!fxv_anim_pose(a, now, &fx, &fy, &alpha))
+            continue;
+        cx = (float) (ox + a->x * ts), cy = (float) (oy + a->y * ts);
+        if (a->kind == FXM_GHOST || a->kind == FXM_DEATH) {
+            sdl_tile_alpha(a->tile, cx + fx * ts, cy + fy * ts, (float) ts,
+                           alpha);
+            continue;
+        }
+        /* the floor under it, so it doesn't leave a copy behind */
+        sdl_tile(sdl_floor_tile(a->x, a->y), cx, cy, (float) ts);
+        if ((sdl.map[a->x][a->y].fxauras & FXA_INVIS) && iflags.fx_auras)
+            sdl_tile_alpha(a->tile, cx + fx * ts, cy + fy * ts, (float) ts,
+                           FXV_INVIS_ALPHA);
+        else
+            sdl_tile(a->tile, cx + fx * ts, cy + fy * ts, (float) ts);
+    }
+}
+
+/* the shade layer, stretched over the map */
+static void
+sdl_draw_lighting(int ox, int oy, int ts, fxv_ms now, boolean *flicker)
+{
+    const uint32_t *layer;
+    boolean changed, fresh = FALSE;
+    SDL_FRect src, dst;
+
+    if (!fxv_light_layer(now, &layer, &changed, flicker))
+        return;
+    if (!sdl.light) {
+        sdl.light = SDL_CreateTexture(sdl.ren, SDL_PIXELFORMAT_ARGB8888,
+                                      SDL_TEXTUREACCESS_STREAMING,
+                                      FXV_LIGHT_W, FXV_LIGHT_H);
+        if (!sdl.light)
+            return;
+        (void) SDL_SetTextureBlendMode(sdl.light,
+                                       SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+        (void) SDL_SetTextureScaleMode(sdl.light, SDL_SCALEMODE_LINEAR);
+        fresh = TRUE;
+    }
+    if (changed || fresh)
+        (void) SDL_UpdateTexture(sdl.light, NULL, layer, FXV_LIGHT_W * 4);
+    /* column 0 is never part of the level */
+    src.x = (float) FXV_LIGHT_S, src.y = 0;
+    src.w = (float) (FXV_LIGHT_W - FXV_LIGHT_S);
+    src.h = (float) FXV_LIGHT_H;
+    dst.x = (float) (ox + ts), dst.y = (float) oy;
+    dst.w = (float) ((COLNO - 1) * ts), dst.h = (float) (ROWNO * ts);
+    (void) SDL_RenderTexture(sdl.ren, sdl.light, &src, &dst);
+}
+
+/* the glow primitives the shared aura painter draws through */
+static int sdl_glow_ts;
+
+static void
+sdl_glow_dot(void *ctx, int x, int y, int r, fxv_color c)
+{
+    nhUse(ctx);
+    sdl_dot((float) x, (float) y, (float) r, c, TRUE);
+}
+
+static void
+sdl_glow_text(void *ctx, int x, int y, const char *s, fxv_color c)
+{
+    nhUse(ctx);
+    sdl_fx_text(sdl_fx_font(2, sdl_glow_ts), (float) x, (float) y, FALSE,
+                s, c, 0, TRUE);
+}
+
+static int
+sdl_draw_auras(int ox, int oy, int ts, fxv_ms now)
+{
+    struct fxv_glow g;
+
+    (void) memset(&g, 0, sizeof g);
+    g.dot = sdl_glow_dot, g.text = sdl_glow_text;
+    sdl_glow_ts = ts;
+    return fxv_paint_auras(&g, now, ox, oy, ts, ts);
+}
+
+static void
+sdl_draw_particles(int ox, int oy, int ts, fxv_ms now)
+{
+    int i, pass;
+
+    /* a faint glow added on as light, then a solid core on top so it
+       shows even over a bright ray */
+    for (pass = 0; pass < 2; pass++)
+        for (i = 0; i < fxv.nparts; i++) {
+            struct fxv_part *p = &fxv.parts[i];
+            float sx, sy, k, rad;
+            fxv_color c;
+
+            fxv_part_at(p, now, &sx, &sy, &k);
+            if (k < 0 || k >= 1)
+                continue;
+            rad = p->size * ts * (1.0f - 0.55f * k);
+            c = fxv_lerp_color(p->c0, p->c1, k);
+            if (!pass)
+                sdl_dot(ox + sx * ts, oy + sy * ts, rad * 2.2f,
+                        fxv_lerp_color(FXV_RGB(0, 0, 0), c, 0.35f), TRUE);
+            else
+                sdl_dot(ox + sx * ts, oy + sy * ts, max(1.0f, rad), c,
+                        FALSE);
+        }
+}
+
+/* damage numbers, status names and the like, rising and fading */
+static void
+sdl_draw_floaters(int ox, int oy, int ts, fxv_ms now)
+{
+    int i, o = max(1, ts / 24);
+
+    for (i = 0; i < fxv.nfloaters; i++) {
+        struct fxv_floater *f = &fxv.floaters[i];
+        float cx, cy, bright;
+        char buf[32];
+        fxv_color c = f->color;
+
+        if (!fxv_floater_at(f, now, &cx, &cy, &bright))
+            continue;
+        /* fade by darkening, as NetHackW does */
+        if (bright < 1.0f)
+            c = FXV_RGB((int) (FXV_R(c) * bright), (int) (FXV_G(c) * bright),
+                        (int) (FXV_B(c) * bright));
+        fxv_floater_text(f, buf, sizeof buf);
+        sdl_fx_text(sdl_fx_font(f->big ? 1 : f->text[0] ? 2 : 0, ts),
+                    ox + cx * ts, oy + cy * ts, TRUE, buf, c, o, FALSE);
+    }
+}
+
 static void
 sdl_draw_map(void)
 {
-    int top, bottom, ts, ox, oy, x, y;
+    int top, bottom, ts, ox, oy, x, y, w, h;
     SDL_Rect clip;
-    int w, h;
+    Uint64 now = SDL_GetTicks();
+    boolean flicker = FALSE;
+    int auras;
 
     sdl_layout(&top, &bottom, &ts, &ox, &oy);
+    {
+        /* the whole view shakes; messages and status stay still */
+        float sx, sy;
+
+        if (fxv_shake_at((fxv_ms) now, &sx, &sy))
+            ox += (int) (sx * ts), oy += (int) (sy * ts);
+    }
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
     clip.x = 0, clip.y = top, clip.w = w, clip.h = bottom - top;
     SDL_SetRenderClipRect(sdl.ren, &clip);
@@ -344,7 +670,17 @@ sdl_draw_map(void)
             if (fg->glyph != NO_GLYPH)
                 sdl_tile(fg->gm.tileidx, px, py, (float) ts);
         }
+    /* the effects, in NetHackW's order */
+    sdl_draw_translucent(ox, oy, ts, (fxv_ms) now);
+    sdl_draw_sprites(ox, oy, ts, (fxv_ms) now);
+    sdl_draw_lighting(ox, oy, ts, (fxv_ms) now, &flicker);
+    auras = sdl_draw_auras(ox, oy, ts, (fxv_ms) now);
+    sdl_draw_particles(ox, oy, ts, (fxv_ms) now);
+    sdl_draw_floaters(ox, oy, ts, (fxv_ms) now);
     SDL_SetRenderClipRect(sdl.ren, NULL);
+    /* lasting effects and flickering light keep moving by themselves */
+    sdl.animating = (auras > 0 || flicker);
+    (void) fxv_expire((fxv_ms) now);
 }
 
 static void
@@ -631,13 +967,50 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
     return count;
 }
 
+/* ---- what the shared effects need from this port (fxview.h) ------- */
+
+static fxv_ms
+sdl_fxv_now(void)
+{
+    return (fxv_ms) SDL_GetTicks();
+}
+
+static void
+sdl_fxv_start_timer(void)
+{
+    sdl.dirty = TRUE; /* sdl_wait_key() animates while anything moves */
+}
+
+static const glyph_info *
+sdl_fxv_glyph_at(int x, int y)
+{
+    return &sdl.map[x][y];
+}
+
+static boolean
+sdl_fxv_tiles_shown(void)
+{
+    return !Is_rogue_level(&u.uz);
+}
+
+/* the core's fx events (fx.h) */
+static void
+sdl_fx_event(const struct fx_event *ev)
+{
+    fxv_fx_event(ev);
+    sdl.dirty = TRUE;
+}
+
 /* ---- the window procedures ----------------------------------------- */
 
 static void
 sdl_init_nhwindows(int *argc, char **argv)
 {
     SDL_Surface *s;
-    static const struct fxv_hooks hooks = { 0 };
+    static const struct fxv_hooks hooks = {
+        sdl_fxv_now, sdl_fxv_start_timer, sdl_fxv_glyph_at,
+        sdl_fxv_tiles_shown, (fxv_color (*)(int)) 0
+    };
 
     nhUse(argc), nhUse(argv);
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -691,6 +1064,7 @@ sdl_init_nhwindows(int *argc, char **argv)
     }
     (void) memset(&fxv, 0, sizeof fxv);
     fxv_init(&hooks);
+    fx_set_handler(sdl_fx_event);
     SDL_StartTextInput(sdl.window);
     {
         /* for testing: NETHACK_SDL_KEYS="..." is typed in at the start
@@ -735,6 +1109,16 @@ sdl_get_nh_event(void)
 static void
 sdl_exit_nhwindows(const char *str)
 {
+    int i;
+
+    fx_set_handler((fx_handler_fn) 0);
+    for (i = 0; i < 3; i++)
+        if (sdl.fxfont[i])
+            TTF_CloseFont(sdl.fxfont[i]), sdl.fxfont[i] = 0;
+    if (sdl.disc)
+        SDL_DestroyTexture(sdl.disc), sdl.disc = 0;
+    if (sdl.light)
+        SDL_DestroyTexture(sdl.light), sdl.light = 0;
     if (sdl.font)
         TTF_CloseFont(sdl.font), sdl.font = 0;
     if (sdl.tiles)
@@ -973,6 +1357,7 @@ sdl_print_glyph(winid w, coordxy x, coordxy y, const glyph_info *glyphinfo,
         return;
     sdl.map[x][y] = *glyphinfo;
     sdl.bkmap[x][y] = *bkglyphinfo;
+    fxv_glyph_shown(x, y, glyphinfo); /* rays and digging leave sparks */
     sdl.dirty = TRUE;
 }
 

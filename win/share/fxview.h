@@ -176,6 +176,12 @@ void fxv_hero_slide(fxv_ms now, float *offx, float *offy);
 boolean fxv_square_busy(int x, int y, fxv_ms now);
 boolean fxv_snap(void);
 
+/* a front end's fx handler (fx_set_handler()) passes each event here;
+   its print_glyph passes each glyph it puts on the map to
+   fxv_glyph_shown() (rays and digging leave particles) */
+void fxv_fx_event(const struct fx_event *);
+void fxv_glyph_shown(int x, int y, const glyph_info *);
+
 /* drop the particles, floaters and motion that are done; TRUE while
    anything is left (keep the frame timer going) */
 boolean fxv_expire(fxv_ms now);

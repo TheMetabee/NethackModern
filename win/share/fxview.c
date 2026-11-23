@@ -2691,3 +2691,62 @@ fxv_paint_auras(const struct fxv_glow *glow, fxv_ms now, int ox, int oy,
     return n;
 #undef TAU
 }
+
+/* ---- events ------------------------------------------------------- */
+
+/* everything the shared effects do with one fx event: motion, the
+   view's shake, particles and floating text. A front end's fx handler
+   calls this (after anything of its own). */
+void
+fxv_fx_event(const struct fx_event *ev)
+{
+    fxv_ms now = fxv_now();
+
+    fxv_motion_event(ev); /* lunges and shakes */
+    fxv_shake_event(ev);  /* the whole view */
+    if (ev->type == FXE_EXPLODE && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
+        fxv_burst_particles(ev->x, ev->y, ev->adtyp, ev->amount);
+    if (ev->type == FXE_WAND && !(ev->flags & FXF_BULK))
+        fxv_wand_particles(ev);
+    if (ev->type == FXE_TELEPORT && !(ev->flags & FXF_BULK))
+        fxv_teleport_particles(ev);
+    if (ev->type == FXE_SUMMON)
+        fxv_summon_particles(ev);
+    if (ev->type == FXE_ENGRAVE)
+        fxv_engrave_particles(ev);
+    if (ev->type == FXE_QUAFF && !(ev->flags & FXF_UNSEEN))
+        fxv_quaff_particles(ev);
+    if (ev->type == FXE_READ && ev->adtyp == 1 && !(ev->flags & FXF_BULK))
+        fxv_scroll_particles(ev);
+    if (ev->type == FXE_CAST && ev->otyp == SPE_CHAIN_LIGHTNING)
+        fxv_chain_until = (ev->adtyp == 0) ? now + 4000 : 0;
+    if (ev->type == FXE_CAST && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
+        fxv_cast_particles(ev);
+    if (ev->type == FXE_DAMAGE && ev->adtyp == AD_ELEC && now < fxv_chain_until
+        && iflags.fx_particles && isok(ev->x, ev->y)) {
+        /* a creature caught in the chain: a burst of sparks on it */
+        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 40, 0);
+        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 18, 150);
+        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 10, 320);
+        fxv_start_timer();
+    }
+    if ((ev->type == FXE_DETECT || ev->type == FXE_UNIHORN)
+        && !(ev->flags & FXF_UNSEEN))
+        fxv_detect_particles(ev);
+    if (ev->type == FXE_IMPACT && !(ev->flags & FXF_BULK))
+        fxv_impact_particles(ev->x, ev->y,
+                            (ev->flags & FXF_RESISTED) != 0);
+    fxv_floater_event(ev); /* numbers, status names, Killed, Level N */
+}
+
+/* a glyph the front end has just put on the map: digging and rays
+   leave particles where they're drawn */
+void
+fxv_glyph_shown(int x, int y, const glyph_info *shown)
+{
+    if (shown->glyph == cmap_to_glyph(S_digbeam))
+        fxv_dig_particles(x, y);
+    if (glyph_is_cmap_zap(shown->glyph))
+        fxv_ray_particles(x, y, (shown->glyph - GLYPH_ZAP_OFF) >> 2,
+                          (shown->glyph - GLYPH_ZAP_OFF) & 3);
+}

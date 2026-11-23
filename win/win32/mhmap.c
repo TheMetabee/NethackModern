@@ -832,12 +832,8 @@ onMSNHCommand(HWND hWnd, WPARAM wParam, LPARAM lParam)
                 || msg_data->glyphinfo.glyph == cmap_to_glyph(S_poisoncloud)
                 || msg_data->glyphinfo.glyph == cmap_to_glyph(S_cloud)))
             fx_aura_timer(data, TRUE); /* lasting effects, drifting gas */
-        if (msg_data->glyphinfo.glyph == cmap_to_glyph(S_digbeam))
-            fxv_dig_particles(msg_data->x, msg_data->y);
-        if (glyph_is_cmap_zap(msg_data->glyphinfo.glyph))
-            fxv_ray_particles(msg_data->x, msg_data->y,
-                             (msg_data->glyphinfo.glyph - GLYPH_ZAP_OFF) >> 2,
-                             (msg_data->glyphinfo.glyph - GLYPH_ZAP_OFF) & 3);
+        /* digging and rays leave particles (shared, fxview.c) */
+        fxv_glyph_shown(msg_data->x, msg_data->y, &msg_data->glyphinfo);
     } break;
 
     case MSNH_MSG_CLIPAROUND: {
@@ -1703,51 +1699,16 @@ static void
 mswin_fx_event(const struct fx_event *ev)
 {
     PNHMapWindow data = (PNHMapWindow) windowdata[NHW_MAP].address;
-    DWORD now = GetTickCount();
 
     if (ev->type == FXE_UI && ev->text && !strcmp(ev->text, "death"))
         mswin_end_snapshot(); /* the death screen's last words */
     if (!data)
         return;
-    fxv_motion_event(ev); /* lunges and shakes */
     if (ev->type == FXE_MOVE && (ev->flags & FXF_HERO_TARGET)
         && iflags.fx_theme && IsWindow(mswin_hwnd_from_winid(WIN_STATUS)))
         /* the character panel's action bar depends on where we stand */
         InvalidateRect(mswin_hwnd_from_winid(WIN_STATUS), NULL, FALSE);
-    fxv_shake_event(ev);  /* the whole view */
-    if (ev->type == FXE_EXPLODE && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
-        fxv_burst_particles(ev->x, ev->y, ev->adtyp, ev->amount);
-    if (ev->type == FXE_WAND && !(ev->flags & FXF_BULK))
-        fxv_wand_particles(ev);
-    if (ev->type == FXE_TELEPORT && !(ev->flags & FXF_BULK))
-        fxv_teleport_particles(ev);
-    if (ev->type == FXE_SUMMON)
-        fxv_summon_particles(ev);
-    if (ev->type == FXE_ENGRAVE)
-        fxv_engrave_particles(ev);
-    if (ev->type == FXE_QUAFF && !(ev->flags & FXF_UNSEEN))
-        fxv_quaff_particles(ev);
-    if (ev->type == FXE_READ && ev->adtyp == 1 && !(ev->flags & FXF_BULK))
-        fxv_scroll_particles(ev);
-    if (ev->type == FXE_CAST && ev->otyp == SPE_CHAIN_LIGHTNING)
-        fxv_chain_until = (ev->adtyp == 0) ? now + 4000 : 0;
-    if (ev->type == FXE_CAST && !(ev->flags & (FXF_UNSEEN | FXF_BULK)))
-        fxv_cast_particles(ev);
-    if (ev->type == FXE_DAMAGE && ev->adtyp == AD_ELEC && now < fxv_chain_until
-        && iflags.fx_particles && isok(ev->x, ev->y)) {
-        /* a creature caught in the chain: a burst of sparks on it */
-        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 40, 0);
-        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 18, 150);
-        fxv_chain_sparks(ev->x + 0.5f, ev->y + 0.5f, 10, 320);
-        fx_start_timer(data);
-    }
-    if ((ev->type == FXE_DETECT || ev->type == FXE_UNIHORN)
-        && !(ev->flags & FXF_UNSEEN))
-        fxv_detect_particles(ev);
-    if (ev->type == FXE_IMPACT && !(ev->flags & FXF_BULK))
-        fxv_impact_particles(ev->x, ev->y,
-                            (ev->flags & FXF_RESISTED) != 0);
-    fxv_floater_event(ev); /* numbers, status names, Killed, Level N */
+    fxv_fx_event(ev); /* motion, shake, particles, floating text */
 }
 
 static void
