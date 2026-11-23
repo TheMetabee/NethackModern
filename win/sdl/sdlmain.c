@@ -57,7 +57,8 @@ static struct {
     SDL_Window *window;
     SDL_Renderer *ren;
     TTF_Font *font;
-    SDL_Texture *tiles;
+    SDL_Texture *tiles;        /* the tile sheet, key colour cut out */
+    SDL_Texture *tiles_solid;  /* the same, solid: floors, backgrounds */
     int tiles_across;
     int cw, lh;                /* character width, line height */
     int zoom;                  /* map tile = SDL_TILE * zoom pixels */
@@ -307,17 +308,32 @@ sdl_wait_key(void)
 /* ---- drawing ------------------------------------------------------- */
 
 static void
-sdl_tile(int tile, float x, float y, float size)
+sdl_tile_from(SDL_Texture *sheet, int tile, float x, float y, float size)
 {
     SDL_FRect src, dst;
 
-    if (tile < 0 || !sdl.tiles)
+    if (tile < 0 || !sheet)
         return;
     src.x = (float) ((tile % sdl.tiles_across) * SDL_TILE);
     src.y = (float) ((tile / sdl.tiles_across) * SDL_TILE);
     src.w = src.h = (float) SDL_TILE;
     dst.x = x, dst.y = y, dst.w = dst.h = size;
-    SDL_RenderTexture(sdl.ren, sdl.tiles, &src, &dst);
+    SDL_RenderTexture(sdl.ren, sheet, &src, &dst);
+}
+
+/* a creature or object, with its background showing round it */
+static void
+sdl_tile(int tile, float x, float y, float size)
+{
+    sdl_tile_from(sdl.tiles, tile, x, y, size);
+}
+
+/* a floor or other background, solid (the key colour is its colour) */
+static void
+sdl_tile_solid(int tile, float x, float y, float size)
+{
+    sdl_tile_from(sdl.tiles_solid ? sdl.tiles_solid : sdl.tiles, tile, x, y,
+                  size);
 }
 
 static void
@@ -491,7 +507,7 @@ sdl_draw_translucent(int ox, int oy, int ts, fxv_ms now)
                 || !glyph_is_monster(sdl.map[x][y].glyph)
                 || fxv_square_busy(x, y, now))
                 continue;
-            sdl_tile(sdl_floor_tile(x, y), px, py, (float) ts);
+            sdl_tile_solid(sdl_floor_tile(x, y), px, py, (float) ts);
             sdl_tile_alpha(sdl.map[x][y].gm.tileidx, px, py, (float) ts,
                            FXV_INVIS_ALPHA);
         }
@@ -517,7 +533,7 @@ sdl_draw_sprites(int ox, int oy, int ts, fxv_ms now)
             continue;
         }
         /* the floor under it, so it doesn't leave a copy behind */
-        sdl_tile(sdl_floor_tile(a->x, a->y), cx, cy, (float) ts);
+        sdl_tile_solid(sdl_floor_tile(a->x, a->y), cx, cy, (float) ts);
         if ((sdl.map[a->x][a->y].fxauras & FXA_INVIS) && iflags.fx_auras)
             sdl_tile_alpha(a->tile, cx + fx * ts, cy + fy * ts, (float) ts,
                            FXV_INVIS_ALPHA);
@@ -665,10 +681,16 @@ sdl_draw_map(void)
 
             if (px + ts < 0 || py + ts < top || px > w || py > bottom)
                 continue;
-            if (bg->glyph != NO_GLYPH && bg->glyph != GLYPH_UNEXPLORED)
-                sdl_tile(bg->gm.tileidx, px, py, (float) ts);
-            if (fg->glyph != NO_GLYPH)
-                sdl_tile(fg->gm.tileidx, px, py, (float) ts);
+            /* as NetHackW: a background is solid and what's on it has
+               its key colour cut out; with no background (plain lit
+               floor) the tile itself is drawn solid */
+            if (bg->glyph != NO_GLYPH && bg->glyph != GLYPH_UNEXPLORED) {
+                sdl_tile_solid(bg->gm.tileidx, px, py, (float) ts);
+                if (fg->glyph != NO_GLYPH)
+                    sdl_tile(fg->gm.tileidx, px, py, (float) ts);
+            } else if (fg->glyph != NO_GLYPH) {
+                sdl_tile_solid(fg->gm.tileidx, px, py, (float) ts);
+            }
         }
     /* the effects, in NetHackW's order */
     sdl_draw_translucent(ox, oy, ts, (fxv_ms) now);
@@ -1043,13 +1065,31 @@ sdl_init_nhwindows(int *argc, char **argv)
     }
     s = SDL_LoadBMP("tiles.bmp");
     if (s) {
+        SDL_Surface *argb;
+
+        /* solid, for floors and backgrounds */
+        if ((argb = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888)) != 0) {
+            sdl.tiles_solid = SDL_CreateTextureFromSurface(sdl.ren, argb);
+            SDL_DestroySurface(argb);
+            if (sdl.tiles_solid)
+                (void) SDL_SetTextureScaleMode(sdl.tiles_solid,
+                                               SDL_SCALEMODE_NEAREST);
+        }
         (void) SDL_SetSurfaceColorKey(s, true,
                                       SDL_MapSurfaceRGB(s, 71, 108, 108));
-        sdl.tiles = SDL_CreateTextureFromSurface(sdl.ren, s);
+        /* full colour with the key turned into alpha: an 8-bit sheet
+           would otherwise become a palette texture, which ignores the
+           alpha that see-through creatures and fades are drawn with */
+        argb = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888);
         sdl.tiles_across = max(1, s->w / SDL_TILE);
+        sdl.tiles = SDL_CreateTextureFromSurface(sdl.ren, argb ? argb : s);
+        if (argb)
+            SDL_DestroySurface(argb);
         SDL_DestroySurface(s);
-        if (sdl.tiles)
+        if (sdl.tiles) {
+            (void) SDL_SetTextureBlendMode(sdl.tiles, SDL_BLENDMODE_BLEND);
             (void) SDL_SetTextureScaleMode(sdl.tiles, SDL_SCALEMODE_NEAREST);
+        }
     } else {
         raw_printf("SDL: can't load tiles.bmp: %s", SDL_GetError());
     }
@@ -1112,6 +1152,11 @@ sdl_exit_nhwindows(const char *str)
     int i;
 
     fx_set_handler((fx_handler_fn) 0);
+    if (getenv("NETHACK_SDL_KEYS")) {
+        /* testing: what was said, for the person running the test */
+        for (i = max(0, sdl.nmsgs - SDL_MSGKEEP); i < sdl.nmsgs; i++)
+            (void) fprintf(stderr, "msg: %s\n", sdl.msgs[i % SDL_MSGKEEP]);
+    }
     for (i = 0; i < 3; i++)
         if (sdl.fxfont[i])
             TTF_CloseFont(sdl.fxfont[i]), sdl.fxfont[i] = 0;
@@ -1123,6 +1168,8 @@ sdl_exit_nhwindows(const char *str)
         TTF_CloseFont(sdl.font), sdl.font = 0;
     if (sdl.tiles)
         SDL_DestroyTexture(sdl.tiles), sdl.tiles = 0;
+    if (sdl.tiles_solid)
+        SDL_DestroyTexture(sdl.tiles_solid), sdl.tiles_solid = 0;
     if (sdl.ren)
         SDL_DestroyRenderer(sdl.ren), sdl.ren = 0;
     if (sdl.window)
