@@ -62,6 +62,8 @@ static struct {
     int tiles_across;
     int cw, lh;                /* character width, line height */
     float text_px;             /* the text size, pixels (Alt+= / Alt+-) */
+    float auto_text_px;        /* the size that suits the screen */
+    int text_set, zoom_set;    /* fx_text_size, fx_map_zoom as applied */
     int zoom;                  /* index into sdl_zooms[], -1 = automatic */
     int zoom_used;             /* the step the last layout used */
     boolean recentre;          /* put the hero mid-view next layout */
@@ -263,6 +265,12 @@ sdl_handle_event(const SDL_Event *e)
         if (e->type >= SDL_EVENT_WINDOW_FIRST
             && e->type <= SDL_EVENT_WINDOW_LAST)
             sdl.dirty = TRUE;
+        /* the player resized the window: kept as fx_window_size (and so
+           in nethackmodern.rc) */
+        if (e->type == SDL_EVENT_WINDOW_RESIZED && e->window.data1 > 0
+            && e->window.data2 > 0)
+            iflags.fx_window_w = e->window.data1,
+            iflags.fx_window_h = e->window.data2;
         break;
     case SDL_EVENT_MOUSE_WHEEL:
         /* the wheel zooms the map, or turns a menu's pages */
@@ -358,6 +366,8 @@ sdl_handle_event(const SDL_Event *e)
             sdl_text_size(sdl.text_px
                           * ((k == SDLK_MINUS || k == SDLK_KP_MINUS) ? 0.9f
                                                                      : 1.1f));
+            /* kept as fx_text_size (and so in nethackmodern.rc) */
+            iflags.fx_text_size = sdl.text_set = (int) (sdl.text_px + 0.5f);
             sdl.skip_text = TRUE;
             break;
         }
@@ -531,8 +541,50 @@ sdl_zoom(int dir)
         sdl.zoom = max(0, min(SDL_NZOOM - 1,
                               (sdl.zoom >= 0 ? sdl.zoom : sdl.zoom_used)
                                   + dir));
+    /* kept as fx_map_zoom (and so in nethackmodern.rc) */
+    iflags.fx_map_zoom = sdl.zoom_set = (sdl.zoom < 0) ? 0
+                                                       : sdl_zooms[sdl.zoom];
     sdl.recentre = TRUE;
     sdl.dirty = TRUE;
+}
+
+/* the zoom step nearest a square size in pixels (0: automatic) */
+static int
+sdl_zoom_for(int px)
+{
+    int z, best = 0;
+
+    if (px <= 0)
+        return -1;
+    for (z = 1; z < SDL_NZOOM; z++)
+        if (abs(sdl_zooms[z] - px) < abs(sdl_zooms[best] - px))
+            best = z;
+    return best;
+}
+
+/* follow the fx_ options the player may have changed in the options
+   menu (or that the keys changed): text size, zoom, window size */
+static void
+sdl_sync_options(void)
+{
+    if (iflags.fx_text_size != sdl.text_set) {
+        sdl.text_set = iflags.fx_text_size;
+        sdl_text_size(sdl.text_set ? (float) sdl.text_set
+                                   : sdl.auto_text_px);
+    }
+    if (iflags.fx_map_zoom != sdl.zoom_set) {
+        sdl.zoom_set = iflags.fx_map_zoom;
+        sdl.zoom = sdl_zoom_for(sdl.zoom_set);
+        sdl.recentre = TRUE;
+    }
+    if (iflags.fx_window_w && iflags.fx_window_h && sdl.window) {
+        int w, h;
+
+        SDL_GetWindowSize(sdl.window, &w, &h);
+        if (w != iflags.fx_window_w || h != iflags.fx_window_h)
+            (void) SDL_SetWindowSize(sdl.window, iflags.fx_window_w,
+                                     iflags.fx_window_h);
+    }
 }
 
 /* ---- the shared effects (win/share/fxview.c), drawn with SDL ----- */
@@ -988,6 +1040,7 @@ sdl_render(void)
 {
     if (!sdl.ren)
         return;
+    sdl_sync_options();
     sdl_draw_screen();
     sdl_draw_overlay();
     sdl_present();
@@ -1275,6 +1328,8 @@ sdl_init_nhwindows(int *argc, char **argv)
         } else {
             usable.h = 1080;
         }
+        if (iflags.fx_window_w && iflags.fx_window_h) /* fx_window_size */
+            ww = iflags.fx_window_w, wh = iflags.fx_window_h;
         if (!SDL_CreateWindowAndRenderer("NetHack Modern", ww, wh,
                                          SDL_WINDOW_RESIZABLE
                                              | SDL_WINDOW_HIGH_PIXEL_DENSITY,
@@ -1291,11 +1346,15 @@ sdl_init_nhwindows(int *argc, char **argv)
 
             if (scale <= 0.0f)
                 scale = 1.0f;
-            sdl.text_px = (float) usable.h / 64.0f * scale;
+            sdl.auto_text_px = max(14.0f,
+                                   min(64.0f, (float) usable.h / 64.0f
+                                                  * scale));
         }
     }
     SDL_SetRenderVSync(sdl.ren, 1);
-    sdl.text_px = max(14.0f, min(64.0f, sdl.text_px));
+    /* fx_text_size, or the size that suits the screen */
+    sdl.text_set = iflags.fx_text_size;
+    sdl.text_px = sdl.text_set ? (float) sdl.text_set : sdl.auto_text_px;
     sdl.font = sdl_open_font(sdl.text_px);
     if (!sdl.font) {
         raw_print("SDL: no TrueType font found; set NETHACK_FONT to one");
@@ -1332,7 +1391,8 @@ sdl_init_nhwindows(int *argc, char **argv)
     } else {
         raw_printf("SDL: can't load tiles.bmp: %s", SDL_GetError());
     }
-    sdl.zoom = -1, sdl.zoom_used = -1; /* automatic */
+    sdl.zoom_set = iflags.fx_map_zoom; /* fx_map_zoom, or automatic */
+    sdl.zoom = sdl_zoom_for(sdl.zoom_set), sdl.zoom_used = -1;
     sdl.herox = COLNO / 2, sdl.heroy = ROWNO / 2, sdl.recentre = TRUE;
     {
         int x, y;

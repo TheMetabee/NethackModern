@@ -290,6 +290,9 @@ struct instance_flags {
     boolean fx_death_music;    /* NetHack Modern: a tune when you die */
     int fx_volume;             /* NetHack Modern: effects volume, 0..100 */
     int fx_ambience_volume;    /* NetHack Modern: ambience volume, 0..100 */
+    int fx_map_zoom;           /* NetHack Modern: SDL map square, px; 0 auto */
+    int fx_text_size;          /* NetHack Modern: SDL text size, px; 0 auto */
+    int fx_window_w, fx_window_h; /* NetHack Modern: SDL window; 0 auto */
     boolean fx_bar_border;     /* NetHack Modern: outline the HP/Pw bars */
     int fx_bar_style;          /* NetHack Modern: 0 flat, 1 smooth, 2 gloss,
                                 * 3 striped, 4 bevel */

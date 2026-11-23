@@ -420,6 +420,15 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTC(fx_volume, Advanced, 4, opt_in, set_in_game,
                 Yes, Yes, No, No, NoAlias,
                 "volume of the sound effects, 0 to 100")
+    NHOPTC(fx_map_zoom, Advanced, 8, opt_in, set_in_game,
+                No, Yes, No, Yes, NoAlias,
+                "SDL: map square size in pixels, or auto to show the whole level")
+    NHOPTC(fx_text_size, Advanced, 8, opt_in, set_in_game,
+                No, Yes, No, Yes, NoAlias,
+                "SDL: text size in pixels, or auto to suit the screen")
+    NHOPTC(fx_window_size, Advanced, 12, opt_in, set_in_game,
+                No, Yes, No, Yes, NoAlias,
+                "SDL: window size as WIDTHxHEIGHT, or auto")
     NHOPTB(fx_theme, Advanced, 0, opt_out, set_in_config,
            On, Yes, No, No, NoAlias, &iflags.fx_theme, Term_False,
            "NetHackW: modern dark theme and fonts (overrides windowcolors)")

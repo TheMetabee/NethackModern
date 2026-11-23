@@ -401,6 +401,9 @@ staticfn int handler_perminv_mode(void);
 staticfn int handler_pickup_burden(void);
 staticfn int handler_pickup_types(void);
 staticfn int handler_runmode(void);
+staticfn int handler_fx_size(int); /* NetHack Modern */
+staticfn int optfn_fx_pixels_common(int, int, boolean, char *, int *, int,
+                                   int);
 staticfn int handler_petattr(void);
 staticfn int handler_sortloot(void);
 staticfn int handler_symset(int);
@@ -3999,6 +4002,108 @@ optfn_fx_ambience_volume(int optidx, int req, boolean negated, char *opts,
                                   &iflags.fx_ambience_volume, 60);
 }
 
+/* NetHack Modern: a size in pixels from lo to hi, or "auto" (0) */
+staticfn int
+optfn_fx_pixels_common(int optidx, int req, boolean negated, char *opts,
+                       int *val, int lo, int hi)
+{
+    char *op;
+
+    if (req == do_init) {
+        *val = 0;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        op = string_for_opt(opts, negated);
+        if (negated || (op != empty_optstr && !strcmpi(op, "auto"))) {
+            *val = 0;
+        } else if (op != empty_optstr) {
+            int v = atoi(op);
+
+            if (v < lo || v > hi) {
+                config_error_add("%s must be auto or from %d to %d",
+                                 allopt[optidx].name, lo, hi);
+                return optn_err;
+            }
+            *val = v;
+        } else {
+            return optn_err;
+        }
+        return optn_ok;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        if (*val)
+            Sprintf(opts, "%d", *val);
+        else
+            Strcpy(opts, "auto");
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
+/* NetHack Modern: the SDL map's square size (its zoom) */
+staticfn int
+optfn_fx_map_zoom(int optidx, int req, boolean negated, char *opts, char *op)
+{
+    nhUse(op);
+    if (req == do_handler)
+        return handler_fx_size(optidx);
+    return optfn_fx_pixels_common(optidx, req, negated, opts,
+                                  &iflags.fx_map_zoom, 8, 128);
+}
+
+/* NetHack Modern: the SDL window's text size */
+staticfn int
+optfn_fx_text_size(int optidx, int req, boolean negated, char *opts,
+                   char *op)
+{
+    nhUse(op);
+    if (req == do_handler)
+        return handler_fx_size(optidx);
+    return optfn_fx_pixels_common(optidx, req, negated, opts,
+                                  &iflags.fx_text_size, 8, 96);
+}
+
+/* NetHack Modern: the SDL window's size, WIDTHxHEIGHT or auto */
+staticfn int
+optfn_fx_window_size(int optidx, int req, boolean negated, char *opts,
+                     char *op)
+{
+    nhUse(op);
+    if (req == do_handler)
+        return handler_fx_size(optidx);
+    if (req == do_init) {
+        iflags.fx_window_w = iflags.fx_window_h = 0;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        int w = 0, h = 0;
+
+        op = string_for_opt(opts, negated);
+        if (negated || (op != empty_optstr && !strcmpi(op, "auto"))) {
+            iflags.fx_window_w = iflags.fx_window_h = 0;
+            return optn_ok;
+        }
+        if (op == empty_optstr || sscanf(op, "%dx%d", &w, &h) != 2
+            || w < 320 || h < 240 || w > 16384 || h > 16384) {
+            config_error_add("%s must be auto or WIDTHxHEIGHT, "
+                             "at least 320x240",
+                             allopt[optidx].name);
+            return optn_err;
+        }
+        iflags.fx_window_w = w, iflags.fx_window_h = h;
+        return optn_ok;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        if (iflags.fx_window_w && iflags.fx_window_h)
+            Sprintf(opts, "%dx%d", iflags.fx_window_w, iflags.fx_window_h);
+        else
+            Strcpy(opts, "auto");
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
 staticfn int
 optfn_scroll_amount(
     int optidx, int req, boolean negated,
@@ -6404,6 +6509,85 @@ handler_runmode(void)
     if (select_menu(tmpwin, PICK_ONE, &mode_pick) > 0) {
         flags.runmode = mode_pick->item.a_int - 1;
         free((genericptr_t) mode_pick);
+    }
+    destroy_nhwindow(tmpwin);
+    return optn_ok;
+}
+
+/* NetHack Modern: pick fx_text_size, fx_map_zoom or fx_window_size from
+   a few ready-made sizes, or type one in */
+staticfn int
+handler_fx_size(int optidx)
+{
+    struct fx_preset {
+        const char *label, *value; /* value 0: type one in */
+    };
+    static const struct fx_preset texts[] = {
+        { "Auto (suits the screen)", "auto" }, { "Small (16)", "16" },
+        { "Medium (20)", "20" }, { "Large (24)", "24" },
+        { "Larger (28)", "28" }, { "Huge (34)", "34" },
+        { "Custom size in pixels...", 0 },
+    }, zooms[] = {
+        { "Auto (show the whole level)", "auto" }, { "Tiny (12)", "12" },
+        { "Small (16)", "16" }, { "Medium (24)", "24" },
+        { "Large (32)", "32" }, { "Larger (48)", "48" },
+        { "Huge (64)", "64" }, { "Custom square size in pixels...", 0 },
+    }, windows[] = {
+        { "Auto (most of the screen)", "auto" },
+        { "1280 x 800", "1280x800" }, { "1600 x 1000", "1600x1000" },
+        { "1920 x 1080", "1920x1080" }, { "1920 x 1200", "1920x1200" },
+        { "2560 x 1440", "2560x1440" },
+        { "Custom WIDTHxHEIGHT...", 0 },
+    };
+    const struct fx_preset *set;
+    int n, i;
+    const char *what;
+    winid tmpwin;
+    anything any;
+    menu_item *pick = (menu_item *) 0;
+    char now[BUFSZ], buf[BUFSZ], prompt[BUFSZ];
+
+    if (optidx == opt_fx_text_size)
+        set = texts, n = SIZE(texts), what = "Text size";
+    else if (optidx == opt_fx_map_zoom)
+        set = zooms, n = SIZE(zooms), what = "Map zoom";
+    else
+        set = windows, n = SIZE(windows), what = "Window size";
+    now[0] = '\0';
+    (void) (*allopt[optidx].optfn)(optidx, get_val, FALSE, now,
+                                   empty_optstr);
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    for (i = 0; i < n; i++) {
+        any.a_int = i + 1;
+        add_menu(tmpwin, &nul_glyphinfo, &any, 'a' + i, 0, ATR_NONE,
+                 NO_COLOR, set[i].label,
+                 (set[i].value && !strcmpi(set[i].value, now))
+                     ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
+    }
+    Snprintf(prompt, sizeof prompt, "%s (now %s):", what, now);
+    end_menu(tmpwin, prompt);
+    if (select_menu(tmpwin, PICK_ONE, &pick) > 0) {
+        i = pick->item.a_int - 1;
+        free((genericptr_t) pick);
+        if (set[i].value) {
+            Strcpy(buf, set[i].value);
+        } else {
+            Snprintf(prompt, sizeof prompt, "%s (%s):", what,
+                     optidx == opt_fx_window_size ? "WIDTHxHEIGHT or auto"
+                                                  : "pixels or auto");
+            getlin(prompt, buf);
+            (void) mungspaces(buf);
+        }
+        if (buf[0] && buf[0] != '\033') {
+            char opt[BUFSZ + 40];
+
+            Snprintf(opt, sizeof opt, "%s:%s", allopt[optidx].name, buf);
+            if ((*allopt[optidx].optfn)(optidx, do_set, FALSE, opt,
+                                        empty_optstr) != optn_ok)
+                pline("That isn't a size %s can be.", what);
+        }
     }
     destroy_nhwindow(tmpwin);
     return optn_ok;
