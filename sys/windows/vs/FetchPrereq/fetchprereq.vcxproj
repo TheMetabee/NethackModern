@@ -68,13 +68,17 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="Exists('$(LibDir)pdcursesmod') AND Exists('$(LibDir)lua-$(LUA_VERSION)')">
-    <NMakeBuildCommandLine>echo lib\pdcursesmod and lib\lua-$(LUA_VERSION) are already present</NMakeBuildCommandLine>
+  <!-- NetHack Modern: what fetchprereq.nmake fetches now: PDCursesMod,
+       and SDL3 and SDL3_ttf for NetHackSDL.exe (Lua comes from a
+       submodule, so lib\lua-* is never there: checking for it made every
+       build download everything again) -->
+  <PropertyGroup Condition="Exists('$(LibDir)pdcursesmod') AND Exists('$(LibDir)SDL3') AND Exists('$(LibDir)SDL3_ttf')">
+    <NMakeBuildCommandLine>echo lib\pdcursesmod, lib\SDL3 and lib\SDL3_ttf are already present</NMakeBuildCommandLine>
     <NMakeCleanCommandLine>pushd $(vsDir)fetchprereq %26%26 nmake -F fetchprereq.nmake clean %26%26 popd</NMakeCleanCommandLine>
-    <NMakeReBuildCommandLine>echo rebuilding lib\pdcursesmod and lib\lua-$(LUA_VERSION)</NMakeReBuildCommandLine>
+    <NMakeReBuildCommandLine>echo rebuilding lib\pdcursesmod, lib\SDL3 and lib\SDL3_ttf</NMakeReBuildCommandLine>
     <NMakePreprocessorDefinitions>_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
   </PropertyGroup>
-  <PropertyGroup Condition="!Exists('$(LibDir)pdcursesmod') OR !Exists('$(LibDir)lua-$(LUA_VERSION)')">
+  <PropertyGroup Condition="!Exists('$(LibDir)pdcursesmod') OR !Exists('$(LibDir)SDL3') OR !Exists('$(LibDir)SDL3_ttf')">
     <NMakeBuildCommandLine>pushd $(vsDir)fetchprereq %26%26 nmake -F fetchprereq.nmake %26%26 popd</NMakeBuildCommandLine>
     <NMakeCleanCommandLine>pushd $(vsDir)fetchprereq %26%26 nmake -F fetchprereq.nmake clean %26%26 popd</NMakeCleanCommandLine>
     <NMakeReBuildCommandLine>pushd $(vsDir)fetchprereq %26%26 nmake -F fetchprereq.nmake rebuild %26%26 popd</NMakeReBuildCommandLine>

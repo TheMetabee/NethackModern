@@ -3,14 +3,21 @@
 <img width="3227" height="1825" alt="image" src="https://github.com/user-attachments/assets/13bf635f-0137-4cbe-af8b-fea718783347" />
 
 NetHack Modern is a fork of **NetHack 5.0** that changes how the game
-looks and sounds on Windows. It adds a dark interface, floating damage
-numbers, health bars, animations, particle effects, lighting, and a full
-set of sound effects and level ambience. **The game itself is unchanged.**
-Every rule, monster, item and random roll is vanilla NetHack 5.0, and your
-saves are ordinary 5.0 saves.
+looks and sounds, on Windows and Linux. It adds a dark interface,
+floating damage numbers, health bars, animations, particle effects,
+lighting, and a full set of sound effects and level ambience. **The game
+itself is unchanged.** Every rule, monster, item and random roll is
+vanilla NetHack 5.0, and your saves are ordinary 5.0 saves.
+
+It comes in two windows that look and play alike:
+
+- **The SDL window** (`NetHackSDL.exe` on Windows, the AppImage on
+  Linux), a new front end that draws with the GPU.
+- **NetHackW** (`NetHackW.exe`, Windows only), NetHack's own Windows
+  tiles interface, restyled.
 
 Each addition has its own option, so you can turn off any of them and get
-back the look of stock NetHackW.
+back the look of stock NetHack.
 
 **Not a variant, but not stock NetHack either.** NetHack Modern changes
 NetHack's source code: it adds small hooks that tell the interface what
@@ -52,20 +59,17 @@ the last.
 
 **Done so far:** the event stream, damage numbers and health bars,
 status text, sound, animation, lasting status effects, the interface,
-level ambience, lighting, tilesets and pointing projectiles.
+level ambience, lighting, tilesets and pointing projectiles; the **SDL
+window**, which draws all of it with the GPU, on Windows and Linux; and
+a **Linux AppImage** with sound.
 
 **Still to do:**
 
-- Fix the rough edges found in play. Most of the recent work has been
-  this, such as keeping the screen in step with fast movement.
-- Make drawing cheaper. NetHackW draws with GDI, which is slow at
-  blending and scaling, especially with large tiles.
-- Build a new **SDL** front end that draws with the GPU and reads the
-  same event stream, for smooth scaling, blending and lighting at any
-  tile size. Qt is the fallback.
-- **Linux and macOS ports are a work in progress.** Today everything is
-  in the Windows tiles interface. The SDL front end is the way to bring
-  the same effects and sound to Linux and macOS.
+- Fix the rough edges found in play.
+- **More platforms.** The SDL window is the way to macOS and Linux on
+  ARM; neither is built yet.
+- Bring the SDL window up to NetHackW where it's behind: NetHackW still
+  has the tileset picker and ASCII map modes.
 
 [`docs/modern/ROADMAP.md`](docs/modern/ROADMAP.md) has the full history
 and design notes.
@@ -100,7 +104,9 @@ and feel better while the game underneath stays vanilla.
   skip the per-step animation, and damage is added up into one number.
   When nothing is moving, the map redraws just as stock NetHack does.
 - **Other interfaces.** The tty, curses and other ports build and play as
-  before. All the visual work is in the Windows tiles port, `NetHackW.exe`.
+  before. All the visual work is in the SDL window and NetHackW. The
+  console `NetHack.exe` is stock; in the Linux build the terminal game
+  looks stock but plays the new sounds.
 
 ## What's new
 
@@ -185,15 +191,20 @@ light, medium, dark or deep.
 
 ### Interface
 
-- **Dark theme.** One dark palette, Segoe UI fonts, a dark title bar and
+Both windows share this look; the few differences are noted.
+
+- **Dark theme.** One dark palette, clean fonts, a dark title bar and
   flat panels in place of the sunken Win32 look.
-- **Menu bar by topic:** Game, View, Move, Items, Gear, Act, Magic, Info,
-  Help. Each entry shows its key, so the menus also teach the keys.
+- **Menu bar by topic:** Game, View, Items, Gear, Act, Magic, Info,
+  Help (NetHackW adds Move). Each entry shows its key, so the menus also
+  teach the keys.
 - **Character panel.** Title, HP and Pw as coloured bars, a stat grid
   with up and down arrows when a stat changes, your conditions, and an
-  equipment doll showing the tiles of what you wear and wield.
-- **Action bar.** Buttons for what makes sense right now, such as Pick
-  up, Eat, Search or Rest, each with its key.
+  equipment doll showing the tiles of what you wear and wield. On a
+  narrow window the parts give way in turn, but the dungeon level always
+  shows.
+- **Action buttons.** Buttons for what makes sense right now, such as Go
+  up, Search or Rest, each with its key, floating just above the panel.
 - **Messages on the map.** The latest messages float over a corner of the
   map with an outline that reads over any floor. Older turns fade and
   then drop away. Important ones are coloured (traps, "You see here",
@@ -224,6 +235,14 @@ light, medium, dark or deep.
 
 ![The character screen: an elven Wizard, with lawful dimmed and the note "Elven Wizards can't be lawful."](docs/modern/media/character-creation.png)
 
+- **Saved heroes.** If you have saved games, Play leads to a **Choose
+  your hero** screen first: a card for each, with the hero's tile (the
+  race's creature if you use `showrace`), name, alignment, race and role,
+  and an Explore or Wizard badge if it was played that way. Continue
+  (or double-click a card), start a New hero, or Delete one after a
+  "Delete ... for good?" check. Many saves scroll. With none, Play goes
+  straight to the name screen.
+
 - **Death screen and high scores.** When your hero dies, a full-window
   screen takes the place of the old tombstone pop-up. It shows a
   weathered gravestone, your final words (the messages of your last
@@ -237,10 +256,31 @@ light, medium, dark or deep.
 
 ![The high score list, with the newest hero highlighted](docs/modern/media/high-scores.png)
 
+### The SDL window
+
+The SDL window draws everything above with the GPU, so scaling, blending
+and lighting stay smooth at any size. It runs on Windows and Linux, and
+adds a few things of its own:
+
+- **Fonts of your choice.** View > Fonts... (or `#fonts`) opens a window
+  of drop-downs: a font and a style (regular, bold, italic) for the
+  text, the messages on the map, the floating numbers, and the title,
+  character and end screens, each with a sample line. The text's list
+  holds only monospace fonts, so its columns line up. Real bold and
+  italic font files are used where the font has them.
+- **Conditions on the map.** Burdened, Hungry, Confused and the rest show
+  as chips on the map rather than at the panel's end, where a narrow
+  window would push them out of sight. By default they're a row at the
+  top left; the View menu moves them to any corner (or back into the
+  panel) and switches between a row and a column. They step round the
+  action buttons, and messages move aside only if they'd overlap.
+- **Text and window size.** Alt+= and Alt+- make the text larger or
+  smaller; the window remembers its size. Both are options too.
+
 ### Tilesets
 
-The View menu can switch between the built-in tiles and any tile image
-laid out like NetHack 5.0's own `tiles.bmp`. The tile size is worked out
+In NetHackW, the View menu can switch between the built-in tiles and any
+tile image laid out like NetHack 5.0's own `tiles.bmp`. The tile size is worked out
 from the image, and zoom keeps tiles at a sensible size on screen, so
 large tiles fit the whole level and show their detail when you zoom in.
 No third-party tileset ships with NetHack Modern. Older tilesets made for
@@ -250,7 +290,8 @@ the 3.6 layout need converting to the 5.0 layout first.
 
 NetHack Modern adds a new sound library built on
 [miniaudio](https://miniaud.io/), which can play many sounds at once,
-unlike the basic Windows `PlaySound` backend. It has about 700 samples:
+unlike the basic Windows `PlaySound` backend, and works on Linux too. It
+has about 700 samples:
 
 - weapon sounds for each weapon skill, with elemental layers for fire,
   cold and shock;
@@ -280,11 +321,25 @@ a low drone and a cold wind. Turn it off with the `fx_death_music` option.
 
 ## Playing
 
-NetHack Modern runs on Windows for now; Linux and macOS ports are a work
-in progress (see [Status and plans](#status-and-plans)). Download the
-release zip, unpack
-it anywhere and run **`NetHackW.exe`**. Keep the `sounds` folder next to
-the exe: that's where the game looks for its sounds.
+Download the release for your system from the releases page.
+
+**Windows:** unpack the zip anywhere and run **`NetHackSDL.exe`** (the
+SDL window) or **`NetHackW.exe`** (NetHackW). Both use the same saves
+and settings, so you can switch between them. Keep everything else in
+the folder next to the exe: the `sounds` folder, the SDL DLLs, and
+`tiles.bmp` and `splash_art.png`, which the SDL window reads.
+
+**Linux:** make the AppImage executable and run it:
+
+```
+chmod +x NetHackModern-v*-x86_64.AppImage
+./NetHackModern-v*-x86_64.AppImage
+```
+
+It opens the SDL window. Saves, scores and the `sysconf` file live in
+`~/.local/share/nethackmodern` (set `NETHACKMODERN_DIR` to use another
+folder). Your config file is `~/.nethackrc` as usual. With no desktop to
+open a window on, it falls back to the terminal game.
 
 Everything else plays like NetHack. The [NetHack Guidebook](doc/) and
 the in-game help (`?`) cover the game itself.
@@ -298,6 +353,9 @@ the in-game help (`?`) cover the game itself.
 | Ctrl+mouse wheel | zoom in or out |
 | Ctrl+0 | back to the default zoom, which fits the whole level |
 | Ctrl+P | scroll back through earlier messages |
+| Ctrl+M | menu music off or on (title and creation screens) |
+| Alt+= / Alt+- | larger or smaller text (SDL window) |
+| `#fonts` | choose fonts (SDL window; also View > Fonts...) |
 
 Every other key is NetHack's own. The menu bar lists each command with
 its key, so it doubles as a key reference.
@@ -305,10 +363,12 @@ its key, so it doubles as a key reference.
 ### Remembered settings
 
 Any `fx_` option you change while playing, from the menu bar or the
-full options menu (`m O`), is saved to **`nethackmodern.rc`**. It sits beside
-your own NetHack config file (normally in `%USERPROFILE%\NetHack\`) and
-is read after it. Your own config file is never touched. To go back to
-your own settings, delete a line from that file, or the whole file.
+full options menu (`m O`), is saved to **`nethackmodern.rc`**. It sits
+beside your own NetHack config file (on Windows normally in
+`%USERPROFILE%\NetHack\`; on Linux in your home folder, beside
+`.nethackrc`) and is read after it. Your own config file is never
+touched. To go back to your own settings, delete a line from that file,
+or the whole file.
 
 You can also set any of the options below in your own config file as
 usual, for example `OPTIONS=!fx_screen_shake,fx_shade:dark`.
@@ -346,11 +406,34 @@ Every addition has an option, under `fx_` names in the full options list
 | `fx_menu_music` | on | music on the title and character creation screens |
 | `fx_death_music` | on | a mournful tune when your hero dies |
 | `fx_hide_inventory` | off | keep the inventory side panel hidden |
+| `fx_action_buttons` | on | buttons for what can be done here, above the panel |
+
+These are for the SDL window only:
+
+| Option | Default | What it does |
+|---|---|---|
+| `fx_map_zoom` | auto | map square size in pixels; auto fits the whole level |
+| `fx_text_size` | auto | text size in pixels; auto suits the screen |
+| `fx_window_size` | auto | window size as WIDTHxHEIGHT |
+| `fx_font_text` | auto | font for menus, status and the messages list (monospace) |
+| `fx_font_message` | auto | font for messages on the map |
+| `fx_font_float` | auto | font for floating numbers on the map |
+| `fx_font_title` | auto | font for the screens' headings |
+| `fx_font_screen` | auto | font for the rest of those screens |
+| `fx_cond_pos` | top-left | where conditions show: top-left, bottom-left, top-right, bottom-right, panel |
+| `fx_cond_layout` | row | conditions in a row or a column |
+
+A font option takes a font's name, then `bold`, `italic` or
+`bold italic` if wanted, for example
+`OPTIONS=fx_font_message:Segoe UI italic`; or a font file; or `auto`
+for the window's own.
 
 The tileset is NetHack's own `tile_file` option (`tile_file:none` means
-the built-in tiles).
+the built-in tiles; NetHackW only).
 
 ## Building from source
+
+### Windows
 
 You need **Visual Studio 2022** with the "Desktop development with C++"
 workload.
@@ -363,10 +446,37 @@ workload.
    msbuild NetHack.sln -m -p:Configuration=Release -p:Platform=x64
    ```
 
-2. The game lands in `vsbinary\`: `NetHackW.exe` (tiles), `NetHack.exe`
-   (console), the game data and the `sounds` folder.
+2. The build fetches PDCursesMod and the prebuilt SDL3 and SDL3_ttf
+   packages into `lib\` the first time (the `fetchprereq` project).
 
-3. Close the game before rebuilding, or the linker can't replace the exe.
+3. The `package` project gathers the game into `vsbinary\`:
+   `NetHackSDL.exe` (the SDL window) with its DLLs, `tiles.bmp` and
+   `splash_art.png`, `NetHackW.exe` (NetHackW), `NetHack.exe` (console),
+   the game data and the `sounds` folder:
+
+   ```
+   msbuild NetHack.sln -t:package -p:Configuration=Release -p:Platform=x64
+   ```
+
+4. Close the game before rebuilding, or the linker can't replace the exe.
+
+### Linux
+
+The SDL window needs SDL3 and SDL3_ttf 3.x;
+`sys/unix/appimage/build-sdl3.sh` builds them from source if your
+distribution doesn't have them. Then, from the top of the tree:
+
+```
+sh sys/unix/setup.sh sys/unix/hints/linux.501
+make WANT_WIN_TTY=1 WANT_WIN_CURSES=1 WANT_WIN_SDL=1 WANT_DEFAULT=sdl \
+     WANT_MINIAUDIO=1 install
+```
+
+(Set `PKG_CONFIG_PATH` if SDL3 isn't installed system-wide.) The CI
+workflow `.github/workflows/modern-linux.yml` builds the AppImage the
+same way, with `sys/unix/appimage/build-appimage.sh`.
+
+### Testing
 
 For testing, `scripts\wizard.cmd` starts the build in wizard (debug) mode
 as the player "wizard". It also writes every presentation event to
@@ -375,6 +485,12 @@ the sysconf file, normally `C:\ProgramData\NetHack\5.0\sysconf`.
 
 Setting the environment variable `NETHACK_FXLOG=<file>` logs the same
 events with any interface.
+
+The SDL window can be driven without a screen, for automated checks:
+`SDL_VIDEO_DRIVER=offscreen`, with `NETHACK_SDL_KEYS` typing keys in at
+the start and `NETHACK_SDL_SHOT=<file.png>` saving each frame drawn.
+`NETHACK_SDL_TEST_CONDS` shows a few sample conditions. Run such tests
+in a game folder of their own, not your real one.
 
 ## How it works
 
@@ -407,12 +523,15 @@ fx_spell(x, y, spell_or_zap_type)
   generator, never change the game and are never saved. They're only
   sent for things the hero can perceive.
 - **Two listeners.** The display listener (`fx_set_handler`) is the
-  NetHackW map. The sound listener (`fx_set_audio_handler`) is the
-  miniaudio sound library. A front end that registers neither gets
-  nothing, so tty and curses carry on unchanged.
-
-Because a future front end would read the same event stream, the core
-work carries over to it.
+  NetHackW map or the SDL window. The sound listener
+  (`fx_set_audio_handler`) is the miniaudio sound library. A front end
+  that registers no display listener draws nothing new, so tty and
+  curses look as they always did.
+- **Shared drawing logic.** Both windows draw the same effects from one
+  shared module, `win/share/fxview.c`: particles, floating text, motion,
+  auras, lighting, the panel's parts, and the title, character, saved
+  heroes and end screens' rules, wording and layout. Each window only
+  supplies its own way of drawing a box, a tile or a line of text.
 
 ### Where the code is
 
@@ -421,7 +540,11 @@ work carries over to it.
 | `src/fx.c`, `include/fx.h` | the presentation event stream |
 | `sound/miniaudio/` | the miniaudio sound library (`masound.c`) |
 | `sound/modern/` | sound samples, ambience loops and `attributions.txt` |
-| `win/win32/` | the NetHackW port: map effects and lighting (`mhmap.c`), character panel (`mhstatus.c`), messages (`mhmsgwnd.c`), menus (`mhmenu.c`), menu bar and window (`mhmain.c`), splash (`mhsplash.c`), theme colours (`mhtheme.h`) |
+| `win/share/fxview.c`, `fxview.h` | effects and screen logic shared by both windows |
+| `win/sdl/sdlmain.c` | the SDL window |
+| `win/win32/` | the NetHackW port: map effects and lighting (`mhmap.c`), character panel (`mhstatus.c`), messages (`mhmsgwnd.c`), menus (`mhmenu.c`), menu bar and window (`mhmain.c`), title screen (`mhsplash.c`), name, character and saved heroes screens (`mhcharsel.c`), end screens (`mhend.c`), theme colours (`mhtheme.h`) |
+| `sys/windows/vs/NetHackSDL/` | the Visual Studio project for `NetHackSDL.exe` |
+| `sys/unix/appimage/` | building SDL3 and the Linux AppImage |
 | `docs/modern/ROADMAP.md` | design notes, phases and the full options table |
 | `MODERN.md` | notes for developers: remotes, merging upstream, where code goes |
 
@@ -445,8 +568,15 @@ new files above, it changes:
   options, and `tile_file:none`.
 - **`src/cfgfiles.c`**: writing remembered settings to
   `nethackmodern.rc`.
+- **`src/windows.c`, `include/config.h`, `include/global.h`**: the SDL
+  window as a choice of interface, with tiles.
+- **`src/cmd.c`**: the `#fonts` command.
+- **`sys/windows/windmain.c`**: starting `NetHackSDL.exe` with no
+  console and the SDL window only.
+- **`sys/unix/hints/`** and **`sys/unix/unixmain.c`**: building the SDL
+  window and the sound library on Linux.
 - **`win/win32/`** and the Visual Studio project files: the restyled
-  port and the new sound library.
+  port, `NetHackSDL.exe`, and the new sound library.
 
 ## Credits and licences
 
@@ -467,5 +597,9 @@ new files above, it changes:
   The royalty-free packs are included only as part of this game. Don't
   extract them and redistribute them as sound packs.
 - **miniaudio** by David Reid, public domain or MIT No Attribution.
+- **SDL3** and **SDL3_ttf** by Sam Lantinga and the SDL contributors,
+  under the zlib licence (SDL3_ttf includes FreeType and HarfBuzz).
+- **DejaVu fonts**, shipped in the Linux AppImage, under the DejaVu
+  (Bitstream Vera) licence, which is included beside them.
 - **Splash art:** see
   [`win/win32/ART-CREDITS.txt`](win/win32/ART-CREDITS.txt).
