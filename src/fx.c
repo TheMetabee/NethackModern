@@ -194,6 +194,8 @@ fx_typename(int type)
         return "ENGRAVE";
     case FXE_CAST:
         return "CAST";
+    case FXE_SEARCH:
+        return "SEARCH";
     }
     return "?";
 }
@@ -1070,6 +1072,31 @@ fx_engrave(int kind, int etype, boolean first)
               : is_ice(u.ux, u.uy) ? FXG_SURF_ICE
               : (lev->typ == DRAWBRIDGE_DOWN) ? FXG_SURF_WOOD
               : FXG_SURF_FLOOR;
+    fx_emit(&ev);
+}
+
+/* the hero searches by command (dosearch(); intrinsic and ring searching
+   call dosearch0() directly and never get here). A counted search
+   ("20s") is bulk after its first turn, so ports show only the start. */
+void
+fx_search(void)
+{
+    static long last_moves = -10L;
+    static boolean last_counted = FALSE;
+    struct fx_event ev;
+    boolean counted = (fx_bulk_flag() != 0U),
+            going_on = (counted && last_counted
+                        && svm.moves - last_moves <= 2L);
+
+    last_moves = svm.moves, last_counted = counted;
+    if (!fx_active() || u.uswallow)
+        return;
+    (void) memset((genericptr_t) &ev, 0, sizeof ev);
+    ev.type = FXE_SEARCH;
+    ev.flags = FXF_HERO_SOURCE | FXF_HERO_TARGET | (Blind ? FXF_UNSEEN : 0U)
+               | (going_on ? FXF_BULK : 0U);
+    ev.x = ev.sx = u.ux, ev.y = ev.sy = u.uy;
+    ev.adtyp = -1;
     fx_emit(&ev);
 }
 

@@ -81,10 +81,13 @@ enum fx_event_type {
                      * ENGRAVE, BURN, ...) and 'otyp' 1 for the first
                      * action; 'ttyp' the surface (FXG_SURF_*); FXF_UNSEEN
                      * if the hero can't see it (sound only) */
-    FXE_CAST        /* the hero casts spell 'otyp': 'adtyp' 0 as it's
+    FXE_CAST,       /* the hero casts spell 'otyp': 'adtyp' 0 as it's
                      * cast ('amount' its school, P_*_SPELL), 1 once it
                      * has taken effect (sx,sy where the hero cast it);
                      * FXF_UNSEEN if the hero is blind (sound only) */
+    FXE_SEARCH      /* the hero searches by command ('s'; never the
+                     * automatic kind); FXF_BULK for the turns after the
+                     * first of a counted search, FXF_UNSEEN if blind */
 };
 
 /* fx_event.adtyp for FXE_ENGRAVE. Wands that give the same message give
@@ -238,6 +241,7 @@ extern void fx_scroll_effect(int);
 extern void fx_unihorn(int);
 extern void fx_engrave(int, int, boolean);
 extern void fx_detected(int);
+extern void fx_search(void);
 extern void fx_cast(int, int);
 extern void fx_ui(const char *);
 extern unsigned fx_summon_begin(void);

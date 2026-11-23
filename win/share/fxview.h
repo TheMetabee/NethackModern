@@ -268,6 +268,7 @@ void fxv_engrave_particles(const struct fx_event *);
 void fxv_summon_particles(const struct fx_event *);
 void fxv_quaff_particles(const struct fx_event *);
 void fxv_detect_particles(const struct fx_event *);
+void fxv_search_particles(const struct fx_event *);
 void fxv_scroll_particles(const struct fx_event *);
 void fxv_cast_particles(const struct fx_event *);
 

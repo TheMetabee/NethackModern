@@ -2157,6 +2157,19 @@ ma_fx_event(const struct fx_event *ev)
     case FXE_CAST:
         ma_cast(ev);
         break;
+    case FXE_SEARCH: {
+        /* a soft brush of fingertips over stone, kept quiet since it's
+           done so much: only at the start of a counted search, and a
+           held key gets at most one every 0.4 s (blind too: it's felt) */
+        static ma_ms last;
+        ma_ms now = ma_ticks();
+
+        if ((ev->flags & FXF_BULK) || (last && now - last < 400))
+            break;
+        last = now;
+        ma_play_named("search", 0.3f, ma_frand(0.94f, 1.06f), 0.0f);
+        break;
+    }
     case FXE_IMPACT:
         /* striking / force bolt: a force whump; a softer, higher one
            under the "Boing!" when it bounces off */

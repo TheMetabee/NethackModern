@@ -381,7 +381,12 @@ Forcing locks (#force), built from the packs above:
 Prayer, secret doors and door kicks, built from the packs above:
   se_prayer_success_1..2.wav <- Chisper level-up-magic-harp + success-vibraphone-triad (pitched up); quest-complete; with hall reverb
   se_god_angry_1..2.wav <- TomMusic Rock Wall 1..2 (deep, low-passed: thunder) + Chisper level-up-bells (reversed, deep) + TomMusic Spell Impact 1..2 (deep)
-  se_secret_found_1..2.wav <- Chisper secret-found, treasure-chest-reveal
+  se_secret_found_1..2.wav <- synthesized for this project with ffmpeg: a
+                            a short magic jingle synthesized in Python: two
+                            beats, each a plain soft tone and a small bell,
+                            low then quickly an octave and a fifth up, with
+                            a light echo (replaces the Chisper chimes, which
+                            were too much of a fanfare)
 
 Door kick crashes (rebuilt for a real crash):
   se_kick_door_it_crashes_open_1..3.wav <- Kenney Impact impactWood_heavy (kick; door hitting the wall) + medieval shield-break-1.wav (the frame cracking) + impactMetal_light (hinge) + impactWood_light x5 (falling splinters), mixed and limited
@@ -518,6 +523,9 @@ ffmpeg:
   unihorn_bad_1.wav      <- a sour, falling, slightly detuned pair
   detect_monster_1.wav   <- two deep throbs and a dark rising sweep
   detect_object_1.wav    <- a glassy rising arpeggio and a glitter
+  search_1..3.wav        <- a short band-passed pink noise stroke over a
+                            faint low sine tap: fingertips brushing stone
+                            (the 's' command; played quietly)
 
 Level ambience loops (amb_*.flac), played under everything by the
 fx_ambience option; mono 22.05 kHz FLAC, evened out in loudness. From

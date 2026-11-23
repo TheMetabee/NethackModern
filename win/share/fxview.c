@@ -1154,6 +1154,45 @@ fxv_detect_particles(const struct fx_event *ev)
     fxv_start_timer();
 }
 
+/* searching by command: a faint pale ripple out over the eight squares
+   round the hero and a mote of dust settling on each. Searching is done
+   a lot, so it's dim and quick, shows only at the start of a counted
+   search, and a held key gets at most one every quarter second. */
+void
+fxv_search_particles(const struct fx_event *ev)
+{
+    static const struct fxv_pstyle
+        ripple = { FXV_RGB(150, 172, 196), FXV_RGB(128, 150, 176),
+                   FXV_RGB(8, 10, 14), 0.0f, 0.0f, 0.1f, 0.03f, 380, 380 },
+        mote = { FXV_RGB(130, 140, 150), FXV_RGB(110, 118, 128),
+                 FXV_RGB(6, 7, 9), 0.08f, 0.25f, 0.5f, 0.028f, 420, 560 };
+    static fxv_ms last;
+    fxv_ms now = fxv_now();
+    int i, x = ev->x, y = ev->y;
+
+    if (!iflags.fx_particles || !isok(x, y)
+        || (ev->flags & (FXF_BULK | FXF_UNSEEN)))
+        return;
+    if (last && now - last < 250)
+        return;
+    last = now;
+    fxv_ring(&ripple, FALSE, x, y, 22, 1.35f, 0.02f, 380, 0);
+    for (i = 0; i < 9; i++) {
+        int dx = i % 3 - 1, dy = i / 3 - 1;
+
+        if (!dx && !dy)
+            continue;
+        if (!isok(x + dx, y + dy))
+            continue;
+        (void) fxv_spawn_at(&mote, FALSE,
+                           x + dx + 0.5f + fxv_prange(-0.25f, 0.25f),
+                           y + dy + 0.4f + fxv_prange(-0.2f, 0.2f),
+                           mote.speed, 1.0f,
+                           (fxv_ms) (90 + fxv_prange(0, 90)));
+    }
+    fxv_start_timer();
+}
+
 /* a scroll whose type is known has taken effect: its look around the hero
    (teleportation, fire and the detection scrolls have their own) */
 void
@@ -2733,6 +2772,8 @@ fxv_fx_event(const struct fx_event *ev)
     if ((ev->type == FXE_DETECT || ev->type == FXE_UNIHORN)
         && !(ev->flags & FXF_UNSEEN))
         fxv_detect_particles(ev);
+    if (ev->type == FXE_SEARCH)
+        fxv_search_particles(ev);
     if (ev->type == FXE_IMPACT && !(ev->flags & FXF_BULK))
         fxv_impact_particles(ev->x, ev->y,
                             (ev->flags & FXF_RESISTED) != 0);
