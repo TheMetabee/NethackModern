@@ -197,9 +197,12 @@ sdl_handle_event(const SDL_Event *e)
         if (program_state.in_moveloop)
             sdl_push_key('S'), sdl_push_key('y');
         break;
-    case SDL_EVENT_WINDOW_RESIZED:
-    case SDL_EVENT_WINDOW_EXPOSED:
-        sdl.dirty = TRUE;
+    default:
+        /* shown, exposed, resized, moved, focused...: draw it again (on
+           some desktops the first frame lands before the window is up) */
+        if (e->type >= SDL_EVENT_WINDOW_FIRST
+            && e->type <= SDL_EVENT_WINDOW_LAST)
+            sdl.dirty = TRUE;
         break;
     case SDL_EVENT_TEXT_INPUT:
         if (sdl.skip_text) {
@@ -251,8 +254,6 @@ sdl_handle_event(const SDL_Event *e)
         }
         break;
     }
-    default:
-        break;
     }
 }
 
@@ -272,9 +273,12 @@ sdl_wait_key(void)
     while (sdl.kq_head == sdl.kq_tail) {
         if (sdl.dirty || sdl_effects_moving())
             sdl_render();
-        if (sdl_effects_moving() ? SDL_WaitEventTimeout(&e, 16)
-                                 : SDL_WaitEvent(&e))
+        /* while idle, redraw now and then anyway, in case the desktop
+           lost a frame */
+        if (SDL_WaitEventTimeout(&e, sdl_effects_moving() ? 16 : 500))
             sdl_handle_event(&e);
+        else
+            sdl.dirty = TRUE;
         while (SDL_PollEvent(&e))
             sdl_handle_event(&e);
     }
@@ -1025,16 +1029,21 @@ sdl_yn_function(const char *query, const char *resp, char def)
             }
             continue;
         }
-        if (strchr(resp, c) || (c < 0x80 && strchr(resp, lowc(c))
-                                && (c = lowc(c)) != 0))
+        if (c <= 0 || c >= 0x80)
+            continue; /* (strchr() would match the terminating 0) */
+        if (strchr(resp, c))
             break;
+        if (strchr(resp, lowc((char) c))) {
+            c = lowc((char) c);
+            break;
+        }
     }
     sdl.prompt = 0;
     {
         char line[BUFSZ + 48];
 
         Snprintf(line, sizeof line, "%s %c", prompt,
-                 (c == '\033') ? ' ' : (char) c);
+                 (c > ' ' && c < 127) ? (char) c : ' ');
         sdl_add_msg(line);
         sdl.msg_seen = sdl.nmsgs;
     }
