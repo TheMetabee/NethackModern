@@ -1268,8 +1268,10 @@ sdl_init_nhwindows(int *argc, char **argv)
 
         if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable)
             && usable.w > 0 && usable.h > 0) {
-            ww = max(800, usable.w * 85 / 100);
+            /* no wider than 16:10, so an ultrawide screen doesn't get
+               a window stretched across all of it */
             wh = max(600, usable.h * 85 / 100);
+            ww = max(800, min(usable.w * 85 / 100, wh * 16 / 10));
         } else {
             usable.h = 1080;
         }
@@ -1283,13 +1285,13 @@ sdl_init_nhwindows(int *argc, char **argv)
         (void) SDL_SetWindowPosition(sdl.window, SDL_WINDOWPOS_CENTERED,
                                      SDL_WINDOWPOS_CENTERED);
         /* text sized to the screen (in its pixels: a high-density
-           display gets proportionally more), about 1/50 of its height */
+           display gets proportionally more), about 1/64 of its height */
         {
             float scale = SDL_GetWindowDisplayScale(sdl.window);
 
             if (scale <= 0.0f)
                 scale = 1.0f;
-            sdl.text_px = (float) usable.h / 50.0f * scale;
+            sdl.text_px = (float) usable.h / 64.0f * scale;
         }
     }
     SDL_SetRenderVSync(sdl.ren, 1);
