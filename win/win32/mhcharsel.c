@@ -863,11 +863,14 @@ cs_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 void
 mswin_char_screen_place(HWND main)
 {
+    HWND sw = mswin_saves_hwnd();
     RECT rc;
 
+    GetClientRect(main, &rc);
+    if (sw && IsWindow(sw)) /* (the saved heroes screen) */
+        SetWindowPos(sw, HWND_TOP, 0, 0, rc.right, rc.bottom, 0);
     if (!cs_hwnd || !IsWindow(cs_hwnd))
         return;
-    GetClientRect(main, &rc);
     SetWindowPos(cs_hwnd, HWND_TOP, 0, 0, rc.right, rc.bottom, 0);
 }
 
@@ -972,4 +975,513 @@ mswin_char_screen(void (*randomize)(void *), void *arg)
     cs_fix(); /* should already fit; make sure */
 
     return cs_run(CS_CHAR);
+}
+
+/*
+ * the saved heroes screen (as the SDL port's; fxview.c: fxv_saves_*)
+ */
+
+static HWND sv_hwnd;
+
+HWND
+mswin_saves_hwnd(void)
+{
+    return sv_hwnd;
+}
+
+static int sv_result = -2;  /* 1 go on, 0 new hero, -1 back; -2 waiting */
+static int sv_sel;          /* the card chosen */
+static int sv_fb = -1;      /* the button with the keyboard, -1: cards */
+static int sv_hot = -1, sv_hotcard = -1, sv_chot = -1;
+static boolean sv_snd_hot, sv_confirm;
+static int sv_cfocus;       /* the confirmation's button with the keys */
+static struct fxv_sv_layout sv_L;
+
+static const char *const sv_btn_label[FXV_SVB_N] = {
+    "Back", "Delete", "New hero", "Continue"
+};
+
+#define S(v) ((int) ((v) * s + 0.5))
+
+static void
+sv_rect(RECT *r, const int q[4])
+{
+    SetRect(r, q[0], q[1], q[2], q[3]);
+}
+
+static void
+sv_paint(HWND hWnd, HDC hdc)
+{
+    RECT cr, r;
+    int w, h, i;
+    double s;
+    HDC mdc, tdc;
+    HBITMAP mbm;
+    HGDIOBJ omb, of, otb;
+    HFONT big, sub, name, body, small;
+
+    GetClientRect(hWnd, &cr);
+    w = cr.right, h = cr.bottom;
+    if (w <= 0 || h <= 0)
+        return;
+    fxv_saves_layout(&sv_L, w, h, sv_sel);
+    s = sv_L.s;
+    big = mswin_ms_font(S(52), FW_BOLD, TRUE);
+    sub = mswin_ms_font(max(10, S(17)), FW_NORMAL, FALSE);
+    name = mswin_ms_font(max(11, S(21)), FW_SEMIBOLD, FALSE);
+    body = mswin_ms_font(max(9, S(14)), FW_NORMAL, FALSE);
+    small = mswin_ms_font(max(9, S(14)), FW_NORMAL, FALSE);
+
+    /* draw off screen, then copy, so nothing flickers */
+    mdc = CreateCompatibleDC(hdc);
+    mbm = CreateCompatibleBitmap(hdc, w, h);
+    omb = SelectObject(mdc, mbm);
+    mswin_ms_backdrop(hdc, mdc, w, h, 150);
+    SetBkMode(mdc, TRANSPARENT);
+
+    of = SelectObject(mdc, big);
+    SetRect(&r, 0, sv_L.top, w, sv_L.top + S(66));
+    mswin_ms_text(mdc, "Choose your hero", &r,
+                  DT_CENTER | DT_TOP | DT_SINGLELINE, TH_ACCENT,
+                  max(2, S(2)));
+    SelectObject(mdc, sub);
+    SetRect(&r, 0, sv_L.top + S(70), w, sv_L.top + S(96));
+    mswin_ms_text(mdc, "Go on with a saved game, or start a new hero.", &r,
+                  DT_CENTER | DT_TOP | DT_SINGLELINE, TH_TEXT, 1);
+
+    /* the cards */
+    tdc = CreateCompatibleDC(hdc);
+    otb = SelectObject(tdc, GetNHApp()->bmpMapTiles);
+    for (i = 0; i < fxv_sv_n; i++) {
+        const struct fxv_save *v = &fxv_sv[i];
+        const char *badge = fxv_saves_mode_name(v->mode);
+        boolean on = (i == sv_sel), hot = (i == sv_hotcard);
+        int pad = S(12), ph;
+        RECT c, p;
+
+        if (sv_L.card[i][2] <= sv_L.card[i][0])
+            continue; /* (scrolled out of view) */
+        sv_rect(&c, sv_L.card[i]);
+        ph = (c.bottom - c.top) - 2 * pad;
+        cs_round(mdc, &c, hot ? TH_BG_HEADER : TH_BG_PANEL,
+                 on ? TH_ACCENT : TH_SEPARATOR, on ? max(2, S(2)) : 1, 0);
+        /* the portrait: the hero as on the map */
+        SetRect(&p, c.left + pad, c.top + pad, c.left + pad + ph,
+                c.top + pad + ph);
+        cs_round(mdc, &p, TH_BG_APP, TH_SEPARATOR, 1, 0);
+        if (v->tile >= 0 && GetNHApp()->bmpMapTiles) {
+            int t = v->tile,
+                tx = (t % GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_X,
+                ty = (t / GetNHApp()->mapTilesPerLine) * GetNHApp()->mapTile_Y;
+
+            (*GetNHApp()->lpfnTransparentBlt)(
+                mdc, p.left + S(4), p.top + S(4), ph - S(8), ph - S(8), tdc,
+                tx, ty, GetNHApp()->mapTile_X, GetNHApp()->mapTile_Y,
+                TILE_BK_COLOR);
+        }
+        SelectObject(mdc, name);
+        SetRect(&r, p.right + S(14), c.top + S(12), c.right - S(10),
+                c.top + S(44));
+        mswin_ms_text(mdc, v->name, &r,
+                      DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS,
+                      on ? TH_ACCENT : TH_TEXT, 0);
+        SelectObject(mdc, body);
+        SetRect(&r, p.right + S(14), c.top + S(48), c.right - S(10),
+                c.top + S(70));
+        mswin_ms_text(mdc, *v->who ? v->who : "(an older save)", &r,
+                      DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS,
+                      TH_TEXT_DIM, 0);
+        if (*badge) { /* how it was played */
+            COLORREF bc = (v->mode == 'D') ? RGB(200, 120, 235)
+                                           : RGB(242, 152, 62);
+            SIZE sz;
+            RECT b;
+
+            GetTextExtentPoint32A(mdc, badge, (int) strlen(badge), &sz);
+            SetRect(&b, c.right - S(10) - sz.cx - S(14), c.top + S(10),
+                    c.right - S(10), c.top + S(32));
+            cs_round(mdc, &b, TH_BG_HEADER, bc, 1, 0);
+            mswin_ms_text(mdc, badge, &b,
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE, bc, 0);
+        }
+    }
+    SelectObject(tdc, otb);
+    DeleteDC(tdc);
+
+    /* the scroll bar, when they don't all fit */
+    if (sv_L.track[2] > sv_L.track[0]) {
+        RECT t;
+
+        sv_rect(&t, sv_L.track);
+        cs_round(mdc, &t, TH_BG_HEADER, TH_BG_HEADER, 1, 0);
+        sv_rect(&t, sv_L.thumb);
+        cs_round(mdc, &t, TH_TEXT_DIM, TH_TEXT_DIM, 1, 0);
+    }
+    /* more above or below */
+    SelectObject(mdc, small);
+    if (sv_L.first > 0
+        || sv_L.first + sv_L.cols * sv_L.rows < fxv_sv_n
+        || fxv_sv_total > fxv_sv_n) {
+        char more[BUFSZ];
+
+        fxv_saves_more(more);
+        SetRect(&r, 0, sv_L.btn[0][1] - S(30), w, sv_L.btn[0][1] - S(8));
+        mswin_ms_text(mdc, more, &r, DT_CENTER | DT_SINGLELINE,
+                      TH_TEXT_DIM, 1);
+    }
+    for (i = 0; i < FXV_SVB_N; i++) {
+        RECT b;
+
+        sv_rect(&b, sv_L.btn[i]);
+        mswin_ms_button(mdc, &b, sv_btn_label[i], i == FXV_SVB_PLAY,
+                        !sv_confirm && sv_hot == i,
+                        !sv_confirm && sv_fb == i, FALSE, TRUE, s);
+    }
+    SelectObject(mdc, small);
+    cs_hints(mdc, w, h, s, sv_confirm
+             ? "Y: delete   N or Esc: keep it"
+             : "Arrows or mouse: choose   Enter: continue   N: new hero"
+               "   Del: delete   Esc: back");
+    mswin_ms_sound_rect(w, s, &cs_snd);
+    mswin_ms_sound_icon(mdc, &cs_snd, sv_snd_hot, s);
+
+    if (sv_confirm) { /* "Delete ... for good?" */
+        HBITMAP one = CreateCompatibleBitmap(hdc, 1, 1);
+        HDC odc = CreateCompatibleDC(hdc);
+        HGDIOBJ oo = SelectObject(odc, one);
+        BLENDFUNCTION bf = { AC_SRC_OVER, 0, 140, 0 };
+        char q[BUFSZ];
+        RECT px, pr, b;
+
+        SetRect(&px, 0, 0, 1, 1);
+        FillRect(odc, &px, (HBRUSH) GetStockObject(BLACK_BRUSH));
+        (void) GdiAlphaBlend(mdc, 0, 0, w, h, odc, 0, 0, 1, 1, bf);
+        SelectObject(odc, oo);
+        DeleteObject(one);
+        DeleteDC(odc);
+        sv_rect(&pr, sv_L.confirm);
+        cs_round(mdc, &pr, RGB(20, 23, 29), TH_ACCENT, 1, 0);
+        Snprintf(q, sizeof q, "Delete %s for good?", fxv_sv[sv_sel].name);
+        SelectObject(mdc, name);
+        SetRect(&r, pr.left, pr.top + S(22), pr.right, pr.top + S(54));
+        mswin_ms_text(mdc, q, &r, DT_CENTER | DT_SINGLELINE, TH_TEXT, 0);
+        SelectObject(mdc, body);
+        SetRect(&r, pr.left, pr.top + S(60), pr.right, pr.top + S(84));
+        mswin_ms_text(mdc, "The saved game is gone; it can't be brought "
+                           "back.", &r, DT_CENTER | DT_SINGLELINE,
+                      TH_TEXT_DIM, 0);
+        sv_rect(&b, sv_L.cbtn[FXV_SVC_CANCEL]);
+        mswin_ms_button(mdc, &b, "Keep it", FALSE,
+                        sv_chot == FXV_SVC_CANCEL,
+                        sv_cfocus == FXV_SVC_CANCEL, FALSE, TRUE, s);
+        sv_rect(&b, sv_L.cbtn[FXV_SVC_DELETE]);
+        mswin_ms_button(mdc, &b, "Delete", TRUE, sv_chot == FXV_SVC_DELETE,
+                        sv_cfocus == FXV_SVC_DELETE, FALSE, TRUE, s);
+    }
+
+    SelectObject(mdc, of);
+    BitBlt(hdc, 0, 0, w, h, mdc, 0, 0, SRCCOPY);
+    SelectObject(mdc, omb);
+    DeleteObject(mbm);
+    DeleteDC(mdc);
+    DeleteObject(big);
+    DeleteObject(sub);
+    DeleteObject(name);
+    DeleteObject(body);
+    DeleteObject(small);
+}
+
+#undef S
+
+static void
+sv_press(int b)
+{
+    switch (b) {
+    case FXV_SVB_BACK:
+        sv_result = -1;
+        break;
+    case FXV_SVB_NEW:
+        sv_result = 0;
+        break;
+    case FXV_SVB_PLAY:
+        if (fxv_sv_n) {
+            fxv_saves_choose(sv_sel);
+            sv_result = 1;
+        }
+        break;
+    case FXV_SVB_DELETE:
+        if (fxv_sv_n)
+            sv_confirm = TRUE, sv_cfocus = FXV_SVC_CANCEL, sv_chot = -1;
+        break;
+    }
+    if (sv_hwnd)
+        InvalidateRect(sv_hwnd, NULL, FALSE);
+}
+
+static void
+sv_answer(boolean yes)
+{
+    sv_confirm = FALSE;
+    if (yes) {
+        fxv_saves_delete(sv_sel);
+        sv_sel = min(sv_sel, max(0, fxv_sv_n - 1));
+        if (!fxv_sv_n)
+            sv_result = 0; /* none left: on to a new hero */
+    }
+    if (sv_hwnd)
+        InvalidateRect(sv_hwnd, NULL, FALSE);
+}
+
+static void
+sv_key(WPARAM vk)
+{
+    int cols = max(1, sv_L.cols);
+
+    if (sv_confirm) {
+        if (vk == 'Y')
+            sv_answer(TRUE);
+        else if (vk == 'N' || vk == VK_ESCAPE)
+            sv_answer(FALSE);
+        else if (vk == VK_LEFT || vk == VK_RIGHT || vk == VK_TAB)
+            sv_cfocus = !sv_cfocus;
+        else if (vk == VK_RETURN || vk == VK_SPACE)
+            sv_answer(sv_cfocus == FXV_SVC_DELETE);
+        InvalidateRect(sv_hwnd, NULL, FALSE);
+        return;
+    }
+    switch (vk) {
+    case VK_ESCAPE:
+    case VK_BACK:
+        sv_press(FXV_SVB_BACK);
+        return;
+    case 'N':
+        sv_press(FXV_SVB_NEW);
+        return;
+    case VK_DELETE:
+    case 'D':
+        sv_press(FXV_SVB_DELETE);
+        return;
+    case 'M':
+        if (GetKeyState(VK_CONTROL) & 0x8000)
+            mswin_menu_music_toggle();
+        break;
+    case VK_RETURN:
+    case VK_SPACE:
+        sv_press(sv_fb >= 0 ? sv_fb : FXV_SVB_PLAY);
+        return;
+    case VK_TAB: /* the cards, then the buttons from Continue back */
+        sv_fb = (sv_fb < 0) ? FXV_SVB_PLAY : sv_fb - 1;
+        break;
+    case VK_LEFT:
+        if (sv_fb >= 0)
+            sv_fb = max(0, sv_fb - 1);
+        else
+            sv_sel = max(0, sv_sel - 1);
+        break;
+    case VK_RIGHT:
+        if (sv_fb >= 0)
+            sv_fb = min(FXV_SVB_N - 1, sv_fb + 1);
+        else
+            sv_sel = min(fxv_sv_n - 1, sv_sel + 1);
+        break;
+    case VK_UP:
+        if (sv_fb >= 0)
+            sv_fb = -1;
+        else if (sv_sel >= cols)
+            sv_sel -= cols;
+        break;
+    case VK_DOWN:
+        if (sv_fb < 0 && sv_sel + cols < fxv_sv_n)
+            sv_sel += cols;
+        else if (sv_fb < 0)
+            sv_fb = FXV_SVB_PLAY;
+        break;
+    case VK_HOME:
+        sv_sel = 0, sv_fb = -1;
+        break;
+    case VK_END:
+        sv_sel = fxv_sv_n - 1, sv_fb = -1;
+        break;
+    default:
+        return;
+    }
+    InvalidateRect(sv_hwnd, NULL, FALSE);
+}
+
+#define SV_IN(q, x, y) ((x) >= (q)[0] && (x) < (q)[2] && (y) >= (q)[1] \
+                        && (y) < (q)[3])
+
+static LRESULT CALLBACK
+sv_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    int x, y, i;
+
+    switch (msg) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+
+        sv_paint(hWnd, hdc);
+        EndPaint(hWnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        int hot = -1, hotcard = -1, chot = -1;
+        boolean snd;
+        POINT pt;
+
+        x = GET_X_LPARAM(lParam), y = GET_Y_LPARAM(lParam);
+        pt.x = x, pt.y = y;
+        snd = PtInRect(&cs_snd, pt);
+        if (sv_confirm) {
+            for (i = 0; i < 2; i++)
+                if (SV_IN(sv_L.cbtn[i], x, y))
+                    chot = i;
+        } else {
+            for (i = 0; i < FXV_SVB_N; i++)
+                if (SV_IN(sv_L.btn[i], x, y))
+                    hot = i;
+            for (i = 0; i < fxv_sv_n; i++)
+                if (SV_IN(sv_L.card[i], x, y))
+                    hotcard = i;
+        }
+        if (hot != sv_hot || hotcard != sv_hotcard || chot != sv_chot
+            || snd != sv_snd_hot) {
+            TRACKMOUSEEVENT tme;
+
+            sv_hot = hot, sv_hotcard = hotcard, sv_chot = chot;
+            sv_snd_hot = snd;
+            tme.cbSize = sizeof tme;
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hWnd;
+            tme.dwHoverTime = 0;
+            TrackMouseEvent(&tme);
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        sv_hot = sv_hotcard = sv_chot = -1, sv_snd_hot = FALSE;
+        InvalidateRect(hWnd, NULL, FALSE);
+        return 0;
+    case WM_SETCURSOR:
+        if (LOWORD(lParam) == HTCLIENT) {
+            SetCursor(LoadCursor(NULL, (sv_hot >= 0 || sv_hotcard >= 0
+                                        || sv_chot >= 0 || sv_snd_hot)
+                                           ? IDC_HAND : IDC_ARROW));
+            return TRUE;
+        }
+        break;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
+        SetFocus(hWnd);
+        x = GET_X_LPARAM(lParam), y = GET_Y_LPARAM(lParam);
+        if (sv_confirm) {
+            for (i = 0; i < 2; i++)
+                if (SV_IN(sv_L.cbtn[i], x, y))
+                    sv_answer(i == FXV_SVC_DELETE);
+            return 0;
+        }
+        if (sv_snd_hot) {
+            mswin_menu_music_toggle();
+            InvalidateRect(hWnd, NULL, FALSE);
+            return 0;
+        }
+        for (i = 0; i < FXV_SVB_N; i++)
+            if (SV_IN(sv_L.btn[i], x, y)) {
+                sv_fb = i;
+                sv_press(i);
+                return 0;
+            }
+        for (i = 0; i < fxv_sv_n; i++)
+            if (SV_IN(sv_L.card[i], x, y)) {
+                sv_fb = -1;
+                if (msg == WM_LBUTTONDBLCLK && i == sv_sel)
+                    sv_press(FXV_SVB_PLAY); /* a double click: go on */
+                sv_sel = i;
+                InvalidateRect(hWnd, NULL, FALSE);
+                return 0;
+            }
+        return 0;
+    case WM_MOUSEWHEEL:
+        if (!sv_confirm) {
+            int cols = max(1, sv_L.cols);
+
+            sv_sel += (GET_WHEEL_DELTA_WPARAM(wParam) > 0) ? -cols : cols;
+            sv_sel = max(0, min(sv_sel, fxv_sv_n - 1));
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        return 0;
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS;
+    case WM_KEYDOWN:
+        sv_key(wParam);
+        return 0;
+    }
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+#undef SV_IN
+
+int
+mswin_saves_screen(void)
+{
+    static boolean registered;
+    HWND main = GetNHApp()->hMainWnd, bar;
+    MSG msg;
+    RECT rc;
+
+    if (!registered) {
+        WNDCLASS wc;
+
+        ZeroMemory(&wc, sizeof wc);
+        wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+        wc.lpfnWndProc = sv_proc;
+        wc.hInstance = GetNHApp()->hApp;
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.lpszClassName = TEXT("MSNHSavesScreen");
+        if (!RegisterClass(&wc))
+            return 0;
+        registered = TRUE;
+    }
+    if (!main)
+        return 0;
+    sv_result = -2;
+    sv_sel = 0, sv_fb = -1;
+    sv_hot = sv_hotcard = sv_chot = -1;
+    sv_snd_hot = sv_confirm = FALSE;
+
+    bar = FindWindowEx(main, NULL, TEXT("MSNHTopBar"), NULL);
+    if (bar)
+        ShowWindow(bar, SW_HIDE);
+    GetClientRect(main, &rc);
+    sv_hwnd = CreateWindow(TEXT("MSNHSavesScreen"), NULL,
+                           WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0,
+                           rc.right, rc.bottom, main, NULL,
+                           GetNHApp()->hApp, NULL);
+    if (!sv_hwnd) {
+        if (bar)
+            ShowWindow(bar, SW_SHOW);
+        return 0;
+    }
+    SetWindowPos(sv_hwnd, HWND_TOP, 0, 0, rc.right, rc.bottom, 0);
+    GetNHApp()->hPopupWnd = sv_hwnd; /* the main window sends focus here */
+    SetForegroundWindow(main);
+    SetFocus(sv_hwnd);
+
+    while (sv_result == -2 && GetMessage(&msg, NULL, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    GetNHApp()->hPopupWnd = NULL;
+    DestroyWindow(sv_hwnd);
+    sv_hwnd = NULL;
+    mswin_ms_backdrop_free();
+    if (bar)
+        ShowWindow(bar, SW_SHOW);
+    SetFocus(main);
+    return sv_result == -2 ? -1 : sv_result;
 }

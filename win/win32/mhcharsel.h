@@ -18,6 +18,12 @@ boolean mswin_name_screen(char *name, int size);
    screen couldn't be shown */
 int mswin_char_screen(void (*randomize)(void *), void *arg);
 
+/* this player's saved heroes, to go on with one, delete one, or start
+   a new hero (fxv_saves_load() must have found some): 1 to go on with
+   the one chosen (svp.plname[] set), 0 for a new hero, -1 for Back */
+int mswin_saves_screen(void);
+HWND mswin_saves_hwnd(void); /* it, while it's up (else NULL) */
+
 /* keep whichever of them is showing filling the game window */
 void mswin_char_screen_place(HWND main);
 

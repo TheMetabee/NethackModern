@@ -341,6 +341,45 @@ void fxv_cs_info(int role, int what, char *buf);
 double fxv_cs_scale(int w, int h);
 void fxv_cs_layout(struct fxv_cs_layout *, int w, int h, boolean name);
 
+/* the saved heroes screen: this player's saved games as cards, to go
+   on with one, start a new hero, or delete one (fxv_saves_*) */
+#define FXV_SV_MAX 500 /* more than anyone keeps; past it, not listed */
+#define FXV_SVB_BACK 0 /* the buttons along the bottom */
+#define FXV_SVB_DELETE 1
+#define FXV_SVB_NEW 2
+#define FXV_SVB_PLAY 3
+#define FXV_SVB_N 4
+#define FXV_SVC_CANCEL 0 /* the delete confirmation's buttons */
+#define FXV_SVC_DELETE 1
+struct fxv_save {
+    char tag[PL_NSIZ_PLUS]; /* "name-Val-Hum-Fem-Law", for plname[] */
+    char name[PL_NSIZ];
+    char who[BUFSZ];        /* "Lawful female human Valkyrie" */
+    char mode;              /* '-' normal, 'X' explore, 'D' wizard */
+    int tile;               /* its portrait: the tile it has on the map,
+                               the role's creature or, with showrace,
+                               the race's; -1 if not known */
+};
+struct fxv_sv_layout {
+    double s;
+    int top;                    /* where the heading goes */
+    int cols, rows;             /* cards across, and rows shown */
+    int first;                  /* the first card shown */
+    int card[FXV_SV_MAX][4];    /* l, t, r, b; all zero if not shown */
+    int btn[FXV_SVB_N][4], snd[4];
+    int confirm[4], cbtn[2][4]; /* the "Delete ...?" panel */
+    int track[4], thumb[4];     /* the scroll bar, when not all fit;
+                                   all zero when they do */
+};
+extern struct fxv_save fxv_sv[FXV_SV_MAX];
+extern int fxv_sv_n, fxv_sv_total; /* listed; found (more if past MAX) */
+void fxv_saves_more(char *buf);
+int fxv_saves_load(void);
+void fxv_saves_choose(int i);
+void fxv_saves_delete(int i);
+const char *fxv_saves_mode_name(char mode);
+void fxv_saves_layout(struct fxv_sv_layout *, int w, int h, int sel);
+
 /* the death screen and the score list: what they show, gathered from
    the game as it ends and from the lines topten() writes */
 #define FXV_END_LASTN 4

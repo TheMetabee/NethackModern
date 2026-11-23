@@ -22,6 +22,7 @@
 #include "mhmenu.h"
 #include "mhsplash.h"
 #include "mhcharsel.h"
+#include "fxview.h" /* NetHack Modern: fxv_saves_load() */
 #include "mhend.h"
 #include "mhmsg.h"
 #include "mhinput.h"
@@ -755,10 +756,21 @@ mswin_askname(void)
     logDebug("mswin_askname()\n");
 
     /* NetHack Modern: asked in the game window, over the title art;
-       Back returns to the title screen */
-    if (!mswin_name_screen(svp.plname, PL_NSIZ)) {
-        bail((char *) 0);
-        /* not reached */
+       Back returns to the title screen (by starting afresh). First,
+       if this player has saved games, the saved heroes screen: go on
+       with one, or on to name a new one; Back from the name screen
+       comes back to it */
+    for (;;) {
+        int r = (fxv_saves_load() > 0) ? mswin_saves_screen() : 0;
+
+        if (r > 0)
+            return; /* svp.plname[] is the save's */
+        if (r < 0)
+            bail((char *) 0); /* not reached */
+        if (mswin_name_screen(svp.plname, PL_NSIZ))
+            return;
+        if (!fxv_sv_n)
+            bail((char *) 0); /* not reached */
     }
 }
 

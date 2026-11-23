@@ -5200,6 +5200,385 @@ sdl_name_screen(void)
     return TRUE;
 }
 
+/* ---- the saved heroes screen (as NetHackW's) ------------------------ */
+
+/* After Play, when this player has saved games: a card for each, to go
+   on with, delete (after asking), or pass over for a new hero. What's
+   shown and where is shared with NetHackW (fxview.c: fxv_saves_*). Its
+   own little loop, as the Fonts window has. */
+
+static struct {
+    int sel;              /* the card chosen */
+    int fb;               /* the button with the keyboard, -1: the cards */
+    int hot, hotcard;     /* the button, card under the mouse; -1 none */
+    boolean snd_hot;
+    boolean confirm;      /* asking whether to delete */
+    int cfocus, chot;     /* its buttons: focused, under the mouse */
+    Uint64 last_click;    /* for a double click on a card */
+    int last_card;
+    struct fxv_sv_layout L;
+} sv;
+
+static const char *const sdl_sv_btn_label[FXV_SVB_N] = {
+    "Back", "Delete", "New hero", "Continue"
+};
+
+static void
+sdl_sv_draw(void)
+{
+    int w, h, i;
+    double s;
+    TTF_Font *f;
+    struct fxv_sv_layout *L = &sv.L;
+
+#define S(v) ((int) ((v) * s + 0.5))
+    SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    fxv_saves_layout(L, w, h, sv.sel);
+    s = L->s;
+    sdl_backdrop(w, h, 150);
+    f = sdl_face(SDL_FACE_TITLE, max(16, S(52)));
+    (void) sdl_face_text(f, "Choose your hero", w / 2, L->top, 1,
+                         CS_ACCENT, max(1, S(2)));
+    f = sdl_face(SDL_FACE_UI, max(10, S(17)));
+    (void) sdl_face_text(f, "Go on with a saved game, or start a new hero.",
+                         w / 2, L->top + S(70), 1, CS_TEXT, 1);
+    for (i = 0; i < fxv_sv_n; i++) {
+        const int *r = L->card[i];
+        const struct fxv_save *v = &fxv_sv[i];
+        const char *badge = fxv_saves_mode_name(v->mode);
+        boolean on = (i == sv.sel), hot = (i == sv.hotcard);
+        int pad = S(12), ph = r[3] - r[1] - 2 * pad, tx;
+        int pr[4];
+
+        if (r[2] <= r[0])
+            continue; /* (scrolled out of view) */
+        sdl_edged(r, hot ? FXV_RGB(33, 37, 46) : CS_PANEL,
+                  on ? CS_ACCENT : CS_SEP, on ? max(2, S(2)) : 1);
+        /* the portrait: the hero as on the map */
+        pr[0] = r[0] + pad, pr[1] = r[1] + pad;
+        pr[2] = pr[0] + ph, pr[3] = pr[1] + ph;
+        sdl_edged(pr, CS_BG, CS_SEP, 1);
+        if (v->tile >= 0)
+            sdl_tile(v->tile, (float) pr[0] + S(4), (float) pr[1] + S(4),
+                     (float) (ph - S(8)));
+        tx = pr[2] + S(14);
+        f = sdl_face(SDL_FACE_UI_BOLD, max(11, S(21)));
+        (void) sdl_face_text(f, v->name, tx, r[1] + S(16), 0,
+                             on ? CS_ACCENT : CS_TEXT, 0);
+        f = sdl_face(SDL_FACE_UI, max(9, S(14)));
+        (void) sdl_face_text(f, *v->who ? v->who : "(an older save)", tx,
+                             r[1] + S(48), 0, CS_DIM, 0);
+        if (*badge) { /* how it was played */
+            int bw = sdl_text_w_in(f, badge) + S(14), br[4];
+
+            br[2] = r[2] - S(10), br[0] = br[2] - bw;
+            br[1] = r[1] + S(10), br[3] = br[1] + S(22);
+            sdl_edged(br, CS_HEADER,
+                      v->mode == 'D' ? FXV_RGB(200, 120, 235)
+                                     : FXV_RGB(242, 152, 62), 1);
+            (void) sdl_face_text(f, badge, (br[0] + br[2]) / 2,
+                                 (br[1] + br[3]) / 2
+                                     - TTF_GetFontHeight(f) / 2,
+                                 1, v->mode == 'D' ? FXV_RGB(200, 120, 235)
+                                                   : FXV_RGB(242, 152, 62),
+                                 0);
+        }
+    }
+    /* the scroll bar, when they don't all fit */
+    if (L->track[2] > L->track[0]) {
+        sdl_rbox(L->track[0], L->track[1], L->track[2] - L->track[0],
+                 L->track[3] - L->track[1], 3, CS_HEADER);
+        sdl_rbox(L->thumb[0], L->thumb[1], L->thumb[2] - L->thumb[0],
+                 L->thumb[3] - L->thumb[1], 3, CS_DIM);
+    }
+    /* more above or below */
+    f = sdl_face(SDL_FACE_UI, max(9, S(14)));
+    if (L->first > 0 || L->first + L->cols * L->rows < fxv_sv_n
+        || fxv_sv_total > fxv_sv_n) {
+        char more[BUFSZ];
+
+        fxv_saves_more(more);
+        (void) sdl_face_text(f, more, w / 2, L->btn[0][1] - S(24), 1,
+                             CS_DIM, 1);
+    }
+    for (i = 0; i < FXV_SVB_N; i++)
+        sdl_button(L->btn[i], sdl_sv_btn_label[i], i == FXV_SVB_PLAY,
+                   !sv.confirm && sv.hot == i, !sv.confirm && sv.fb == i,
+                   FALSE, TRUE, s);
+    sdl_sound_icon(L->snd, sv.snd_hot, s);
+    sdl_cs_hints(w, h, s, sv.confirm
+                 ? "Y: delete   N or Esc: keep it"
+                 : "Arrows or mouse: choose   Enter: continue   N: new hero"
+                   "   Del: delete   Esc: back");
+    if (sv.confirm) { /* "Delete ... for good?" */
+        char q[BUFSZ];
+
+        sdl_fill(0, 0, w, h, 0, 0, 0, 140);
+        sdl_edged(L->confirm, FXV_RGB(20, 23, 29), CS_ACCENT, 1);
+        Snprintf(q, sizeof q, "Delete %s for good?", fxv_sv[sv.sel].name);
+        f = sdl_face(SDL_FACE_UI_BOLD, max(11, S(22)));
+        (void) sdl_face_text(f, q, (L->confirm[0] + L->confirm[2]) / 2,
+                             L->confirm[1] + S(26), 1, CS_TEXT, 0);
+        f = sdl_face(SDL_FACE_UI, max(9, S(15)));
+        (void) sdl_face_text(f, "The saved game is gone; it can't be "
+                                "brought back.",
+                             (L->confirm[0] + L->confirm[2]) / 2,
+                             L->confirm[1] + S(62), 1, CS_DIM, 0);
+        sdl_button(L->cbtn[FXV_SVC_CANCEL], "Keep it", FALSE,
+                   sv.chot == FXV_SVC_CANCEL, sv.cfocus == FXV_SVC_CANCEL,
+                   FALSE, TRUE, s);
+        sdl_button(L->cbtn[FXV_SVC_DELETE], "Delete", TRUE,
+                   sv.chot == FXV_SVC_DELETE, sv.cfocus == FXV_SVC_DELETE,
+                   FALSE, TRUE, s);
+    }
+    sdl_present();
+#undef S
+}
+
+/* a button pressed: TRUE when the screen is done (sv_result set) */
+static int sv_result;
+
+static boolean
+sdl_sv_press(int b)
+{
+    switch (b) {
+    case FXV_SVB_BACK:
+        sv_result = -1;
+        return TRUE;
+    case FXV_SVB_NEW:
+        sv_result = 0;
+        return TRUE;
+    case FXV_SVB_PLAY:
+        if (fxv_sv_n) {
+            fxv_saves_choose(sv.sel);
+            sv_result = 1;
+            return TRUE;
+        }
+        return FALSE;
+    case FXV_SVB_DELETE:
+        if (fxv_sv_n) {
+            sv.confirm = TRUE;
+            sv.cfocus = FXV_SVC_CANCEL, sv.chot = -1;
+        }
+        return FALSE;
+    default:
+        return FALSE;
+    }
+}
+
+/* the confirmation answered */
+static boolean
+sdl_sv_confirm(boolean yes)
+{
+    sv.confirm = FALSE;
+    if (!yes)
+        return FALSE;
+    fxv_saves_delete(sv.sel);
+    sv.sel = min(sv.sel, max(0, fxv_sv_n - 1));
+    if (!fxv_sv_n) { /* none left: on to a new hero */
+        sv_result = 0;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* a key; TRUE when the screen is done */
+static boolean
+sdl_sv_key(int k, SDL_Keymod mod)
+{
+    int cols = max(1, sv.L.cols);
+
+    if (sv.confirm) {
+        switch (k) {
+        case 'y':
+            return sdl_sv_confirm(TRUE);
+        case 'n':
+        case SDLK_ESCAPE:
+            return sdl_sv_confirm(FALSE);
+        case SDLK_LEFT:
+        case SDLK_RIGHT:
+        case SDLK_TAB:
+            sv.cfocus = !sv.cfocus;
+            return FALSE;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+        case SDLK_SPACE:
+            return sdl_sv_confirm(sv.cfocus == FXV_SVC_DELETE);
+        default:
+            return FALSE;
+        }
+    }
+    if (k == 'm' && (mod & SDL_KMOD_CTRL)) {
+        sdl_music_toggle();
+        return FALSE;
+    }
+    switch (k) {
+    case SDLK_ESCAPE:
+    case SDLK_BACKSPACE:
+        return sdl_sv_press(FXV_SVB_BACK);
+    case 'n':
+        return sdl_sv_press(FXV_SVB_NEW);
+    case SDLK_DELETE:
+    case 'd':
+        return sdl_sv_press(FXV_SVB_DELETE);
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+    case SDLK_SPACE:
+        return sdl_sv_press(sv.fb >= 0 ? sv.fb : FXV_SVB_PLAY);
+    case SDLK_TAB: /* the cards, then the buttons from Continue back */
+        sv.fb = (sv.fb < 0) ? FXV_SVB_PLAY : sv.fb - 1;
+        return FALSE;
+    case SDLK_LEFT:
+    case 'h':
+        if (sv.fb >= 0)
+            sv.fb = max(0, sv.fb - 1);
+        else
+            sv.sel = max(0, sv.sel - 1);
+        return FALSE;
+    case SDLK_RIGHT:
+    case 'l':
+        if (sv.fb >= 0)
+            sv.fb = min(FXV_SVB_N - 1, sv.fb + 1);
+        else
+            sv.sel = min(fxv_sv_n - 1, sv.sel + 1);
+        return FALSE;
+    case SDLK_UP:
+    case 'k':
+        if (sv.fb >= 0)
+            sv.fb = -1;
+        else if (sv.sel >= cols)
+            sv.sel -= cols;
+        return FALSE;
+    case SDLK_DOWN:
+    case 'j':
+        if (sv.fb < 0 && sv.sel + cols < fxv_sv_n)
+            sv.sel += cols;
+        else if (sv.fb < 0)
+            sv.fb = FXV_SVB_PLAY;
+        return FALSE;
+    case SDLK_HOME:
+        sv.sel = 0, sv.fb = -1;
+        return FALSE;
+    case SDLK_END:
+        sv.sel = fxv_sv_n - 1, sv.fb = -1;
+        return FALSE;
+    default:
+        return FALSE;
+    }
+}
+
+/* the screen; 1: go on with the save chosen (plname[] set), 0: a new
+   hero, -1: back to the title */
+static int
+sdl_saves_screen(void)
+{
+    SDL_Event e;
+    int i;
+
+    (void) memset(&sv, 0, sizeof sv);
+    sv.fb = sv.hot = sv.hotcard = sv.chot = sv.last_card = -1;
+    sv_result = -1;
+    sdl_music_sync();
+    for (;;) {
+        boolean done = FALSE;
+
+        sdl_sv_draw();
+        /* test keys first (NETHACK_SDL_KEYS) */
+        if (sdl.kq_head != sdl.kq_tail) {
+            int k = sdl.keyq[sdl.kq_head];
+
+            sdl.kq_head = (sdl.kq_head + 1) % SDL_KEYQ;
+            if (sdl_sv_key(k == '\033' ? (int) SDLK_ESCAPE
+                           : (k == '\n' || k == '\r') ? (int) SDLK_RETURN
+                           : k, 0))
+                break;
+            continue;
+        }
+        if (!SDL_WaitEventTimeout(&e, 500))
+            continue;
+        do {
+            SDL_Event ev = e;
+
+            switch (e.type) {
+            case SDL_EVENT_QUIT: /* nothing has started: just leave */
+                sdl_play_again = FALSE;
+                sdl_exit_nhwindows((char *) 0);
+                nh_terminate(EXIT_SUCCESS);
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                done = sdl_sv_key((int) e.key.key, e.key.mod);
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+                sv.hot = sv.hotcard = sv.chot = -1;
+                sv.snd_hot = CS_IN(sv.L.snd, ev.motion.x, ev.motion.y);
+                if (sv.confirm) {
+                    for (i = 0; i < 2; i++)
+                        if (CS_IN(sv.L.cbtn[i], ev.motion.x, ev.motion.y))
+                            sv.chot = i;
+                    break;
+                }
+                for (i = 0; i < FXV_SVB_N; i++)
+                    if (CS_IN(sv.L.btn[i], ev.motion.x, ev.motion.y))
+                        sv.hot = i;
+                for (i = 0; i < fxv_sv_n; i++)
+                    if (CS_IN(sv.L.card[i], ev.motion.x, ev.motion.y))
+                        sv.hotcard = i;
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (e.button.button != SDL_BUTTON_LEFT)
+                    break;
+                (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+                if (sv.confirm) {
+                    for (i = 0; i < 2; i++)
+                        if (CS_IN(sv.L.cbtn[i], ev.button.x, ev.button.y))
+                            done = sdl_sv_confirm(i == FXV_SVC_DELETE);
+                    break;
+                }
+                if (CS_IN(sv.L.snd, ev.button.x, ev.button.y)) {
+                    sdl_music_toggle();
+                    break;
+                }
+                for (i = 0; i < FXV_SVB_N && !done; i++)
+                    if (CS_IN(sv.L.btn[i], ev.button.x, ev.button.y)) {
+                        sv.fb = i;
+                        done = sdl_sv_press(i);
+                    }
+                for (i = 0; i < fxv_sv_n && !done; i++)
+                    if (CS_IN(sv.L.card[i], ev.button.x, ev.button.y)) {
+                        Uint64 now = SDL_GetTicks();
+
+                        sv.fb = -1;
+                        /* a second click on it soon after: go on */
+                        if (i == sv.sel && i == sv.last_card
+                            && now - sv.last_click < 450)
+                            done = sdl_sv_press(FXV_SVB_PLAY);
+                        sv.sel = i;
+                        sv.last_card = i, sv.last_click = now;
+                    }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                if (!sv.confirm && e.wheel.y != 0.0f) {
+                    int cols = max(1, sv.L.cols);
+
+                    sv.sel += (e.wheel.y > 0) ? -cols : cols;
+                    sv.sel = max(0, min(sv.sel, fxv_sv_n - 1));
+                }
+                break;
+            default:
+                if (e.type >= SDL_EVENT_WINDOW_FIRST
+                    && e.type <= SDL_EVENT_WINDOW_LAST)
+                    sdl_handle_event(&e); /* (resizes) */
+                break;
+            }
+        } while (!done && SDL_PollEvent(&e));
+        if (done)
+            break;
+    }
+    sdl.dirty = TRUE;
+    return sv_result;
+}
+
 
 /* ---- the death screen and the score list (as NetHackW's) ----------- */
 
@@ -6122,8 +6501,23 @@ sdl_init_nhwindows(int *argc, char **argv)
         if (!who || !*who)
             who = getenv("USERNAME"); /* Windows */
         if (!*svp.plname || (who && !strcmp(who, svp.plname)))
-            while (!sdl_name_screen())
-                sdl_title_screen();
+            for (;;) {
+                /* the saved heroes first, if there are any: go on with
+                   one, or on to name a new one; Back from the name
+                   screen comes back to them (or the title) */
+                int r = (fxv_saves_load() > 0) ? sdl_saves_screen() : 0;
+
+                if (r > 0)
+                    break; /* plname[] is the save's */
+                if (r < 0) {
+                    sdl_title_screen();
+                    continue;
+                }
+                if (sdl_name_screen())
+                    break;
+                if (!fxv_sv_n)
+                    sdl_title_screen();
+            }
     }
     iflags.window_inited = TRUE;
     sdl.dirty = TRUE;

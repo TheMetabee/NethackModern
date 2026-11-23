@@ -3814,6 +3814,239 @@ fxv_cs_layout(struct fxv_cs_layout *L, int w, int h, boolean name)
 #undef S
 #undef SETR
 
+/* ---- the saved heroes screen (both ports) -------------------------- */
+
+/* After the title screen's Play, if this player has saved games: a card
+   for each (its portrait, name, "Lawful female human Valkyrie", and
+   Explore or Wizard if it was played so), to go on with, delete, or
+   pass over for a new hero. What a save file tells without restoring
+   it is only the tag the game keeps at its start, "name-Val-Hum-Fem-Law"
+   and the play mode (get_saved_games()). */
+
+struct fxv_save fxv_sv[FXV_SV_MAX];
+int fxv_sv_n, fxv_sv_total;
+
+/* one of get_saved_games()'s entries into a card */
+static void
+fxv_saves_parse(const char *entry, struct fxv_save *v)
+{
+    char buf[PL_NSIZ_PLUS], *p, *tok, *w;
+    int role = ROLE_NONE, race = ROLE_NONE, gend = ROLE_NONE,
+        algn = ROLE_NONE, i;
+
+    (void) memcpy(buf, entry, PL_NSIZ_PLUS - 1);
+    buf[PL_NSIZ_PLUS - 1] = '\0';
+    v->mode = entry[PL_NSIZ_PLUS - 1]; /* beyond the tag's NUL */
+    Strcpy(v->tag, buf);
+    if ((p = strchr(buf, '-')) != 0)
+        *p++ = '\0';
+    Snprintf(v->name, sizeof v->name, "%s", buf);
+    while (p) { /* as plnamesuffix() reads them */
+        tok = p;
+        if ((p = strchr(p, '-')) != 0)
+            *p++ = '\0';
+        if ((i = str2role(tok)) != ROLE_NONE)
+            role = i;
+        else if ((i = str2race(tok)) != ROLE_NONE)
+            race = i;
+        else if ((i = str2gend(tok)) != ROLE_NONE)
+            gend = i;
+        else if ((i = str2align(tok)) != ROLE_NONE)
+            algn = i;
+    }
+    v->who[0] = '\0';
+    if (algn >= 0)
+        Sprintf(eos(v->who), "%s ", aligns[algn].adj);
+    if (gend >= 0)
+        Sprintf(eos(v->who), "%s ", genders[gend].adj);
+    if (race >= 0)
+        Sprintf(eos(v->who), "%s ", races[race].adj);
+    if (role >= 0)
+        Strcat(v->who, (gend == 1 && roles[role].name.f) ? roles[role].name.f
+                                                          : roles[role].name.m);
+    for (w = eos(v->who); w > v->who && w[-1] == ' ';)
+        *--w = '\0'; /* (no role: no space after the rest) */
+    v->who[0] = highc(v->who[0]);
+    v->tile = -1;
+#ifdef TILES_IN_GLYPHMAP
+    {
+        extern glyph_map glyphmap[MAX_GLYPH]; /* tile.c */
+        /* the creature the hero is drawn as on the map: the role's, or
+           with the showrace option the race's (as hero_glyph) */
+        int mnum = (flags.showrace && race >= 0) ? races[race].mnum
+                   : (role >= 0) ? roles[role].mnum : NON_PM;
+
+        if (mnum != NON_PM)
+            v->tile = glyphmap[monnum_to_glyph(mnum,
+                                               gend == 1 ? FEMALE : MALE)]
+                          .tileidx;
+    }
+#endif
+}
+
+static int QSORTCALLBACK
+fxv_saves_cmp(const genericptr a, const genericptr b)
+{
+    return strcmpi(((const struct fxv_save *) a)->name,
+                   ((const struct fxv_save *) b)->name);
+}
+
+/* find this player's saved games; how many. (Looking changes plname[]
+   and the save file's name, so both are put back.) */
+int
+fxv_saves_load(void)
+{
+    char keepname[PL_NSIZ], keepsave[SAVESIZE];
+    char **saved;
+    int k;
+
+    Strcpy(keepname, svp.plname);
+    Strcpy(keepsave, gs.SAVEF);
+    fxv_sv_n = fxv_sv_total = 0;
+    saved = get_saved_games(); /* (sorted by name) */
+    for (k = 0; saved && saved[k]; k++, fxv_sv_total++)
+        if (fxv_sv_n < FXV_SV_MAX) /* past that, counted but not listed */
+            fxv_saves_parse(saved[k], &fxv_sv[fxv_sv_n++]);
+    free_saved_games(saved);
+    Strcpy(svp.plname, keepname);
+    Strcpy(gs.SAVEF, keepsave);
+    if (fxv_sv_n > 1)
+        qsort((genericptr_t) fxv_sv, fxv_sv_n, sizeof fxv_sv[0],
+              fxv_saves_cmp);
+    return fxv_sv_n;
+}
+
+/* go on with save i: the game restores the save of the name in plname[]
+   (its role and so on come along, as restore_menu() passes them) */
+void
+fxv_saves_choose(int i)
+{
+    if (i < 0 || i >= fxv_sv_n)
+        return;
+    if (strlen(fxv_sv[i].tag) < sizeof svp.plname)
+        Strcpy(svp.plname, fxv_sv[i].tag);
+    else
+        Strcpy(svp.plname, fxv_sv[i].name);
+}
+
+/* delete save i for good, and look again */
+void
+fxv_saves_delete(int i)
+{
+    char keepname[PL_NSIZ], keepsave[SAVESIZE];
+
+    if (i < 0 || i >= fxv_sv_n)
+        return;
+    Strcpy(keepname, svp.plname);
+    Strcpy(keepsave, gs.SAVEF);
+    Strcpy(svp.plname, fxv_sv[i].name);
+    set_savefile_name(TRUE);
+    (void) delete_savefile();
+    Strcpy(svp.plname, keepname);
+    Strcpy(gs.SAVEF, keepsave);
+    (void) fxv_saves_load();
+}
+
+/* the line under the cards when not all of them fit */
+void
+fxv_saves_more(char *buf)
+{
+    if (fxv_sv_total > fxv_sv_n)
+        Sprintf(buf, "%d heroes saved; the first %d are listed", fxv_sv_total,
+                fxv_sv_n);
+    else
+        Sprintf(buf, "%d heroes saved: the arrow keys or the wheel show "
+                     "the rest", fxv_sv_n);
+}
+
+/* the badge a card shows for its play mode, or "" */
+const char *
+fxv_saves_mode_name(char mode)
+{
+    return (mode == 'X') ? "Explore" : (mode == 'D') ? "Wizard" : "";
+}
+
+#define S(v) ((int) ((v) * s + 0.5))
+#define SETR(r, l, t, rr, b) ((r)[0] = (l), (r)[1] = (t), (r)[2] = (rr), \
+                              (r)[3] = (b))
+
+/* where everything goes: the heading; the cards in a grid (up to three
+   across), as many rows as fit, scrolled to show card 'sel'; Back,
+   Delete, New hero and Continue below; and, over it all when asked, the
+   panel asking whether to delete */
+void
+fxv_saves_layout(struct fxv_sv_layout *L, int w, int h, int sel)
+{
+    double s = fxv_cs_scale(w, h);
+    int cw = S(330), ch = S(92), gap = S(16), bh = S(46), top, y0, ybtn,
+        total, x0, i, n, firstrow, x;
+    static const int bw[FXV_SVB_N] = { 130, 130, 150, 230 };
+
+    (void) memset((genericptr_t) L, 0, sizeof *L);
+    L->s = s;
+    top = L->top = max(S(12), (h - S(710)) / 2);
+    y0 = top + S(112);
+    ybtn = min(h - S(30) - bh, max(y0 + ch + S(26), top + S(640)));
+    L->cols = max(1, min(3, (w - S(80) + gap) / (cw + gap)));
+    if (fxv_sv_n < L->cols)
+        L->cols = max(1, fxv_sv_n);
+    L->rows = max(1, (ybtn - S(26) - y0 + gap) / (ch + gap));
+    /* fewer heroes than fit: the buttons come up under them */
+    if ((fxv_sv_n + L->cols - 1) / L->cols < L->rows) {
+        L->rows = max(1, (fxv_sv_n + L->cols - 1) / L->cols);
+        ybtn = y0 + L->rows * (ch + gap) - gap + S(40);
+    }
+    firstrow = max(0, sel / L->cols - L->rows + 1);
+    L->first = firstrow * L->cols;
+    total = L->cols * cw + (L->cols - 1) * gap;
+    x0 = (w - total) / 2;
+    n = L->cols * L->rows;
+    for (i = L->first; i < fxv_sv_n && i < L->first + n; i++) {
+        int k = i - L->first, cx = x0 + (k % L->cols) * (cw + gap),
+            cy = y0 + (k / L->cols) * (ch + gap);
+
+        SETR(L->card[i], cx, cy, cx + cw, cy + ch);
+    }
+    /* a scroll bar beside them when they don't all fit: how much is
+       shown, and where */
+    {
+        int allrows = (fxv_sv_n + L->cols - 1) / L->cols;
+
+        if (allrows > L->rows) {
+            int tx = x0 + total + S(14), th = L->rows * (ch + gap) - gap,
+                tbh = max(S(24), th * L->rows / allrows),
+                by = y0 + (th - tbh) * firstrow / (allrows - L->rows);
+
+            SETR(L->track, tx, y0, tx + S(6), y0 + th);
+            SETR(L->thumb, tx, by, tx + S(6), by + tbh);
+        }
+    }
+    /* the buttons, centred */
+    for (i = 0, total = 0; i < FXV_SVB_N; i++)
+        total += S(bw[i]) + (i ? gap : 0);
+    x = (w - total) / 2;
+    for (i = 0; i < FXV_SVB_N; i++) {
+        SETR(L->btn[i], x, ybtn, x + S(bw[i]), ybtn + bh);
+        x += S(bw[i]) + gap;
+    }
+    fxv_title_sound_rect(w, s, L->snd);
+    /* the confirmation, in the middle */
+    {
+        int pw = S(480), ph = S(176), px = (w - pw) / 2, py = (h - ph) / 2,
+            b = S(150);
+
+        SETR(L->confirm, px, py, px + pw, py + ph);
+        SETR(L->cbtn[FXV_SVC_CANCEL], px + pw / 2 - gap / 2 - b,
+             py + ph - S(24) - bh, px + pw / 2 - gap / 2, py + ph - S(24));
+        SETR(L->cbtn[FXV_SVC_DELETE], px + pw / 2 + gap / 2,
+             py + ph - S(24) - bh, px + pw / 2 + gap / 2 + b,
+             py + ph - S(24));
+    }
+}
+
+#undef S
+#undef SETR
+
 /* ---- the death screen and the score list (both ports) -------------- */
 
 /*
