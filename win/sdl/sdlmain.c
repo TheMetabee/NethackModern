@@ -61,6 +61,7 @@ static struct {
     SDL_Texture *tiles_solid;  /* the same, solid: floors, backgrounds */
     int tiles_across;
     int cw, lh;                /* character width, line height */
+    float text_px;             /* the text size, pixels (Alt+= / Alt+-) */
     int zoom;                  /* index into sdl_zooms[], -1 = automatic */
     int zoom_used;             /* the step the last layout used */
     boolean recentre;          /* put the hero mid-view next layout */
@@ -86,6 +87,7 @@ static struct {
         int first, how;
         int bx, by, bw, bh;    /* its box on screen, as last drawn */
         int items_y;           /* where the line for item "first" is */
+        int hover;             /* the item under the mouse, -1 none */
     } ovl;
 } sdl;
 
@@ -151,6 +153,22 @@ sdl_fill(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
     SDL_RenderFillRect(sdl.ren, &rr);
 }
 
+/* set the text size (messages, status, menus), in pixels */
+static void
+sdl_text_size(float px)
+{
+    int w = 8, h = 16;
+
+    sdl.text_px = max(10.0f, min(72.0f, px));
+    if (!sdl.font)
+        return;
+    (void) TTF_SetFontSize(sdl.font, sdl.text_px);
+    (void) TTF_GetStringSize(sdl.font, "M", 1, &w, &h);
+    sdl.cw = w;
+    sdl.lh = TTF_GetFontLineSkip(sdl.font);
+    sdl.dirty = TRUE;
+}
+
 /* the first readable TrueType monospace font we can find */
 static TTF_Font *
 sdl_open_font(float pt)
@@ -211,6 +229,24 @@ sdl_dir_key(int dx, int dy)
     return iflags.num_pad ? pad[dy + 1][dx + 1] : vi[dy + 1][dx + 1];
 }
 
+/* the menu item (one with an identifier) under a point of the open menu
+   or text window, as last drawn; -1 if none */
+static int
+sdl_ovl_item_at(float mx, float my)
+{
+    struct sdl_win *w = sdl.ovl.w;
+    int i;
+
+    if (!w || mx < sdl.ovl.bx || mx >= sdl.ovl.bx + sdl.ovl.bw
+        || my < sdl.ovl.items_y || my >= sdl.ovl.by + sdl.ovl.bh)
+        return -1;
+    i = sdl.ovl.first + (int) ((my - sdl.ovl.items_y) / sdl.lh);
+    if (i >= w->nitems || i >= sdl.ovl.first + sdl_page_lines()
+        || !w->items[i].id.a_void)
+        return -1;
+    return i;
+}
+
 static void
 sdl_handle_event(const SDL_Event *e)
 {
@@ -258,13 +294,25 @@ sdl_handle_event(const SDL_Event *e)
             break;
         if (sdl.ovl.how == PICK_NONE) {
             sdl_push_key(' ');
-        } else if (my >= sdl.ovl.items_y) {
-            int i = sdl.ovl.first + (int) ((my - sdl.ovl.items_y) / sdl.lh);
+        } else {
+            int i = sdl_ovl_item_at(mx, my);
 
-            if (i < w->nitems && i < sdl.ovl.first + sdl_page_lines()
-                && w->items[i].id.a_void && w->items[i].acc)
+            if (i >= 0 && w->items[i].acc)
                 sdl_push_key(w->items[i].acc);
         }
+        break;
+    }
+    case SDL_EVENT_MOUSE_MOTION: {
+        /* the item under the mouse is highlighted */
+        SDL_Event ev = *e;
+        int i;
+
+        if (!sdl.ovl.w)
+            break;
+        (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        i = sdl_ovl_item_at(ev.motion.x, ev.motion.y);
+        if (i != sdl.ovl.hover)
+            sdl.ovl.hover = i, sdl.dirty = TRUE;
         break;
     }
     case SDL_EVENT_TEXT_INPUT:
@@ -301,6 +349,16 @@ sdl_handle_event(const SDL_Event *e)
         }
         if ((m & SDL_KMOD_CTRL) && k >= 'a' && k <= 'z') {
             sdl_push_key(C((int) k));
+            break;
+        }
+        /* the text's size: Alt+= larger, Alt+- smaller (not commands) */
+        if ((m & SDL_KMOD_ALT)
+            && (k == SDLK_EQUALS || k == SDLK_PLUS || k == SDLK_KP_PLUS
+                || k == SDLK_MINUS || k == SDLK_KP_MINUS)) {
+            sdl_text_size(sdl.text_px
+                          * ((k == SDLK_MINUS || k == SDLK_KP_MINUS) ? 0.9f
+                                                                     : 1.1f));
+            sdl.skip_text = TRUE;
             break;
         }
         if ((m & SDL_KMOD_ALT) && k >= 'a' && k <= 'z') {
@@ -1030,6 +1088,8 @@ sdl_draw_overlay(void)
             Snprintf(buf, sizeof buf, "%s", it->text);
         if (!it->id.a_void && (it->attr & (ATR_BOLD | ATR_INVERSE)))
             c = sdl_gold;
+        if (i == sdl.ovl.hover) /* under the mouse */
+            sdl_fill(x + 6, y, bw - 12, sdl.lh, 70, 92, 140, 150);
         sdl_text(x + 12, y, buf, c);
     }
     if (w->nitems > n) {
@@ -1067,7 +1127,7 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
 
     if (how != PICK_NONE)
         sdl_assign_accels(w);
-    sdl.ovl.w = w, sdl.ovl.how = how;
+    sdl.ovl.w = w, sdl.ovl.how = how, sdl.ovl.hover = -1;
     for (;;) {
         sdl.ovl.first = first;
         sdl_render();
@@ -1201,26 +1261,45 @@ sdl_init_nhwindows(int *argc, char **argv)
         raw_printf("SDL_ttf: %s", SDL_GetError());
         nh_terminate(EXIT_FAILURE);
     }
-    if (!SDL_CreateWindowAndRenderer("NetHack Modern", 1280, 800,
-                                     SDL_WINDOW_RESIZABLE
-                                         | SDL_WINDOW_HIGH_PIXEL_DENSITY,
-                                     &sdl.window, &sdl.ren)) {
-        raw_printf("SDL: %s", SDL_GetError());
-        nh_terminate(EXIT_FAILURE);
+    {
+        /* the window: most of the screen, centred */
+        SDL_Rect usable;
+        int ww = 1280, wh = 800;
+
+        if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable)
+            && usable.w > 0 && usable.h > 0) {
+            ww = max(800, usable.w * 85 / 100);
+            wh = max(600, usable.h * 85 / 100);
+        } else {
+            usable.h = 1080;
+        }
+        if (!SDL_CreateWindowAndRenderer("NetHack Modern", ww, wh,
+                                         SDL_WINDOW_RESIZABLE
+                                             | SDL_WINDOW_HIGH_PIXEL_DENSITY,
+                                         &sdl.window, &sdl.ren)) {
+            raw_printf("SDL: %s", SDL_GetError());
+            nh_terminate(EXIT_FAILURE);
+        }
+        (void) SDL_SetWindowPosition(sdl.window, SDL_WINDOWPOS_CENTERED,
+                                     SDL_WINDOWPOS_CENTERED);
+        /* text sized to the screen (in its pixels: a high-density
+           display gets proportionally more), about 1/50 of its height */
+        {
+            float scale = SDL_GetWindowDisplayScale(sdl.window);
+
+            if (scale <= 0.0f)
+                scale = 1.0f;
+            sdl.text_px = (float) usable.h / 50.0f * scale;
+        }
     }
     SDL_SetRenderVSync(sdl.ren, 1);
-    sdl.font = sdl_open_font(15.0f);
+    sdl.text_px = max(14.0f, min(64.0f, sdl.text_px));
+    sdl.font = sdl_open_font(sdl.text_px);
     if (!sdl.font) {
         raw_print("SDL: no TrueType font found; set NETHACK_FONT to one");
         nh_terminate(EXIT_FAILURE);
     }
-    {
-        int w = 8, h = 16;
-
-        (void) TTF_GetStringSize(sdl.font, "M", 1, &w, &h);
-        sdl.cw = w;
-        sdl.lh = TTF_GetFontLineSkip(sdl.font);
-    }
+    sdl_text_size(sdl.text_px);
     s = SDL_LoadBMP("tiles.bmp");
     if (s) {
         SDL_Surface *argb;
