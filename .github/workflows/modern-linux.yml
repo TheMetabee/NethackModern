@@ -167,10 +167,11 @@ jobs:
           test -d "$dir/save"
           test -f "$dir/sounds/hit_1.wav"
           test -f "$dir/tiles.bmp"
+          test -f "$dir/splash_art.png"
           test -f "$dir/fonts/DejaVuSansMono.ttf"
           DISPLAY=:0 SDL_VIDEO_DRIVER=offscreen \
           NETHACKOPTIONS='name:ci,role:val,race:human,gender:female,align:lawful,!tutorial,!legacy' \
-          NETHACK_SDL_KEYS="Sy" NETHACK_SDL_SHOT="$RUNNER_TEMP/frame.png" \
+          NETHACK_SDL_KEYS="pSy" NETHACK_SDL_SHOT="$RUNNER_TEMP/frame.png" \
             timeout 20 "$image" > sdl.out 2>&1 || true
           cat sdl.out
           test -s "$RUNNER_TEMP/frame.png"
