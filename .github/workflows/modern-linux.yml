@@ -141,6 +141,7 @@ jobs:
           sha256sum appimagetool runtime-x86_64
 
       - name: Make the AppImage
+        id: image
         run: |
           LD_LIBRARY_PATH=/opt/sdl3/lib \
           FONT=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf \
@@ -149,6 +150,12 @@ jobs:
           APPIMAGE_RUNTIME="$RUNNER_TEMP/tools/runtime-x86_64" \
             sh sys/unix/appimage/build-appimage.sh playground dist
           ls -l dist
+          # the download is named after the version too, like the Windows
+          # zip: NetHackModern-v0.2.0-x86_64.AppImage comes as
+          # NetHackModern-v0.2.0-linux-x86_64-AppImage.zip
+          base=$(basename dist/*.AppImage .AppImage)
+          echo "artifact=${base%-x86_64}-linux-x86_64-AppImage" \
+            >> "$GITHUB_OUTPUT"
 
       # run the packed AppImage itself, from another directory, with the
       # build's own game directory and SDL out of the way: in a terminal
@@ -179,7 +186,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: NetHackModern-linux-x86_64-AppImage
+          name: ${{ steps.image.outputs.artifact }}
           path: dist/*.AppImage
           retention-days: 30
           if-no-files-found: error
