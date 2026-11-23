@@ -81,17 +81,20 @@ DBGSYMS = NetHack.PDB NetHackW.PDB NetHackSDL.PDB
 PDBTOZIP = ..\NetHack\symbols\$(Configuration)\$(Platform)\NetHack.PDB \
 	   ..\NetHackW\symbols\$(Configuration)\$(Platform)\NetHackW.PDB \
 	   ..\NetHackSDL\symbols\$(Configuration)\$(Platform)\NetHackSDL.PDB
-MAINZIP = $(VSPACKAGEDIR)\nethack-$(NHV)-win-$(PlatformFileName).zip
 DBGSYMZIP = $(VSPACKAGEDIR)\nethack-$(NHV)-win-$(PlatformFileName)-debugsymbols.zip
 
 packageall: packagezip
 
-packagezip: showvar vsbindir vspackagedir $(FILESTOZIP) modernsounds $(MAINZIP) $(DBGSYMZIP)
-	@echo NetHack Windows package created: $(MAINZIP)
+# NetHack Modern: the release zip is NetHackModern-v<version>-windows-x64.zip,
+# the version being the game's own (MODERN_VERSION_STRING in include\fx.h),
+# with everything in vsbinary under a NethackModernW folder plus the latest
+# README and Guidebook (make-release-zip.ps1); it takes the place of the
+# DevTeam's nethack-<ver>-win-<platform>.zip
+packagezip: showvar vsbindir vspackagedir $(FILESTOZIP) modernsounds releasezip $(DBGSYMZIP)
+	@echo NetHack Modern Windows package created in $(VSPACKAGEDIR)
 
-$(MAINZIP): $(FILESTOZIP)
-#	if not exist $(VSPACKAGEDIR)\*.* mkdir $(VSPACKAGEDIR)
-	tar -a -cf $(MAINZIP) -C $(VSBINDIR) $(PKGFILES)
+releasezip: $(FILESTOZIP)
+	powershell -NoProfile -ExecutionPolicy Bypass -File make-release-zip.ps1 -Repo $(ROOTDIR)
 
 $(DBGSYMZIP): $(PDBTOZIP)
 	tar -a -cf $(DBGSYMZIP) $(PDBTOZIP)

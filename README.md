@@ -458,6 +458,12 @@ workload.
    msbuild NetHack.sln -t:package -p:Configuration=Release -p:Platform=x64
    ```
 
+   It also makes the release zip,
+   `vspackage\NetHackModern-v<version>-windows-x64.zip`, named for the
+   version in `include\fx.h` (`MODERN_VERSION_STRING`), with everything
+   under a `NethackModernW` folder
+   (`sys\windows\vs\package\make-release-zip.ps1`).
+
 4. Close the game before rebuilding, or the linker can't replace the exe.
 
 ### Linux
