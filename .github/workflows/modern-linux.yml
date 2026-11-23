@@ -38,6 +38,11 @@ jobs:
 
       - name: Compile and install
         run: |
+          # hacklib.a first, on its own: in a parallel build, util asks src
+          # for it (make hacklib.a there) while src is making it too, and a
+          # tool can link against a half-written archive
+          make -C src WANT_WIN_TTY=1 WANT_WIN_CURSES=1 \
+            WANT_MINIAUDIO=1 hacklib.a
           make -j"$(nproc)" WANT_WIN_TTY=1 WANT_WIN_CURSES=1 \
             WANT_MINIAUDIO=1 install
 
@@ -124,6 +129,13 @@ jobs:
       # the SDL window by default; the terminal versions as fallbacks
       - name: Compile and install
         run: |
+          # hacklib.a first, on its own: in a parallel build, util asks src
+          # for it (make hacklib.a there) while src is making it too, and a
+          # tool can link against a half-written archive
+          PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig \
+          make -C src WANT_WIN_TTY=1 WANT_WIN_CURSES=1 \
+            WANT_WIN_SDL=1 WANT_DEFAULT=sdl \
+            WANT_MINIAUDIO=1 WANT_RELOCATABLE=1 hacklib.a
           PKG_CONFIG_PATH=/opt/sdl3/lib/pkgconfig \
           make -j"$(nproc)" WANT_WIN_TTY=1 WANT_WIN_CURSES=1 \
             WANT_WIN_SDL=1 WANT_DEFAULT=sdl \
