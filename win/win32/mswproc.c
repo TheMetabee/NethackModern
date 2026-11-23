@@ -3282,6 +3282,8 @@ mswin_status_update(int idx, genericptr_t ptr, int chg, int percent,
     logDebug("mswin_status_update(%d, %p, %d, %d, %x, %p)\n",
              idx, ptr, chg, percent, color, condmasks);
 
+    fxv_status_note(idx, color, condmasks);
+
     if (idx >= 0) {
 
         nhassert(idx <= SIZE(_status_fields));

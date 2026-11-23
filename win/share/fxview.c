@@ -2997,6 +2997,59 @@ fxv_health_bar(int pct, int x, int y, int tw, int th, int bar[4],
 extern const char *const hu_stat[];  /* eat.c */
 extern const char *const enc_stat[]; /* botl.c */
 
+/* the colours the player's own hilite_status rules (in the rc file) give
+   hunger, burden and each condition, as the core last sent them through
+   status_update(); NO_COLOR where no rule applies */
+static int fxv_rule_hunger = NO_COLOR, fxv_rule_cap = NO_COLOR;
+static unsigned long fxv_rule_cond[CLR_MAX];
+
+/* every front end's status_update() passes what it gets here */
+void
+fxv_status_note(int idx, int color, unsigned long *condmasks)
+{
+    if (idx == BL_HUNGER)
+        fxv_rule_hunger = color & 0xff;
+    else if (idx == BL_CAP)
+        fxv_rule_cap = color & 0xff;
+    else if (idx == BL_CONDITION) {
+        int i;
+
+        for (i = 0; i < CLR_MAX; i++)
+            fxv_rule_cond[i] = condmasks ? condmasks[i] : 0UL;
+    }
+}
+
+/* a rule's colour if the player set one that can be read on a chip, else
+   ours: black (dark text on a dark chip) and "no colour" don't count, nor
+   anything while statushilites is off */
+static fxv_color
+fxv_rule_color(int clr, fxv_color ours)
+{
+    if (!iflags.hilite_delta || clr == NO_COLOR || clr <= CLR_BLACK
+        || clr >= CLR_MAX)
+        return ours;
+    return fxv_nh_color(clr);
+}
+
+static int
+fxv_rule_cond_clr(unsigned long mask)
+{
+    int i;
+
+    for (i = 0; i < CLR_MAX; i++)
+        if (i != NO_COLOR && (fxv_rule_cond[i] & mask))
+            return i;
+    return NO_COLOR;
+}
+
+/* the chips' colours by how much each matters: red can kill you soon,
+   orange is bad, yellow a nuisance, green good, blue just so */
+#define FXC_DEADLY FXV_RGB(235, 84, 76)
+#define FXC_BAD FXV_RGB(242, 152, 62)
+#define FXC_MILD FXV_RGB(214, 190, 80)
+#define FXC_GOOD FXV_RGB(110, 200, 100)
+#define FXC_INFO FXV_RGB(116, 172, 255)
+
 /* the conditions shown as coloured chips: hunger, burden, then the rest
    worst first; returns how many (at most max) */
 int
@@ -3013,39 +3066,41 @@ fxv_status_chips(struct fxv_chip *chip, int max)
         for (i = (int) strlen(hunger); i > 0 && hunger[i - 1] == ' '; i--)
             hunger[i - 1] = '\0';
         chip[n].name = hunger;
-        chip[n++].c = (u.uhs == SATIATED) ? FXV_RGB(214, 190, 80)
-                      : (u.uhs == HUNGRY) ? FXV_RGB(242, 152, 62)
-                                          : FXV_RGB(235, 84, 76);
+        chip[n++].c = fxv_rule_color(fxv_rule_hunger,
+                                     (u.uhs == SATIATED) ? FXC_GOOD
+                                     : (u.uhs == HUNGRY) ? FXC_BAD
+                                                         : FXC_DEADLY);
     }
     if (cap > UNENCUMBERED && n < max) {
         chip[n].name = enc_stat[cap];
-        chip[n++].c = (cap == SLT_ENCUMBER) ? FXV_RGB(214, 190, 80)
-                      : (cap == MOD_ENCUMBER) ? FXV_RGB(242, 152, 62)
-                                              : FXV_RGB(235, 84, 76);
+        chip[n++].c = fxv_rule_color(fxv_rule_cap,
+                                     (cap == SLT_ENCUMBER) ? FXC_MILD
+                                     : (cap == MOD_ENCUMBER) ? FXC_BAD
+                                                             : FXC_DEADLY);
     }
-#define CHIP(cond, nm, col) \
-    if ((cond) && n < max) {    \
-        chip[n].name = (nm);    \
-        chip[n++].c = (col);    \
+#define CHIP(cond, nm, mask, col) \
+    if ((cond) && n < max) {                                       \
+        chip[n].name = (nm);                                       \
+        chip[n++].c = fxv_rule_color(fxv_rule_cond_clr(mask), col); \
     }
-    CHIP(Stoned, "Stoning", FXV_RGB(235, 84, 76))
-    CHIP(Slimed, "Slimed", FXV_RGB(235, 84, 76))
-    CHIP(Strangled, "Strangled", FXV_RGB(235, 84, 76))
+    CHIP(Stoned, "Stoning", BL_MASK_STONE, FXC_DEADLY)
+    CHIP(Slimed, "Slimed", BL_MASK_SLIME, FXC_DEADLY)
+    CHIP(Strangled, "Strangled", BL_MASK_STRNGL, FXC_DEADLY)
     CHIP(Sick && (u.usick_type & SICK_VOMITABLE), "Food poisoned",
-         FXV_RGB(235, 84, 76))
+         BL_MASK_FOODPOIS, FXC_DEADLY)
     CHIP(Sick && (u.usick_type & SICK_NONVOMITABLE), "Ill",
-         FXV_RGB(235, 84, 76))
-    CHIP(Stunned, "Stunned", FXV_RGB(242, 152, 62))
-    CHIP(Confusion, "Confused", FXV_RGB(200, 120, 235))
-    CHIP(Hallucination, "Hallucinating", FXV_RGB(242, 134, 242))
-    CHIP(Blind, "Blind", FXV_RGB(160, 166, 180))
-    CHIP(Deaf, "Deaf", FXV_RGB(160, 166, 180))
-    CHIP(u.ustuck && !u.uswallow, "Held", FXV_RGB(242, 152, 62))
-    CHIP(u.utrap, "Trapped", FXV_RGB(242, 152, 62))
-    CHIP(Wounded_legs, "Wounded legs", FXV_RGB(242, 152, 62))
-    CHIP(Levitation, "Levitating", FXV_RGB(116, 172, 255))
-    CHIP(Flying && !Levitation, "Flying", FXV_RGB(116, 172, 255))
-    CHIP(u.usteed, "Riding", FXV_RGB(116, 172, 255))
+         BL_MASK_TERMILL, FXC_DEADLY)
+    CHIP(Stunned, "Stunned", BL_MASK_STUN, FXC_BAD)
+    CHIP(Confusion, "Confused", BL_MASK_CONF, FXC_BAD)
+    CHIP(u.ustuck && !u.uswallow, "Held", BL_MASK_HELD, FXC_BAD)
+    CHIP(u.utrap, "Trapped", BL_MASK_TRAPPED, FXC_BAD)
+    CHIP(Blind, "Blind", BL_MASK_BLIND, FXC_MILD)
+    CHIP(Hallucination, "Hallucinating", BL_MASK_HALLU, FXC_MILD)
+    CHIP(Wounded_legs, "Wounded legs", BL_MASK_WOUNDEDL, FXC_MILD)
+    CHIP(Deaf, "Deaf", BL_MASK_DEAF, FXC_MILD)
+    CHIP(Levitation, "Levitating", BL_MASK_LEV, FXC_INFO)
+    CHIP(Flying && !Levitation, "Flying", BL_MASK_FLY, FXC_GOOD)
+    CHIP(u.usteed, "Riding", BL_MASK_RIDE, FXC_GOOD)
 #undef CHIP
     return n;
 }

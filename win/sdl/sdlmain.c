@@ -2730,7 +2730,8 @@ sdl_status_update(int idx, genericptr_t ptr, int chg, int percent,
     char *dst = (idx == BL_TITLE) ? sdl_title
                 : (idx == BL_LEVELDESC) ? sdl_leveldesc : (char *) 0;
 
-    nhUse(chg), nhUse(percent), nhUse(color), nhUse(colormasks);
+    nhUse(chg), nhUse(percent);
+    fxv_status_note(idx, color, colormasks);
     if (idx == BL_FLUSH || idx == BL_RESET) {
         sdl.dirty = TRUE;
         return;
@@ -3235,13 +3236,19 @@ sdl_cond_layout(void)
     if (getenv("NETHACK_SDL_TEST_CONDS")) {
         /* for testing: a few of them, to see how they lie */
         static const char *const nm[] = {
-            "Hungry", "Burdened", "Confused", "Stunned", "Blind",
-            "Hallucinating", "Levitating"
+            "Weak", "Satiated", "Burdened", "Confused", "Blind",
+            "Levitating", "Stoning"
+        };
+        static const fxv_color nc[] = {
+            FXV_RGB(235, 84, 76), FXV_RGB(110, 200, 100),
+            FXV_RGB(214, 190, 80), FXV_RGB(242, 152, 62),
+            FXV_RGB(214, 190, 80), FXV_RGB(116, 172, 255),
+            FXV_RGB(235, 84, 76)
         };
 
         for (n = 0; n < SIZE(nm); n++) {
             sdl_cnd.chip[n].name = nm[n];
-            sdl_cnd.chip[n].c = FXV_RGB(242, 152, 62);
+            sdl_cnd.chip[n].c = nc[n];
         }
     }
     if (!n)
@@ -7084,7 +7091,7 @@ sdl_ctrl_nhwindow(winid w, int request, win_request_info *wri)
 struct window_procs sdl_procs = {
     WPID(sdl),
     (WC_COLOR | WC_HILITE_PET | WC_TILED_MAP | WC_PERM_INVENT),
-    (WC2_DARKGRAY | WC2_FLUSH_STATUS),
+    (WC2_DARKGRAY | WC2_FLUSH_STATUS | WC2_HILITE_STATUS),
     { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
     sdl_init_nhwindows,
     sdl_player_selection,

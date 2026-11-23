@@ -185,6 +185,7 @@ struct fxv_chip {
     fxv_color c;
 };
 int fxv_status_chips(struct fxv_chip *, int max);
+void fxv_status_note(int idx, int color, unsigned long *condmasks);
 fxv_color fxv_hp_color(int pct);
 void fxv_stat_arrows(int dir[6]);
 fxv_color fxv_bar_row(fxv_color c, double k, int row, int rows);
