@@ -261,6 +261,18 @@ enum windowsterminal_how {
 #define FX_NFONT 5
 #define FX_FONTSZ 80
 
+/* NetHack Modern: where the SDL window shows the hero's conditions
+   (fx_cond_pos): a corner of the map, then in a row or a column from it
+   (fx_cond_layout); or in the panel, after the equipment */
+#define FX_COND_BOTTOM_LEFT 0
+#define FX_COND_TOP_LEFT 1
+#define FX_COND_BOTTOM_RIGHT 2
+#define FX_COND_TOP_RIGHT 3
+#define FX_COND_PANEL 4
+#define FX_NCOND_POS 5
+#define FX_COND_ROW 0
+#define FX_COND_COLUMN 1
+
 /*
  * Stuff that really isn't option or platform related and does not
  * get saved and restored.  They are set and cleared during the game
@@ -323,6 +335,9 @@ struct instance_flags {
                                 * left/centre/right */
     int fx_shade;              /* NetHack Modern: 0 light, 1 medium, 2 dark,
                                 * 3 deep: shade of what's out of sight */
+    int fx_cond_pos;           /* NetHack Modern: where the SDL window shows
+                                * Burdened, Hungry... (FX_COND_*) */
+    int fx_cond_layout;        /* NetHack Modern: ...in a row or a column */
     char fx_font[FX_NFONT][FX_FONTSZ]; /* NetHack Modern: the SDL window's
                                 * fonts (FX_FONT_*), "" for its own */
     boolean pending_customizations; /* at least one custom. was specified */

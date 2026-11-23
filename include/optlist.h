@@ -390,6 +390,12 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTC(fx_msg_pos, Advanced, 20, opt_in, set_in_game,
                 No, Yes, No, No, NoAlias,
                 "NetHackW: where messages sit on the map: top-left, top-centre, top-right, bottom-left, bottom-centre or bottom-right")
+    NHOPTC(fx_cond_pos, Advanced, 12, opt_in, set_in_game,
+                No, Yes, No, No, NoAlias,
+                "SDL: where conditions (Burdened, Hungry...) show: top-left, bottom-left, top-right, bottom-right or panel")
+    NHOPTC(fx_cond_layout, Advanced, 8, opt_in, set_in_game,
+                No, Yes, No, No, NoAlias,
+                "SDL: conditions on the map in a row or a column")
     NHOPTC(fx_shade, Advanced, 10, opt_in, set_in_game,
                 No, Yes, No, No, NoAlias,
                 "NetHackW: how dark out-of-sight squares are: light, medium, dark or deep")

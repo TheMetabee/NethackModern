@@ -204,6 +204,16 @@ static struct {
 } sdl_btn[SDL_MAXBTN];
 static int sdl_nbtn, sdl_btn_hot = -1, sdl_actx;
 
+/* the hero's conditions on the map, as last laid out (fx_cond_pos;
+   sdl_cond_layout()) */
+#define SDL_MAXCOND 24
+static struct {
+    int n;
+    struct fxv_chip chip[SDL_MAXCOND];
+    SDL_Rect r[SDL_MAXCOND];
+    SDL_Rect block; /* all of them, for the messages to keep clear of */
+} sdl_cnd;
+
 /* the action button at a point, or -1 */
 static int
 sdl_btn_at(float mx, float my)
@@ -807,6 +817,8 @@ enum sdl_bar_kind {
     BAR_INVEN,     /* the inventory panel shown or hidden */
     BAR_ACTIONS,   /* the action buttons shown or hidden */
     BAR_FONTS,     /* the Fonts window */
+    BAR_CONDPOS,   /* fx_cond_pos: the next place, each click */
+    BAR_CONDROW,   /* fx_cond_layout: row or column */
     BAR_SEP
 };
 
@@ -857,6 +869,9 @@ static const struct sdl_bar_item bar_view[] = {
     BSEP,
     { "Inventory panel", "", BAR_INVEN, NULL, 0 },
     { "Action buttons", "", BAR_ACTIONS, NULL, 0 },
+    /* (labels as wide as they get; drawn as they are now) */
+    { "Conditions: bottom right", "", BAR_CONDPOS, NULL, 0 },
+    { "Conditions in a column", "", BAR_CONDROW, NULL, 0 },
     BK("Previous messages", "Ctrl+P", "\x10"),
     BK("Dungeon overview", "Ctrl+O", "\x0f"),
 };
@@ -986,6 +1001,28 @@ static int
 sdl_bar_h(void)
 {
     return sdl.lh + 8;
+}
+
+/* an item's label as it reads now: the conditions' place and layout
+   say what they are */
+static const char *
+sdl_bar_label(const struct sdl_bar_item *it)
+{
+    static const char *const where[FX_NCOND_POS] = {
+        "Conditions: bottom left", "Conditions: top left",
+        "Conditions: bottom right", "Conditions: top right",
+        "Conditions: in the panel"
+    };
+
+    if (it->kind == BAR_CONDPOS)
+        return where[iflags.fx_cond_pos % FX_NCOND_POS];
+    if (it->kind == BAR_CONDROW) {
+        if (iflags.fx_cond_pos == FX_COND_PANEL)
+            return "Conditions in a row"; /* (the panel has two rows) */
+        return (iflags.fx_cond_layout == FX_COND_COLUMN)
+                   ? "Conditions in a column" : "Conditions in a row";
+    }
+    return it->label;
 }
 
 /* the open topic's drop-down box, as drawn */
@@ -1125,7 +1162,8 @@ sdl_draw_bar(void)
                 sdl_thick_line(x0 + cw * 0.4f, y0 + cw * 0.4f,
                                x0 + cw * 1.2f, y0 - cw * 0.6f, t, c);
             }
-            (void) sdl_text(bx + 12 + 2 * sdl.cw, iy, it->label, txt);
+            (void) sdl_text(bx + 12 + 2 * sdl.cw, iy, sdl_bar_label(it),
+                            txt);
             {
                 char level[16];
                 const char *hint = it->hint;
@@ -1208,6 +1246,15 @@ sdl_bar_do(const struct sdl_bar_item *it)
         break;
     case BAR_FONTS:
         sdl_fonts_dialog();
+        break;
+    case BAR_CONDPOS: /* the next place round (kept in nethackmodern.rc) */
+        iflags.fx_cond_pos = (iflags.fx_cond_pos + 1) % FX_NCOND_POS;
+        fx_options_remember();
+        break;
+    case BAR_CONDROW:
+        iflags.fx_cond_layout = (iflags.fx_cond_layout == FX_COND_COLUMN)
+                                    ? FX_COND_ROW : FX_COND_COLUMN;
+        fx_options_remember();
         break;
     case BAR_ACTIONS: /* (kept in nethackmodern.rc at once) */
         iflags.fx_action_buttons = !iflags.fx_action_buttons;
@@ -2346,7 +2393,7 @@ sdl_draw_msg_overlay(void)
     static const SDL_Color white = { 255, 255, 255, 255 };
     TTF_Font *f = sdl.msgfont ? sdl.msgfont : sdl.font;
     int sw, sh, aw, top, bottom, margin, wmax, ol, gap, n = 0, i, col, y,
-        tot = 0;
+        tot = 0, lx, rx;
     SDL_Rect area, block;
     boolean attop;
 
@@ -2358,6 +2405,34 @@ sdl_draw_msg_overlay(void)
     ol = max(2, sdl.lh / 10); /* outline thickness */
     gap = max(2, sdl.lh / 8);
     attop = fxv_msg_place(&col);
+    lx = margin, rx = aw - margin;
+    if (sdl_cnd.n) { /* keep clear of the conditions (fx_cond_pos) */
+        const SDL_Rect *b = &sdl_cnd.block;
+        int cp = iflags.fx_cond_pos;
+        boolean cright = (cp == FX_COND_BOTTOM_RIGHT
+                          || cp == FX_COND_TOP_RIGHT),
+                column = (iflags.fx_cond_layout == FX_COND_COLUMN);
+        /* only if they'd meet: the messages' strip across, and the third
+           of the map they stack into */
+        int mx0 = (col == 0) ? lx : (col == 1) ? (aw - wmax) / 2
+                                               : rx - wmax,
+            third = (bottom - top) / 3;
+        boolean across = (b->x < mx0 + wmax && b->x + b->w > mx0),
+                down = attop ? (b->y < top + third)
+                             : (b->y + b->h > bottom - third);
+
+        if (!across || !down)
+            ; /* apart */
+        else if (column && col == 0 && !cright)
+            lx = b->x + b->w + margin; /* beside a column */
+        else if (column && col == 2 && cright)
+            rx = b->x - margin;
+        else if (!attop) /* above or below rows */
+            bottom = min(bottom, b->y - 6 + margin);
+        else
+            top = max(top, b->y + b->h + 6 - margin);
+        wmax = max(40, min(wmax, rx - lx));
+    }
     TTF_SetFontWrapAlignment(f, col == 1 ? TTF_HORIZONTAL_ALIGN_CENTER
                                 : col == 2 ? TTF_HORIZONTAL_ALIGN_RIGHT
                                            : TTF_HORIZONTAL_ALIGN_LEFT);
@@ -2403,8 +2478,8 @@ sdl_draw_msg_overlay(void)
     for (i = 0; i < n; i++) {
         y -= ln[i].h;
         ln[i].y = y;
-        ln[i].x = (col == 0) ? margin
-                  : (col == 1) ? (aw - ln[i].w) / 2 : aw - margin - ln[i].w;
+        ln[i].x = (col == 0) ? lx
+                  : (col == 1) ? (aw - ln[i].w) / 2 : rx - ln[i].w;
         y -= gap;
     }
     block.x = ln[0].x, block.y = ln[0].y, block.w = ln[0].w;
@@ -3050,8 +3125,9 @@ sdl_draw_status(void)
     /* (the action buttons float above the panel: sdl_draw_actions()) */
     sdl_actx = w;
 
-    /* conditions as chips, wrapping onto the second row (fxview.c) */
-    {
+    /* conditions as chips, wrapping onto the second row (fxview.c), if
+       they're to be here (fx_cond_pos; else sdl_draw_conds()) */
+    if (iflags.fx_cond_pos == FX_COND_PANEL) {
         struct fxv_chip chip[24];
         int nchip = fxv_status_chips(chip, SIZE(chip)), cx = x, cy = y1;
 
@@ -3118,6 +3194,131 @@ sdl_draw_actions(void)
     }
 }
 
+/* ---- the hero's conditions on the map (fx_cond_pos) ---------------- */
+
+/* Burdened, Hungry, Confused...: chips in a row along the foot or the
+   top of the map at its left, or in a column down either side, where a
+   narrow window can't crowd them out as it does the panel's end; the
+   action buttons keep their place and the messages move aside */
+/* (sdl_cnd: declared at the top, for the messages) */
+
+/* would a chip at r sit on an action button? */
+static boolean
+sdl_cond_hits_btn(const SDL_Rect *r)
+{
+    int i;
+
+    for (i = 0; i < sdl_nbtn; i++)
+        if (SDL_HasRectIntersection(r, &sdl_btn[i].r))
+            return TRUE;
+    return FALSE;
+}
+
+/* where each chip goes (after sdl_draw_actions(), whose buttons they
+   go round): from the corner fx_cond_pos names, in a row (wrapping onto
+   lines further from the edge) or a column (wrapping onto columns
+   further in), as fx_cond_layout says */
+static void
+sdl_cond_layout(void)
+{
+    int pos = iflags.fx_cond_pos, sw, sh, aw, top, bottom, margin = 12,
+        gap = 6, ch, n, i, x, y, along = 0, tries;
+    boolean row = (iflags.fx_cond_layout != FX_COND_COLUMN),
+            right = (pos == FX_COND_BOTTOM_RIGHT || pos == FX_COND_TOP_RIGHT),
+            foot = (pos == FX_COND_BOTTOM_LEFT || pos == FX_COND_BOTTOM_RIGHT);
+
+    sdl_cnd.n = 0;
+    (void) memset(&sdl_cnd.block, 0, sizeof sdl_cnd.block);
+    if (pos == FX_COND_PANEL || !program_state.in_moveloop || !sdl_title[0])
+        return;
+    n = fxv_status_chips(sdl_cnd.chip, SDL_MAXCOND);
+    if (getenv("NETHACK_SDL_TEST_CONDS")) {
+        /* for testing: a few of them, to see how they lie */
+        static const char *const nm[] = {
+            "Hungry", "Burdened", "Confused", "Stunned", "Blind",
+            "Hallucinating", "Levitating"
+        };
+
+        for (n = 0; n < SIZE(nm); n++) {
+            sdl_cnd.chip[n].name = nm[n];
+            sdl_cnd.chip[n].c = FXV_RGB(242, 152, 62);
+        }
+    }
+    if (!n)
+        return;
+    SDL_GetRenderOutputSize(sdl.ren, &sw, &sh);
+    aw = sw - sdl_inv_w(), top = sdl_map_top() + 8;
+    bottom = sh - sdl_status_h() - 8;
+    ch = sdl_rowh() - 4;
+    /* (x, y): the corner of the next chip nearest the chosen corner */
+    x = right ? aw - margin : margin;
+    y = foot ? bottom - 2 : top;
+    for (i = 0; i < n; i++) {
+        SDL_Rect *r = &sdl_cnd.r[sdl_cnd.n];
+        int cw = sdl_text_w(sdl_cnd.chip[i].name) + 16;
+
+        for (tries = 0; tries < 60; tries++) {
+            r->w = cw, r->h = ch;
+            r->x = right ? x - cw : x;
+            r->y = foot ? y - ch : y;
+            if (row ? ((right ? r->x < margin : r->x + cw > aw - margin)
+                       && x != (right ? aw - margin : margin))
+                    : (foot ? r->y < top : r->y + ch > bottom)) {
+                /* run out of room along: start a new line (a row) or
+                   column, further from the edge */
+                if (row) {
+                    x = right ? aw - margin : margin;
+                    y += foot ? -(ch + gap) : ch + gap;
+                } else {
+                    y = foot ? bottom - 2 : top;
+                    x += right ? -(along + gap) : along + gap;
+                    along = 0;
+                }
+                continue;
+            }
+            if (sdl_cond_hits_btn(r)) { /* step past an action button */
+                if (row)
+                    y += foot ? -(ch + gap) : ch + gap,
+                    x = right ? aw - margin : margin;
+                else
+                    y += foot ? -(ch + gap) : ch + gap;
+                continue;
+            }
+            break;
+        }
+        if (tries == 60 || r->y < top - 8 || r->y + ch > bottom + 8
+            || r->x < 0 || r->x + cw > aw)
+            break; /* no room left at all */
+        sdl_cnd.chip[sdl_cnd.n] = sdl_cnd.chip[i];
+        if (sdl_cnd.n)
+            SDL_GetRectUnion(&sdl_cnd.block, r, &sdl_cnd.block);
+        else
+            sdl_cnd.block = *r;
+        sdl_cnd.n++;
+        if (row)
+            x += right ? -(cw + gap) : cw + gap;
+        else
+            y += foot ? -(ch + gap) : ch + gap, along = max(along, cw);
+    }
+}
+
+static void
+sdl_draw_conds(void)
+{
+    int i;
+
+    sdl_cond_layout();
+    for (i = 0; i < sdl_cnd.n; i++) {
+        const SDL_Rect *r = &sdl_cnd.r[i];
+
+        sdl_rbox(r->x, r->y, r->w, r->h, 4, FXV_RGB(52, 58, 70));
+        sdl_rbox(r->x + 1, r->y + 1, r->w - 2, r->h - 2, 3,
+                 FXV_RGB(28, 31, 38));
+        (void) sdl_text(r->x + 8, r->y + (r->h - sdl.lh) / 2,
+                        sdl_cnd.chip[i].name, sdl_col(sdl_cnd.chip[i].c));
+    }
+}
+
 /* the whole screen, without any menu over it */
 static void
 sdl_draw_screen(void)
@@ -3127,8 +3328,9 @@ sdl_draw_screen(void)
     sdl_draw_map();
     sdl_draw_inventory();
     sdl_draw_status();
-    sdl_draw_messages();
     sdl_draw_actions(); /* over the map, just above the panel */
+    sdl_draw_conds();   /* round the buttons */
+    sdl_draw_messages(); /* clear of both */
     sdl_draw_bar(); /* last: its drop-downs go over everything */
 }
 

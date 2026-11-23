@@ -3837,6 +3837,74 @@ fx_options_remember(void)
 }
 
 /* NetHack Modern: where NetHackW's messages sit on the map */
+/* NetHack Modern: where the SDL window shows the hero's conditions */
+static const char *const fx_cond_poses[FX_NCOND_POS] = {
+    "bottom-left", "top-left", "bottom-right", "top-right", "panel"
+};
+static const char *const fx_cond_layouts[] = { "row", "column" };
+
+staticfn int
+optfn_fx_cond_layout(int optidx, int req, boolean negated, char *opts,
+                     char *op)
+{
+    int i;
+
+    if (req == do_init) {
+        iflags.fx_cond_layout = FX_COND_ROW;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        op = string_for_opt(opts, negated);
+        if (negated || op == empty_optstr)
+            return optn_err;
+        for (i = 0; i < SIZE(fx_cond_layouts); i++)
+            if (!strcmpi(op, fx_cond_layouts[i])
+                || (i == 0 && !strcmpi(op, "horizontal"))
+                || (i == 1 && !strcmpi(op, "vertical"))) {
+                iflags.fx_cond_layout = i;
+                return optn_ok;
+            }
+        config_error_add("%s: row or column", allopt[optidx].name);
+        return optn_err;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Strcpy(opts, fx_cond_layouts[iflags.fx_cond_layout & 1]);
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
+staticfn int
+optfn_fx_cond_pos(int optidx, int req, boolean negated, char *opts,
+                  char *op)
+{
+    int i;
+
+    if (req == do_init) {
+        iflags.fx_cond_pos = FX_COND_TOP_LEFT;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        op = string_for_opt(opts, negated);
+        if (negated || op == empty_optstr)
+            return optn_err;
+        for (i = 0; i < FX_NCOND_POS; i++)
+            if (!strcmpi(op, fx_cond_poses[i])) {
+                iflags.fx_cond_pos = i;
+                return optn_ok;
+            }
+        config_error_add("%s: bottom-left, top-left, bottom-right,"
+                         " top-right or panel",
+                         allopt[optidx].name);
+        return optn_err;
+    }
+    if (req == get_val || req == get_cnf_val) {
+        Strcpy(opts, fx_cond_poses[iflags.fx_cond_pos % FX_NCOND_POS]);
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
 static const char *const fx_msg_poses[] = {
     "top-left", "top-centre", "top-right",
     "bottom-left", "bottom-centre", "bottom-right"
