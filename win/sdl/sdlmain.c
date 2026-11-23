@@ -21,6 +21,12 @@
 #include "hack.h"
 #include "func_tab.h"
 #include "fxview.h"
+#if !defined(VERSION_MAJOR)
+#include "patchlevel.h"
+#endif
+#ifdef SND_LIB_MINIAUDIO
+#include "../sound/miniaudio/nhminiaudio.h"
+#endif
 
 #include <math.h>
 
@@ -34,6 +40,25 @@
 #define SDL_MSGSHOW 3          /* message lines on screen */
 #define SDL_TEXTMAX 1000       /* lines in a text or menu window */
 #define SDL_KEYQ 64
+/* what the name and character screens' own keys and clicks push */
+#define SDL_CSK_UP 0x300
+#define SDL_CSK_DOWN 0x301
+#define SDL_CSK_LEFT 0x302
+#define SDL_CSK_RIGHT 0x303
+#define SDL_CSK_HOME 0x304
+#define SDL_CSK_END 0x305
+#define SDL_CSK_TAB 0x306
+#define SDL_CSK_BACKTAB 0x307
+#define SDL_CSK_MUSIC 0x308
+#define SDL_CSK_CLEAR 0x309      /* Ctrl+Backspace: the whole name */
+#define SDL_CSK_BTN 0x310        /* + the button clicked */
+/* the name and character screens, and their groups beyond the choices
+   (FXV_CS_ROLE..FXV_CS_ALIGN) */
+#define SDL_CS_NAME 0 /* asking for a name */
+#define SDL_CS_CHAR 1 /* choosing role, race, gender, alignment */
+#define SDL_CS_BTN FXV_CS_NGRP       /* the row of buttons */
+#define SDL_CS_BOX (FXV_CS_NGRP + 1) /* the name box */
+#define SDL_CS_SND (FXV_CS_NGRP + 2) /* the speaker: the menu music */
 
 struct sdl_item {              /* a line of a menu or text window */
     anything id;               /* a_void == 0: not selectable */
@@ -101,6 +126,23 @@ static struct {
         int items_y;           /* where the line for item "first" is */
         int hover;             /* the item under the mouse, -1 none */
     } ovl;
+    struct {                   /* the title screen, while it's up */
+        boolean up;
+        int focus, hot, down;  /* FXV_TITLE_*, or SDL_TITLE_SOUND */
+        int btn[FXV_TITLE_NBTN][4], snd[4]; /* as last laid out */
+    } title;
+    struct {                   /* the name and character screens */
+        int mode;              /* SDL_CS_NAME or _CHAR; -1 when not up */
+        int fg, fb;            /* the focus: a group, or _BTN / _BOX */
+        int lastgrp, lastmid;  /* where Up from the buttons, Right from
+                                  the roles go */
+        int hg, hi, dg, di;    /* what's under, and pressed by, the mouse */
+        char name[PL_NSIZ];
+        struct fxv_cs_layout L; /* as last laid out */
+    } cs;
+    SDL_Texture *art;          /* the title painting (none if missing) */
+    float art_w, art_h;
+    TTF_Font *face[3];         /* the screens' fonts (SDL_FACE_*) */
     struct {                   /* the inventory panel (perm_invent) */
         int first;             /* the line at its top */
         boolean updating;      /* update_inventory() is filling it */
@@ -115,6 +157,15 @@ static int sdl_inv_w(void);
 static int sdl_inv_lines(void);
 static int sdl_map_top(void);
 static void sdl_draw_inventory(void);
+static int sdl_title_hit(float, float);
+static int sdl_cs_hit(float, float, int *);
+static void sdl_draw_cs(void);
+static winid sdl_create_nhwindow(int);
+static void sdl_putstr(winid, int, const char *);
+static void sdl_destroy_nhwindow(winid);
+static void sdl_exit_nhwindows(const char *);
+static void sdl_draw_title(void);
+static void sdl_music_end(void);
 static int sdl_text_w(const char *);
 static SDL_Color sdl_col(fxv_color);
 static struct sdl_win *sdl_getwin(winid);
@@ -750,6 +801,11 @@ sdl_handle_event(const SDL_Event *e)
 {
     switch (e->type) {
     case SDL_EVENT_QUIT:
+        if (sdl.title.up || sdl.cs.mode >= 0) { /* nothing has started:
+                                                    just leave */
+            sdl_push_key('x');
+            break;
+        }
         /* closing the window: save, as a hangup would */
         sdl_push_key('\033');
         if (program_state.in_moveloop)
@@ -797,6 +853,35 @@ sdl_handle_event(const SDL_Event *e)
         float mx, my;
 
         (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        if (sdl.cs.mode >= 0 && !w) { /* the name or character screen */
+            int g, i;
+
+            if (ev.button.button != SDL_BUTTON_LEFT)
+                break;
+            i = sdl_cs_hit(ev.button.x, ev.button.y, &g);
+            sdl.cs.dg = sdl.cs.di = -1;
+            if (g == SDL_CS_BOX) {
+                sdl.cs.fg = SDL_CS_BOX;
+            } else if (g >= 0 && g < FXV_CS_NGRP) {
+                /* a choice takes at once, if it fits */
+                if (fxv_cs_pick(g, i)) {
+                    sdl.cs.fg = sdl.cs.lastgrp = g;
+                    if (g != FXV_CS_ROLE)
+                        sdl.cs.lastmid = g;
+                }
+            } else if (g == SDL_CS_BTN || g == SDL_CS_SND) {
+                sdl.cs.dg = g, sdl.cs.di = i;
+            }
+            sdl.dirty = TRUE;
+            break;
+        }
+        if (sdl.title.up && !w) { /* a title screen button, pressed */
+            if (ev.button.button == SDL_BUTTON_LEFT) {
+                sdl.title.down = sdl_title_hit(ev.button.x, ev.button.y);
+                sdl.dirty = TRUE;
+            }
+            break;
+        }
         if (sdl_bar_mouse(&ev)) /* the menu bar first */
             break;
         if (!w) {
@@ -828,12 +913,65 @@ sdl_handle_event(const SDL_Event *e)
         }
         break;
     }
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (sdl.cs.mode >= 0 && !sdl.ovl.w
+            && e->button.button == SDL_BUTTON_LEFT) {
+            /* a button: chosen on letting go over it */
+            SDL_Event ev = *e;
+            int g, at, wasg = sdl.cs.dg, was = sdl.cs.di;
+
+            (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+            at = sdl_cs_hit(ev.button.x, ev.button.y, &g);
+            sdl.cs.dg = sdl.cs.di = -1, sdl.dirty = TRUE;
+            if (wasg == SDL_CS_BTN && g == SDL_CS_BTN && was == at)
+                sdl_push_key(SDL_CSK_BTN + at);
+            else if (wasg == SDL_CS_SND && g == SDL_CS_SND)
+                sdl_push_key(SDL_CSK_MUSIC);
+            break;
+        }
+        if (sdl.title.up && !sdl.ovl.w
+            && e->button.button == SDL_BUTTON_LEFT) {
+            /* a title screen button: chosen on letting go over it */
+            SDL_Event ev = *e;
+            int at, was = sdl.title.down;
+
+            (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+            at = sdl_title_hit(ev.button.x, ev.button.y);
+            sdl.title.down = -1, sdl.dirty = TRUE;
+            if (was >= 0 && was == at)
+                sdl_push_key(at == FXV_TITLE_PLAY ? 'p'
+                             : at == FXV_TITLE_ABOUT ? 'a'
+                             : at == FXV_TITLE_EXIT ? 'x' : 'm');
+        }
+        break;
     case SDL_EVENT_MOUSE_MOTION: {
         /* the item under the mouse is highlighted */
         SDL_Event ev = *e;
         int i;
 
         (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        if (sdl.cs.mode >= 0 && !sdl.ovl.w) { /* what's pointed at */
+            int g;
+
+            i = sdl_cs_hit(ev.motion.x, ev.motion.y, &g);
+            if (g != sdl.cs.hg || i != sdl.cs.hi) {
+                sdl.cs.hg = g, sdl.cs.hi = i;
+                if (g == SDL_CS_BTN && sdl.cs.dg < 0) /* as the title's */
+                    sdl.cs.fg = SDL_CS_BTN, sdl.cs.fb = i;
+                sdl.dirty = TRUE;
+            }
+            break;
+        }
+        if (sdl.title.up && !sdl.ovl.w) { /* a title button lights up */
+            i = sdl_title_hit(ev.motion.x, ev.motion.y);
+            if (i != sdl.title.hot) {
+                sdl.title.hot = i;
+                if (i >= 0 && i < FXV_TITLE_NBTN)
+                    sdl.title.focus = i;
+                sdl.dirty = TRUE;
+            }
+            break;
+        }
         if (sdl_bar_mouse(&ev)) /* the menu bar first */
             break;
         i = sdl.ovl.w ? -1 : sdl_btn_at(ev.motion.x, ev.motion.y);
@@ -861,6 +999,76 @@ sdl_handle_event(const SDL_Event *e)
         boolean numlock = (m & SDL_KMOD_NUM) != 0;
 
         sdl.skip_text = FALSE;
+        if (sdl.cs.mode >= 0 && !sdl.ovl.w) {
+            int c = 0;
+
+            if ((m & SDL_KMOD_CTRL) && k == SDLK_M) {
+                c = SDL_CSK_MUSIC;
+            } else if ((m & SDL_KMOD_CTRL) && k == SDLK_BACKSPACE) {
+                c = SDL_CSK_CLEAR;
+            } else if ((m & SDL_KMOD_CTRL) && k == SDLK_V) {
+                /* paste a name */
+                char *t = SDL_GetClipboardText(), *q;
+
+                for (q = t; q && *q; q++)
+                    if (*q >= ' ' && *q <= '~')
+                        sdl_push_key(*q);
+                SDL_free(t);
+                sdl.skip_text = TRUE;
+                break;
+            } else {
+                switch (k) {
+                case SDLK_UP: c = SDL_CSK_UP; break;
+                case SDLK_DOWN: c = SDL_CSK_DOWN; break;
+                case SDLK_LEFT: c = SDL_CSK_LEFT; break;
+                case SDLK_RIGHT: c = SDL_CSK_RIGHT; break;
+                case SDLK_HOME: c = SDL_CSK_HOME; break;
+                case SDLK_END: c = SDL_CSK_END; break;
+                case SDLK_TAB:
+                    c = (m & SDL_KMOD_SHIFT) ? SDL_CSK_BACKTAB : SDL_CSK_TAB;
+                    break;
+                case SDLK_ESCAPE: c = '\033'; break;
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER: c = '\n'; break;
+                case SDLK_BACKSPACE: c = '\b'; break;
+                default: break; /* letters come as text */
+                }
+            }
+            if (c) {
+                sdl_push_key(c);
+                if (c == SDL_CSK_MUSIC || c == SDL_CSK_CLEAR)
+                    sdl.skip_text = TRUE;
+            }
+            break;
+        }
+        if (sdl.title.up && !sdl.ovl.w) {
+            int f = sdl.title.focus;
+
+            if ((m & SDL_KMOD_CTRL) && k == SDLK_M) {
+                sdl_push_key('m'), sdl.skip_text = TRUE;
+                break;
+            }
+            switch (k) {
+            case SDLK_LEFT:
+            case SDLK_UP:
+                f = (f + FXV_TITLE_NBTN - 1) % FXV_TITLE_NBTN;
+                break;
+            case SDLK_RIGHT:
+            case SDLK_DOWN:
+            case SDLK_TAB:
+                f = (f + 1) % FXV_TITLE_NBTN;
+                break;
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER:
+                sdl_push_key('\n');
+                break;
+            default:
+                break; /* letters come as text */
+            }
+            if (f != sdl.title.focus)
+                sdl.title.focus = f, sdl.dirty = TRUE;
+            break;
+        }
         if (sdl.bar_open >= 0) {
             /* a drop-down is open: Escape (or any key) just closes it */
             sdl.bar_open = sdl.bar_item = -1;
@@ -2019,7 +2227,7 @@ sdl_round_inset(int row, int h, int r)
     return (int) (r - sqrt(max(0.0, (double) r * r - dy * dy)) + 0.5);
 }
 
-#define SDL_BAR_RADIUS 4
+#define SDL_BAR_RADIUS FXV_CORNER
 
 /* a labelled bar, "HP 29 / 32" over a fill in the chosen fx_bar_style,
    its background, fill and outline all with slightly rounded corners */
@@ -2325,7 +2533,12 @@ sdl_render(void)
     if (!sdl.ren)
         return;
     sdl_sync_options();
-    sdl_draw_screen();
+    if (sdl.cs.mode >= 0)
+        sdl_draw_cs();
+    else if (sdl.title.up)
+        sdl_draw_title();
+    else
+        sdl_draw_screen();
     sdl_draw_overlay();
     sdl_present();
     sdl.dirty = FALSE;
@@ -2568,6 +2781,1025 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
     return count;
 }
 
+
+/* ---- the full-window screens: their fonts, art and buttons ---------- */
+
+/* the screens' fonts, as NetHackW's: a bold serif for titles, a plain
+   and a bold sans for the rest; found among the usual places, or the
+   game's own fonts/ folder; failing all those, the map's font */
+#define SDL_FACE_TITLE 0
+#define SDL_FACE_UI 1
+#define SDL_FACE_UI_BOLD 2
+#define SDL_NFACE 3
+
+static TTF_Font *
+sdl_face(int which, int px)
+{
+    static const char *const names[SDL_NFACE][5] = {
+        { "DejaVuSerif-Bold.ttf", "LiberationSerif-Bold.ttf", "palab.ttf",
+          "georgiab.ttf", "timesbd.ttf" },
+        { "DejaVuSans.ttf", "LiberationSans-Regular.ttf", "segoeui.ttf",
+          "Ubuntu-R.ttf", "arial.ttf" },
+        { "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "seguisb.ttf",
+          "Ubuntu-B.ttf", "arialbd.ttf" },
+    };
+    static const char *const dirs[] = {
+        "fonts/", "/usr/share/fonts/truetype/dejavu/",
+        "/usr/share/fonts/dejavu/", "/usr/share/fonts/TTF/",
+        "/usr/share/fonts/truetype/liberation/",
+        "/usr/share/fonts/liberation-sans/",
+        "/usr/share/fonts/truetype/ubuntu/", "/System/Library/Fonts/",
+        "C:\\Windows\\Fonts\\",
+    };
+    static boolean tried[SDL_NFACE];
+    TTF_Font *f;
+
+    if (which < 0 || which >= SDL_NFACE)
+        which = SDL_FACE_UI;
+    if (!sdl.face[which] && !tried[which]) {
+        char path[BUFSZ];
+        int i, j;
+
+        tried[which] = TRUE;
+        for (i = 0; i < SIZE(names[0]) && !sdl.face[which]; i++)
+            for (j = 0; j < SIZE(dirs) && !sdl.face[which]; j++) {
+                Snprintf(path, sizeof path, "%s%s", dirs[j], names[which][i]);
+                sdl.face[which] = TTF_OpenFont(path, 20.0f);
+            }
+        if (!sdl.face[which] && sdl.fontpath[0]
+            && (sdl.face[which] = TTF_OpenFont(sdl.fontpath, 20.0f)) != 0
+            && which != SDL_FACE_UI)
+            TTF_SetFontStyle(sdl.face[which], TTF_STYLE_BOLD);
+    }
+    f = sdl.face[which] ? sdl.face[which] : sdl.font;
+    (void) TTF_SetFontSize(f, (float) max(8, px));
+    TTF_SetFontKerning(f, false); /* (it set "T" apart from what follows) */
+    return f;
+}
+
+/* a line in one of those fonts: 'how' 0 from x, 1 centred on x, 2 up
+   to x; y is its top. A shadow (down and right, black) if 'shadow'.
+   Returns its width. */
+static int
+sdl_text_w_in(TTF_Font *f, const char *t)
+{
+    int w = 0, h = 0;
+
+    if (t && *t)
+        (void) TTF_GetStringSize(f, t, 0, &w, &h);
+    return w;
+}
+
+static int
+sdl_face_text(TTF_Font *f, const char *s, int x, int y, int how,
+              fxv_color c, int shadow)
+{
+    static const SDL_Color white = { 255, 255, 255, 255 };
+    SDL_Surface *surf;
+    SDL_Texture *tex;
+    SDL_FRect d;
+    int w;
+
+    if (!s || !*s || !(surf = TTF_RenderText_Blended(f, s, 0, white)))
+        return 0;
+    tex = SDL_CreateTextureFromSurface(sdl.ren, surf);
+    w = surf->w;
+    d.w = (float) surf->w, d.h = (float) surf->h;
+    d.x = (float) (how == 1 ? x - w / 2 : how == 2 ? x - w : x);
+    d.y = (float) y;
+    SDL_DestroySurface(surf);
+    if (!tex)
+        return 0;
+    if (shadow) {
+        SDL_FRect sd = d;
+
+        sd.x += shadow, sd.y += shadow;
+        (void) SDL_SetTextureColorMod(tex, 0, 0, 0);
+        SDL_RenderTexture(sdl.ren, tex, NULL, &sd);
+    }
+    (void) SDL_SetTextureColorMod(tex, (Uint8) FXV_R(c), (Uint8) FXV_G(c),
+                                  (Uint8) FXV_B(c));
+    SDL_RenderTexture(sdl.ren, tex, NULL, &d);
+    SDL_DestroyTexture(tex);
+    return w;
+}
+
+/* the painting fills the window, cropped to keep its shape (evenly from
+   the sides, more from the bottom than the top so the rider and the
+   moon stay in view), shaded towards the bottom (fxv_title_shade) so
+   the title and buttons read over it, then darkened all over by 'dim'
+   (0..255) for screens with panels over it */
+static void
+sdl_backdrop(int w, int h, int dim)
+{
+    static boolean tried;
+    int y, step = 3;
+
+    sdl_fill(0, 0, w, h, 14, 16, 20, 255);
+    if (!tried) {
+        SDL_Surface *s;
+
+        tried = TRUE;
+        if ((s = SDL_LoadPNG("splash_art.png")) != 0) {
+            sdl.art = SDL_CreateTextureFromSurface(sdl.ren, s);
+            sdl.art_w = (float) s->w, sdl.art_h = (float) s->h;
+            SDL_DestroySurface(s);
+            if (sdl.art)
+                (void) SDL_SetTextureScaleMode(sdl.art,
+                                               SDL_SCALEMODE_LINEAR);
+        }
+    }
+    if (sdl.art && sdl.art_w > 0 && sdl.art_h > 0) {
+        float sc = max((float) w / sdl.art_w, (float) h / sdl.art_h);
+        SDL_FRect d;
+
+        d.w = sdl.art_w * sc, d.h = sdl.art_h * sc;
+        d.x = (w - d.w) / 2, d.y = (h - d.h) / 3;
+        SDL_RenderTexture(sdl.ren, sdl.art, NULL, &d);
+    }
+    for (y = 0; y < h; y += step) {
+        int a = fxv_title_shade(y, h);
+
+        if (a > 0)
+            sdl_fill(0, y, w, step, 0, 0, 0, (Uint8) a);
+    }
+    if (dim > 0)
+        sdl_fill(0, 0, w, h, 0, 0, 0, (Uint8) min(dim, 255));
+}
+
+/* a box with the panels' small corners and an edge 'pw' wide */
+static void
+sdl_edged(const int r[4], fxv_color fill, fxv_color edge, int pw)
+{
+    int w = r[2] - r[0], h = r[3] - r[1];
+
+    sdl_rbox(r[0], r[1], w, h, FXV_CORNER, edge);
+    if (pw > 0 && w > 2 * pw && h > 2 * pw)
+        sdl_rbox(r[0] + pw, r[1] + pw, w - 2 * pw, h - 2 * pw,
+                 max(1, FXV_CORNER - pw), fill);
+}
+
+/* a button in the screens' style: 'primary' is the wide gold one, the
+   others dark (as NetHackW's mswin_ms_button) */
+static void
+sdl_button(const int r[4], const char *label, boolean primary, boolean hot,
+           boolean focus, boolean down, boolean enabled, double s)
+{
+    const fxv_color accent = FXV_RGB(229, 186, 96);
+    fxv_color fill, ink, edge;
+    TTF_Font *f = sdl_face(SDL_FACE_UI_BOLD, max(11, (int) (19 * s)));
+
+    if (!enabled)
+        hot = down = FALSE;
+    if (primary && enabled) {
+        fill = down ? FXV_RGB(196, 152, 70)
+               : hot ? FXV_RGB(244, 206, 124) : accent;
+        ink = FXV_RGB(14, 16, 20);
+        edge = focus ? FXV_RGB(255, 236, 190) : fill;
+    } else if (primary) {
+        fill = FXV_RGB(92, 80, 58), ink = FXV_RGB(40, 36, 30);
+        edge = focus ? accent : fill;
+    } else {
+        fill = down ? FXV_RGB(52, 58, 70)
+               : hot ? FXV_RGB(33, 37, 46) : FXV_RGB(24, 27, 33);
+        ink = !enabled ? FXV_RGB(52, 58, 70)
+              : (hot || focus) ? FXV_RGB(222, 226, 233)
+                               : FXV_RGB(138, 146, 160);
+        edge = focus ? accent : FXV_RGB(52, 58, 70);
+    }
+    sdl_edged(r, fill, edge, focus ? max(2, (int) (2 * s)) : 1);
+    (void) sdl_face_text(f, label, (r[0] + r[2]) / 2,
+                         (r[1] + r[3]) / 2 - TTF_GetFontHeight(f) / 2, 1,
+                         ink, 0);
+}
+
+/* a thick line, for the speaker's waves and cross */
+static void
+sdl_thick_line(float x0, float y0, float x1, float y1, float t, fxv_color c)
+{
+    float dx, dy;
+
+    SDL_SetRenderDrawColor(sdl.ren, (Uint8) FXV_R(c), (Uint8) FXV_G(c),
+                           (Uint8) FXV_B(c), 255);
+    for (dx = -t / 2; dx <= t / 2; dx += 0.5f)
+        for (dy = -t / 2; dy <= t / 2; dy += 0.5f)
+            SDL_RenderLine(sdl.ren, x0 + dx, y0 + dy, x1 + dx, y1 + dy);
+}
+
+/* the speaker button for the menu music: waves while it's on, crossed
+   out when it's off; pointed at, it says what it does */
+static void
+sdl_sound_icon(const int r[4], boolean hot, double s)
+{
+    boolean on = iflags.fx_menu_music;
+    float k = (float) (s * 1.05), t = max(2.0f, 2.2f * k);
+    float cx = (r[0] + r[2]) / 2.0f - 3 * (float) s,
+          cy = (r[1] + r[3]) / 2.0f;
+    fxv_color ink = hot ? FXV_RGB(229, 186, 96)
+                    : on ? FXV_RGB(222, 226, 233) : FXV_RGB(138, 146, 160);
+    SDL_Vertex v[6];
+    static const int tri[] = { 0, 1, 4, 0, 4, 5, 1, 2, 3, 1, 3, 4 };
+    static const float px[6] = { -10, -4, 3, 3, -4, -10 },
+                       py[6] = { -4, -4, -10, 10, 4, 4 };
+    int i;
+
+    /* the round button */
+    sdl_dot((r[0] + r[2]) / 2.0f, cy, (r[2] - r[0]) / 2.0f,
+            hot ? FXV_RGB(229, 186, 96) : FXV_RGB(52, 58, 70), FALSE);
+    sdl_dot((r[0] + r[2]) / 2.0f, cy, (r[2] - r[0]) / 2.0f - 1,
+            hot ? FXV_RGB(33, 37, 46) : FXV_RGB(24, 27, 33), FALSE);
+    /* the speaker itself */
+    for (i = 0; i < 6; i++) {
+        v[i].position.x = cx + px[i] * k, v[i].position.y = cy + py[i] * k;
+        v[i].color.r = FXV_R(ink) / 255.0f, v[i].color.g = FXV_G(ink) / 255.0f;
+        v[i].color.b = FXV_B(ink) / 255.0f, v[i].color.a = 1.0f;
+        v[i].tex_coord.x = v[i].tex_coord.y = 0.0f;
+    }
+    (void) SDL_RenderGeometry(sdl.ren, NULL, v, 6, tri, SIZE(tri));
+    if (on) {
+        int n;
+
+        for (n = 1; n <= 2; n++) {
+            float rr = (n == 1 ? 6 : 11) * k, ax = cx + 4 * k, a0, a1;
+
+            for (a0 = -0.85f; a0 < 0.85f; a0 += 0.17f) {
+                a1 = a0 + 0.17f;
+                sdl_thick_line(ax + rr * (float) cos(a0),
+                               cy + rr * (float) sin(a0),
+                               ax + rr * (float) cos(a1),
+                               cy + rr * (float) sin(a1), t, ink);
+            }
+        }
+    } else {
+        sdl_thick_line(cx + 8 * k, cy - 5 * k, cx + 17 * k, cy + 5 * k, t,
+                       ink);
+        sdl_thick_line(cx + 17 * k, cy - 5 * k, cx + 8 * k, cy + 5 * k, t,
+                       ink);
+    }
+    if (hot) {
+        TTF_Font *f = sdl_face(SDL_FACE_UI_BOLD, max(10, (int) (14 * s)));
+
+        (void) sdl_face_text(f, on ? "Music on  (Ctrl+M)"
+                                   : "Music off  (Ctrl+M)",
+                             r[0] - (int) (10 * s),
+                             (int) cy - TTF_GetFontHeight(f) / 2, 2,
+                             FXV_RGB(222, 226, 233), 1);
+    }
+}
+
+/* ---- the menu music (fx_menu_music), as NetHackW's ----------------- */
+
+/* It starts with the title screen, carries on through character
+   creation, and fades out as the game begins: when the hero is chosen,
+   or failing that (a restored game) at the first wait for a command.
+   The speaker button (or Ctrl+M) turns it off and on. */
+static boolean mm_on, mm_over;
+
+static void
+sdl_music_sync(void)
+{
+#ifdef SND_LIB_MINIAUDIO
+    static char path[BUFSZ];
+    static boolean first = TRUE;
+    boolean want = !mm_over && iflags.fx_menu_music && iflags.sounds;
+
+    if (want == mm_on)
+        return;
+    if (want) {
+        if (!path[0]) {
+            static const char *const tries[] = {
+                "sounds/music_title.mp3", "../sound/modern/music_title.mp3"
+            };
+            int i;
+
+            for (i = 0; i < SIZE(tries) && !path[0]; i++)
+                if (SDL_GetPathInfo(tries[i], NULL))
+                    Strcpy(path, tries[i]);
+            if (!path[0])
+                return;
+        }
+        if (!nhma_init())
+            return; /* no audio device */
+        nhma_set_master_volume(0.8f);
+        nhma_music(path, 0.55f, first ? 2500 : 900, 1);
+        first = FALSE;
+        mm_on = TRUE;
+    } else {
+        nhma_music((const char *) 0, 0.0f, mm_over ? 2500 : 700, 0);
+        mm_on = FALSE;
+    }
+#endif
+}
+
+/* the game has begun: fade the music out for good */
+static void
+sdl_music_end(void)
+{
+    if (mm_over)
+        return;
+    mm_over = TRUE;
+    sdl_music_sync();
+}
+
+static void
+sdl_music_toggle(void)
+{
+    iflags.fx_menu_music = !iflags.fx_menu_music;
+    cfg_remember_option("fx_menu_music", iflags.fx_menu_music
+                                             ? "fx_menu_music"
+                                             : "!fx_menu_music");
+    sdl_music_sync();
+    sdl.dirty = TRUE;
+}
+
+/* ---- the title screen (as NetHackW's) ------------------------------ */
+
+#define SDL_TITLE_SOUND FXV_TITLE_NBTN /* the speaker, beside the buttons */
+static const char *const sdl_title_label[FXV_TITLE_NBTN] = {
+    "Play NetHack Modern", "About", "Exit"
+};
+
+/* the button (or the speaker) at a point, or -1 */
+static int
+sdl_title_hit(float x, float y)
+{
+    int i;
+
+    for (i = 0; i < FXV_TITLE_NBTN; i++)
+        if (x >= sdl.title.btn[i][0] && x < sdl.title.btn[i][2]
+            && y >= sdl.title.btn[i][1] && y < sdl.title.btn[i][3])
+            return i;
+    if (x >= sdl.title.snd[0] && x < sdl.title.snd[2]
+        && y >= sdl.title.snd[1] && y < sdl.title.snd[3])
+        return SDL_TITLE_SOUND;
+    return -1;
+}
+
+static void
+sdl_draw_title(void)
+{
+    const fxv_color accent = FXV_RGB(229, 186, 96),
+                    text = FXV_RGB(222, 226, 233),
+                    dim = FXV_RGB(138, 146, 160);
+    int w, h, th, i, y, m;
+    double s;
+    TTF_Font *f;
+    char buf[BUFSZ];
+
+    SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    s = fxv_scr_scale(w, h);
+    fxv_title_buttons(w, h, sdl.title.btn);
+    fxv_title_sound_rect(w, s, sdl.title.snd);
+    sdl_backdrop(w, h, 0);
+
+    /* the title, just above the buttons */
+    th = (int) (96 * s);
+    f = sdl_face(SDL_FACE_TITLE, th);
+    y = sdl.title.btn[FXV_TITLE_PLAY][1] - (int) (22 * s) - th / 4 - th / 6;
+    (void) sdl_face_text(f, "NetHack", w / 2, y - TTF_GetFontAscent(f), 1,
+                         accent, max(2, (int) (3 * s)));
+    f = sdl_face(SDL_FACE_UI_BOLD, max(10, th / 4));
+    (void) sdl_face_text(f, "M  O  D  E  R  N", w / 2, y + th / 10, 1, text,
+                         max(1, (int) (2 * s)));
+
+    /* the buttons, and the music */
+    for (i = 0; i < FXV_TITLE_NBTN; i++)
+        sdl_button(sdl.title.btn[i], sdl_title_label[i],
+                   i == FXV_TITLE_PLAY, sdl.title.hot == i,
+                   sdl.title.focus == i,
+                   sdl.title.down == i && sdl.title.hot == i, TRUE, s);
+    sdl_sound_icon(sdl.title.snd, sdl.title.hot == SDL_TITLE_SOUND, s);
+
+    /* the versions, bottom left; the copyright, bottom right */
+    m = (int) (24 * s);
+    f = sdl_face(SDL_FACE_UI, max(10, (int) (14 * s)));
+    y = h - (int) (18 * s) - TTF_GetFontHeight(f);
+    Sprintf(buf, "NetHack %d.%d.%d", VERSION_MAJOR, VERSION_MINOR,
+            PATCHLEVEL);
+    (void) sdl_face_text(f, buf, m, y, 0, dim, 1);
+    (void) sdl_face_text(f, COPYRIGHT_BANNER_D, w - m, y, 2, dim, 1);
+    (void) sdl_face_text(f, COPYRIGHT_BANNER_A, w - m, y - (int) (21 * s), 2,
+                         dim, 1);
+    f = sdl_face(SDL_FACE_UI_BOLD, max(10, (int) (15 * s)));
+    Sprintf(buf, "NetHack Modern v%s", MODERN_VERSION_STRING);
+    (void) sdl_face_text(f, buf, m, y - (int) (21 * s), 0, accent, 1);
+}
+
+/* About: the versions and the copyright, in a text window over it */
+static void
+sdl_title_about(void)
+{
+    winid w = sdl_create_nhwindow(NHW_TEXT);
+    char buf[BUFSZ];
+
+    Sprintf(buf, "NetHack Modern v%s", MODERN_VERSION_STRING);
+    sdl_putstr(w, ATR_BOLD, buf);
+    sdl_putstr(w, 0, getversionstring(buf, sizeof buf));
+    sdl_putstr(w, 0, "");
+    sdl_putstr(w, 0, COPYRIGHT_BANNER_A);
+    sdl_putstr(w, 0, COPYRIGHT_BANNER_B);
+    sdl_putstr(w, 0, COPYRIGHT_BANNER_C);
+    sdl_putstr(w, 0, COPYRIGHT_BANNER_D);
+    sdl_putstr(w, 0, "");
+    sdl_putstr(w, 0, "NetHack Modern adds presentation only: effects,");
+    sdl_putstr(w, 0, "sound and this window. The game is NetHack's own.");
+    (void) sdl_run_overlay(sdl_getwin(w), PICK_NONE, (menu_item **) 0);
+    sdl_destroy_nhwindow(w);
+}
+
+/* show the title screen and wait; returns only when Play is chosen
+   (Exit, or closing the window, ends the program) */
+static void
+sdl_title_screen(void)
+{
+    int c;
+
+    sdl.title.up = TRUE;
+    sdl.title.focus = FXV_TITLE_PLAY, sdl.title.hot = sdl.title.down = -1;
+    sdl_music_sync();
+    for (;;) {
+        sdl.dirty = TRUE;
+        c = sdl_wait_key();
+        if (c == '\n' || c == '\r' || c == ' ')
+            c = (sdl.title.focus == FXV_TITLE_ABOUT) ? 'a'
+                : (sdl.title.focus == FXV_TITLE_EXIT) ? 'x' : 'p';
+        c = lowc(c);
+        if (c == 'p')
+            break;
+        if (c == 'a') {
+            sdl_title_about();
+        } else if (c == 'm') {
+            sdl_music_toggle();
+        } else if (c == 'x' || c == 'q') {
+            /* nothing has started: nothing to save */
+            sdl_exit_nhwindows((char *) 0);
+            nh_terminate(EXIT_SUCCESS);
+        }
+    }
+    sdl.title.up = FALSE;
+    sdl.dirty = TRUE;
+}
+
+
+/* ---- the name and character screens (as NetHackW's) --------------- */
+
+/* Like the title screen they fill the window, over the same art, and
+   work with the mouse or the keyboard alone. The rules, the words and
+   where things go are shared with NetHackW (fxview.c). */
+
+
+static const char *const sdl_cs_btn_label[2][FXV_CSB_N] = {
+    { "Back", "", "Continue" },
+    { "Back", "Random", "Play" },
+};
+
+#define CS_IN(r, x, y) ((x) >= (r)[0] && (x) < (r)[2] && (y) >= (r)[1] \
+                        && (y) < (r)[3])
+
+static boolean
+sdl_cs_btn_used(int b)
+{
+    return sdl.cs.mode == SDL_CS_CHAR || b != FXV_CSB_RANDOM;
+}
+
+/* the name, with spaces trimmed off both ends */
+static void
+sdl_cs_trimmed(char *out)
+{
+    const char *p = sdl.cs.name;
+    size_t n;
+
+    while (*p == ' ')
+        p++;
+    Strcpy(out, p);
+    n = strlen(out);
+    while (n > 0 && out[n - 1] == ' ')
+        out[--n] = '\0';
+}
+
+/* what's at (x, y): sets *g to a group, SDL_CS_BTN, _BOX or _SND (or
+   -1); returns the row or button, or -1 */
+static int
+sdl_cs_hit(float x, float y, int *g)
+{
+    struct fxv_cs_layout *L = &sdl.cs.L;
+    int i, k;
+
+    *g = -1;
+    if (CS_IN(L->snd, x, y)) {
+        *g = SDL_CS_SND;
+        return 0;
+    }
+    for (i = 0; i < FXV_CSB_N; i++)
+        if (sdl_cs_btn_used(i) && CS_IN(L->btn[i], x, y)) {
+            *g = SDL_CS_BTN;
+            return i;
+        }
+    if (sdl.cs.mode == SDL_CS_NAME) {
+        if (CS_IN(L->box, x, y)) {
+            *g = SDL_CS_BOX;
+            return 0;
+        }
+    } else {
+        for (k = 0; k < FXV_CS_NGRP; k++)
+            for (i = 0; i < fxv_cs_n[k] && i < FXV_CS_MAXROWS; i++)
+                if (CS_IN(L->row[k][i], x, y)) {
+                    *g = k;
+                    return i;
+                }
+    }
+    return -1;
+}
+
+/* a wrapped paragraph from r[1] down, between r[0] and r[2]; moves r[1]
+   past it */
+static void
+sdl_cs_para(TTF_Font *f, const char *t, int r[4], fxv_color c)
+{
+    static const SDL_Color white = { 255, 255, 255, 255 };
+    SDL_Surface *surf;
+    SDL_Texture *tex;
+    SDL_FRect d;
+
+    if (!t || !*t)
+        return;
+    TTF_SetFontWrapAlignment(f, TTF_HORIZONTAL_ALIGN_LEFT);
+    if (!(surf = TTF_RenderText_Blended_Wrapped(f, t, 0, white,
+                                                max(20, r[2] - r[0]))))
+        return;
+    tex = SDL_CreateTextureFromSurface(sdl.ren, surf);
+    d.x = (float) r[0], d.y = (float) r[1];
+    d.w = (float) surf->w, d.h = (float) surf->h;
+    r[1] += surf->h;
+    SDL_DestroySurface(surf);
+    if (tex) {
+        (void) SDL_SetTextureColorMod(tex, (Uint8) FXV_R(c),
+                                      (Uint8) FXV_G(c), (Uint8) FXV_B(c));
+        SDL_RenderTexture(sdl.ren, tex, NULL, &d);
+        SDL_DestroyTexture(tex);
+    }
+}
+
+/* a line of text centred up and down in r, from its left (or centred
+   across it with how 1, or up to its right with how 2) */
+static void
+sdl_cs_line(TTF_Font *f, const char *t, const int r[4], int how,
+            fxv_color c, int shadow)
+{
+    int x = how == 1 ? (r[0] + r[2]) / 2 : how == 2 ? r[2] : r[0];
+
+    (void) sdl_face_text(f, t, x, (r[1] + r[3]) / 2 - TTF_GetFontHeight(f) / 2,
+                         how, c, shadow);
+}
+
+#define S(v) ((int) ((v) * s + 0.5))
+#define CS_ACCENT FXV_RGB(229, 186, 96)
+#define CS_TEXT FXV_RGB(222, 226, 233)
+#define CS_DIM FXV_RGB(138, 146, 160)
+#define CS_PANEL FXV_RGB(24, 27, 33)
+#define CS_HEADER FXV_RGB(33, 37, 46)
+#define CS_SEP FXV_RGB(52, 58, 70)
+#define CS_BG FXV_RGB(14, 16, 20)
+
+static void
+sdl_cs_buttons(double s)
+{
+    int b;
+
+    for (b = 0; b < FXV_CSB_N; b++) {
+        boolean ok = TRUE;
+
+        if (!sdl_cs_btn_used(b))
+            continue;
+        if (b == FXV_CSB_PLAY && sdl.cs.mode == SDL_CS_NAME) {
+            char t[PL_NSIZ];
+
+            sdl_cs_trimmed(t);
+            ok = (*t != '\0');
+        }
+        sdl_button(sdl.cs.L.btn[b], sdl_cs_btn_label[sdl.cs.mode][b],
+                   b == FXV_CSB_PLAY, sdl.cs.hg == SDL_CS_BTN && sdl.cs.hi == b,
+                   sdl.cs.fg == SDL_CS_BTN && sdl.cs.fb == b,
+                   sdl.cs.dg == SDL_CS_BTN && sdl.cs.di == b
+                       && sdl.cs.hi == b,
+                   ok, s);
+    }
+}
+
+static void
+sdl_cs_hints(int w, int h, double s, const char *t)
+{
+    int r[4];
+
+    r[0] = 0, r[1] = h - S(34), r[2] = w, r[3] = h - S(10);
+    sdl_cs_line(sdl_face(SDL_FACE_UI, max(10, S(14))), t, r, 1, CS_DIM, 1);
+}
+
+static void
+sdl_cs_draw_name(int w, int h, double s)
+{
+    struct fxv_cs_layout *L = &sdl.cs.L;
+    boolean focus = (sdl.cs.fg == SDL_CS_BOX);
+    TTF_Font *f;
+    int r[4], x;
+
+    f = sdl_face(SDL_FACE_TITLE, S(60));
+    (void) sdl_face_text(f, "Who are you?", w / 2,
+                         L->top + S(76) - TTF_GetFontHeight(f), 1, CS_ACCENT,
+                         max(2, S(3)));
+
+    /* the box */
+    sdl_edged(L->box, CS_PANEL, focus ? CS_ACCENT : CS_SEP,
+              focus ? max(2, S(2)) : 1);
+    f = sdl_face(SDL_FACE_UI_BOLD, max(11, S(26)));
+    r[0] = L->box[0] + S(18), r[1] = L->box[1], r[2] = L->box[2] - S(18);
+    r[3] = L->box[3];
+    x = r[0];
+    if (sdl.cs.name[0]) {
+        sdl_cs_line(f, sdl.cs.name, r, 0, CS_TEXT, 0);
+        x += sdl_text_w_in(f, sdl.cs.name) + S(2);
+    } else {
+        sdl_cs_line(f, "Enter a name", r, 0, CS_SEP, 0);
+    }
+    if (focus && (SDL_GetTicks() / 530) % 2 == 0) /* the caret, blinking */
+        sdl_fill(x, L->box[1] + S(14), max(2, S(2)),
+                 L->box[3] - L->box[1] - 2 * S(14), FXV_R(CS_ACCENT),
+                 FXV_G(CS_ACCENT), FXV_B(CS_ACCENT), 255);
+
+    f = sdl_face(SDL_FACE_UI, max(10, S(17)));
+    (void) sdl_face_text(f, "If this hero has a saved game, it will carry "
+                            "on from there.",
+                         w / 2, L->box[3] + S(10), 1, CS_DIM, 1);
+    sdl_cs_buttons(s);
+    sdl_cs_hints(w, h, s, "Type a name        Enter: continue        "
+                          "Esc: back        Ctrl+M: music");
+}
+
+static void
+sdl_cs_draw_group(int g, double s)
+{
+    static const char *const title[FXV_CS_NGRP] = {
+        "Role", "Race", "Gender", "Alignment"
+    };
+    const int *p = sdl.cs.L.panel[g];
+    boolean focus = (sdl.cs.fg == g);
+    int i, sel = fxv_cs_value(g), r[4];
+    char buf[BUFSZ];
+
+    sdl_edged(p, CS_PANEL, focus ? CS_ACCENT : CS_SEP,
+              focus ? max(2, S(2)) : 1);
+    r[0] = p[0] + S(16), r[1] = p[1] + S(6), r[2] = p[2] - S(12);
+    r[3] = p[1] + S(36);
+    sdl_cs_line(sdl_face(SDL_FACE_UI_BOLD, max(10, S(16))), title[g], r, 0,
+                CS_ACCENT, 0);
+    for (i = 0; i < fxv_cs_n[g] && i < FXV_CS_MAXROWS; i++) {
+        boolean ok = fxv_cs_ok(g, i),
+                hot = (sdl.cs.hg == g && sdl.cs.hi == i);
+        fxv_color ink;
+
+        (void) memcpy(r, sdl.cs.L.row[g][i], sizeof r);
+        if (i == sel) {
+            sdl_edged(r, CS_ACCENT, focus ? FXV_RGB(255, 236, 190) : CS_ACCENT,
+                      focus ? max(2, S(2)) : 1);
+            ink = CS_BG;
+        } else if (hot && ok) {
+            sdl_edged(r, CS_HEADER, CS_HEADER, 1);
+            ink = CS_TEXT;
+        } else {
+            ink = ok ? CS_TEXT : FXV_RGB(76, 82, 94);
+        }
+        r[0] += S(12);
+        sdl_cs_line(sdl_face(i == sel ? SDL_FACE_UI_BOLD : SDL_FACE_UI,
+                             max(10, S(17))),
+                    fxv_cs_label(g, i, buf), r, 0, ink, 0);
+        if (!ok && hot) { /* a small cross: "not with these choices" */
+            r[2] -= S(10);
+            sdl_cs_line(sdl_face(SDL_FACE_UI, max(10, S(17))), "x", r, 2,
+                        FXV_RGB(200, 96, 80), 0);
+        }
+    }
+}
+
+/* the right-hand panel: about the role pointed at, or the one chosen */
+static void
+sdl_cs_draw_info(double s)
+{
+    const int *box = sdl.cs.L.info;
+    int rl = (sdl.cs.hg == FXV_CS_ROLE && sdl.cs.hi >= 0) ? sdl.cs.hi
+                                                         : flags.initrole;
+    TTF_Font *head = sdl_face(SDL_FACE_UI_BOLD, max(10, S(16)));
+    int r[4], line[4];
+    char buf[BUFSZ];
+
+    sdl_edged(box, CS_PANEL, CS_SEP, 1);
+    r[0] = box[0] + S(22), r[1] = box[1] + S(16), r[2] = box[2] - S(22);
+    r[3] = box[3];
+    line[0] = r[0], line[1] = r[1], line[2] = r[2], line[3] = r[1] + S(42);
+    sdl_cs_line(sdl_face(SDL_FACE_TITLE, S(32)), fxv_cs_role_name(rl), line,
+                0, CS_ACCENT, 0);
+    r[1] = line[3];
+
+    fxv_cs_info(rl, FXV_CSI_STARTS, buf);
+    sdl_cs_para(sdl_face(SDL_FACE_UI, max(10, S(15))), buf, r, CS_DIM);
+    r[1] += S(12);
+    fxv_cs_info(rl, FXV_CSI_BLURB, buf);
+    if (*buf) {
+        sdl_cs_para(sdl_face(SDL_FACE_UI, max(10, S(15))), buf, r, CS_TEXT);
+        r[1] += S(16);
+    }
+    sdl_cs_para(head, "Races", r, CS_ACCENT);
+    fxv_cs_info(rl, FXV_CSI_RACES, buf);
+    sdl_cs_para(sdl_face(SDL_FACE_UI, max(10, S(15))), buf, r, CS_TEXT);
+    r[1] += S(8);
+    sdl_cs_para(sdl_face(SDL_FACE_UI_BOLD, max(10, S(16))), "Alignments", r,
+                CS_ACCENT);
+    fxv_cs_info(rl, FXV_CSI_ALIGNS, buf);
+    sdl_cs_para(sdl_face(SDL_FACE_UI, max(10, S(15))), buf, r, CS_TEXT);
+    fxv_cs_info(rl, FXV_CSI_GENDER, buf);
+    if (*buf)
+        sdl_cs_para(sdl_face(SDL_FACE_UI, max(10, S(15))), buf, r, CS_DIM);
+    r[1] += S(8);
+    sdl_cs_para(sdl_face(SDL_FACE_UI_BOLD, max(10, S(16))), "Gods", r,
+                CS_ACCENT);
+    fxv_cs_info(rl, FXV_CSI_GODS, buf);
+    sdl_cs_para(sdl_face(SDL_FACE_UI, max(10, S(15))), buf, r, CS_TEXT);
+
+    /* pointing at a choice that doesn't fit: say why */
+    if (sdl.cs.hg >= FXV_CS_RACE && sdl.cs.hg < FXV_CS_NGRP
+        && sdl.cs.hi >= 0 && !fxv_cs_ok(sdl.cs.hg, sdl.cs.hi)) {
+        fxv_cs_why_not(sdl.cs.hg, sdl.cs.hi, buf);
+        line[0] = box[0] + S(22), line[2] = box[2] - S(22);
+        line[3] = box[3] - S(16), line[1] = line[3] - S(26);
+        sdl_cs_line(sdl_face(SDL_FACE_UI_BOLD, max(10, S(17))), buf, line, 0,
+                    FXV_RGB(232, 128, 106), 0);
+    }
+}
+
+static void
+sdl_cs_draw_char(int w, int h, double s)
+{
+    int r[4], g;
+    char buf[BUFSZ];
+
+    r[0] = 0, r[1] = sdl.cs.L.top, r[2] = w, r[3] = sdl.cs.L.top + S(62);
+    sdl_cs_line(sdl_face(SDL_FACE_TITLE, S(48)), "Create your hero", r, 1,
+                CS_ACCENT, max(2, S(3)));
+    fxv_cs_hero_line(buf); /* the hero as chosen so far */
+    r[1] = sdl.cs.L.top + S(64), r[3] = sdl.cs.L.top + S(94);
+    sdl_cs_line(sdl_face(SDL_FACE_UI, max(10, S(19))), buf, r, 1, CS_TEXT,
+                1);
+    for (g = 0; g < FXV_CS_NGRP; g++)
+        sdl_cs_draw_group(g, s);
+    sdl_cs_draw_info(s);
+    sdl_cs_buttons(s);
+    sdl_cs_hints(w, h, s, "Arrows or mouse: choose      Tab: next      "
+                          "Enter: play      *: random      Esc: back      "
+                          "Ctrl+M: music");
+}
+
+static void
+sdl_draw_cs(void)
+{
+    int w, h;
+
+    SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    fxv_cs_layout(&sdl.cs.L, w, h, sdl.cs.mode == SDL_CS_NAME);
+    sdl_backdrop(w, h, sdl.cs.mode == SDL_CS_CHAR ? 150 : 40);
+    if (sdl.cs.mode == SDL_CS_NAME)
+        sdl_cs_draw_name(w, h, sdl.cs.L.s);
+    else
+        sdl_cs_draw_char(w, h, sdl.cs.L.s);
+    sdl_sound_icon(sdl.cs.L.snd, sdl.cs.hg == SDL_CS_SND, sdl.cs.L.s);
+}
+
+#undef S
+
+/* moving about */
+static void
+sdl_cs_focus_group(int g)
+{
+    sdl.cs.fg = sdl.cs.lastgrp = g;
+    if (g != FXV_CS_ROLE)
+        sdl.cs.lastmid = g;
+}
+
+static void
+sdl_cs_focus_btn(int b)
+{
+    sdl.cs.fg = SDL_CS_BTN, sdl.cs.fb = b;
+}
+
+static int
+sdl_cs_next_btn(int dir)
+{
+    int b = sdl.cs.fb;
+
+    do
+        b = (b + FXV_CSB_N + dir) % FXV_CSB_N;
+    while (!sdl_cs_btn_used(b));
+    return b;
+}
+
+static boolean
+sdl_cs_move(int g, int dir)
+{
+    int i = fxv_cs_step(g, fxv_cs_value(g), dir);
+
+    return i >= 0 && fxv_cs_pick(g, i);
+}
+
+/* Tab and Shift+Tab: through the groups, then the buttons */
+static void
+sdl_cs_tab(int dir)
+{
+    static const int stops[2][7] = {
+        { SDL_CS_BOX, 10 + FXV_CSB_PLAY, 10 + FXV_CSB_BACK, -1 },
+        { FXV_CS_ROLE, FXV_CS_RACE, FXV_CS_GEND, FXV_CS_ALIGN,
+          10 + FXV_CSB_PLAY, 10 + FXV_CSB_RANDOM, 10 + FXV_CSB_BACK },
+    };
+    const int *st = stops[sdl.cs.mode];
+    int n = (sdl.cs.mode == SDL_CS_NAME) ? 3 : 7, cur = 0, k;
+
+    for (k = 0; k < n; k++)
+        if ((sdl.cs.fg == SDL_CS_BTN) ? st[k] == 10 + sdl.cs.fb
+                                      : st[k] == sdl.cs.fg)
+            cur = k;
+    k = st[(cur + n + dir) % n];
+    if (k >= 10)
+        sdl_cs_focus_btn(k - 10);
+    else if (k == SDL_CS_BOX)
+        sdl.cs.fg = SDL_CS_BOX;
+    else
+        sdl_cs_focus_group(k);
+}
+
+/* a button: 1 go on, 0 back, -1 carry on here */
+static int
+sdl_cs_activate(int b)
+{
+    if (b == FXV_CSB_BACK)
+        return 0;
+    if (b == FXV_CSB_RANDOM) {
+        if (sdl.cs.mode == SDL_CS_CHAR)
+            (void) fxv_cs_randomize();
+        return -1;
+    }
+    if (sdl.cs.mode == SDL_CS_NAME) {
+        char t[PL_NSIZ];
+
+        sdl_cs_trimmed(t);
+        return *t ? 1 : -1;
+    }
+    return 1;
+}
+
+/* show a screen and wait: 1 to go on, 0 to go back */
+static int
+sdl_cs_run(int mode)
+{
+    int c, res = -1;
+
+    sdl.cs.mode = mode;
+    sdl.cs.hg = sdl.cs.hi = sdl.cs.dg = sdl.cs.di = -1;
+    if (mode == SDL_CS_NAME) {
+        sdl.cs.fg = SDL_CS_BOX;
+    } else {
+        sdl.cs.fg = sdl.cs.lastgrp = FXV_CS_ROLE;
+        sdl.cs.lastmid = FXV_CS_RACE;
+    }
+    sdl.cs.fb = FXV_CSB_PLAY;
+    while (res < 0) {
+        int g = sdl.cs.fg;
+
+        sdl.dirty = TRUE;
+        c = sdl_wait_key();
+        if (c >= SDL_CSK_BTN && c < SDL_CSK_BTN + FXV_CSB_N) {
+            res = sdl_cs_activate(c - SDL_CSK_BTN);
+            continue;
+        }
+        switch (c) {
+        case '\033':
+            res = sdl_cs_activate(FXV_CSB_BACK);
+            continue;
+        case '\n':
+        case '\r':
+            res = sdl_cs_activate(g == SDL_CS_BTN ? sdl.cs.fb : FXV_CSB_PLAY);
+            continue;
+        case SDL_CSK_MUSIC:
+            sdl_music_toggle();
+            continue;
+        case SDL_CSK_CLEAR:
+            if (mode == SDL_CS_NAME)
+                sdl.cs.name[0] = '\0', sdl.cs.fg = SDL_CS_BOX;
+            continue;
+        case SDL_CSK_TAB:
+        case SDL_CSK_BACKTAB:
+            sdl_cs_tab(c == SDL_CSK_TAB ? 1 : -1);
+            continue;
+        case SDL_CSK_UP:
+            if (g == SDL_CS_BTN)
+                sdl.cs.fg = (mode == SDL_CS_NAME) ? SDL_CS_BOX
+                                                  : sdl.cs.lastgrp;
+            else if (g < FXV_CS_NGRP && !sdl_cs_move(g, -1)) {
+                if (g == FXV_CS_GEND)
+                    sdl_cs_focus_group(FXV_CS_RACE);
+                else if (g == FXV_CS_ALIGN)
+                    sdl_cs_focus_group(FXV_CS_GEND);
+            }
+            continue;
+        case SDL_CSK_DOWN:
+            if (g == SDL_CS_BOX) {
+                sdl_cs_focus_btn(FXV_CSB_PLAY);
+            } else if (g < FXV_CS_NGRP && !sdl_cs_move(g, 1)) {
+                if (g == FXV_CS_RACE)
+                    sdl_cs_focus_group(FXV_CS_GEND);
+                else if (g == FXV_CS_GEND)
+                    sdl_cs_focus_group(FXV_CS_ALIGN);
+                else
+                    sdl_cs_focus_btn(FXV_CSB_PLAY);
+            }
+            continue;
+        case SDL_CSK_LEFT:
+            if (g == SDL_CS_BTN)
+                sdl_cs_focus_btn(sdl_cs_next_btn(-1));
+            else if (g > FXV_CS_ROLE && g < FXV_CS_NGRP)
+                sdl_cs_focus_group(FXV_CS_ROLE);
+            continue;
+        case SDL_CSK_RIGHT:
+            if (g == SDL_CS_BTN)
+                sdl_cs_focus_btn(sdl_cs_next_btn(1));
+            else if (g == FXV_CS_ROLE)
+                sdl_cs_focus_group(sdl.cs.lastmid);
+            continue;
+        case SDL_CSK_HOME:
+        case SDL_CSK_END:
+            if (g < FXV_CS_NGRP) {
+                int i = (c == SDL_CSK_HOME) ? fxv_cs_step(g, -1, 1)
+                                            : fxv_cs_step(g, fxv_cs_n[g], -1);
+
+                if (i >= 0)
+                    (void) fxv_cs_pick(g, i);
+            }
+            continue;
+        default:
+            break;
+        }
+        if (c >= 0x100)
+            continue;
+        if (mode == SDL_CS_NAME) {
+            size_t n = strlen(sdl.cs.name);
+
+            if (c == ' ' && g == SDL_CS_BTN) {
+                res = sdl_cs_activate(sdl.cs.fb); /* Space pressed it */
+                continue;
+            }
+            if (c == '\b') {
+                if (n)
+                    sdl.cs.name[n - 1] = '\0';
+            } else if (c >= ' ' && c <= '~') {
+                if (n == 0 && c == ' ')
+                    continue;
+                if (n < sizeof sdl.cs.name - 1)
+                    sdl.cs.name[n] = (char) c, sdl.cs.name[n + 1] = '\0';
+            } else {
+                continue;
+            }
+            sdl.cs.fg = SDL_CS_BOX;
+        } else if (c == ' ' && g == SDL_CS_BTN) {
+            res = sdl_cs_activate(sdl.cs.fb);
+        } else if (c == '*') {
+            res = sdl_cs_activate(FXV_CSB_RANDOM);
+        } else if (c < 128 && isalpha(c)) {
+            /* the next choice in the focused group (the roles, from the
+               buttons) that starts with it */
+            int grp = (g < FXV_CS_NGRP) ? g : FXV_CS_ROLE,
+                i = fxv_cs_letter(grp, c);
+
+            if (i >= 0 && fxv_cs_pick(grp, i))
+                sdl_cs_focus_group(grp);
+        }
+    }
+    sdl.cs.mode = -1;
+    sdl.dirty = TRUE;
+    return res;
+}
+
+/* the name screen; FALSE for Back */
+static boolean
+sdl_name_screen(void)
+{
+    char t[PL_NSIZ];
+
+    (void) strncpy(sdl.cs.name, svp.plname, sizeof sdl.cs.name - 1);
+    sdl.cs.name[sizeof sdl.cs.name - 1] = '\0';
+    if (!sdl_cs_run(SDL_CS_NAME))
+        return FALSE;
+    sdl_cs_trimmed(t);
+    (void) strncpy(svp.plname, t, sizeof svp.plname - 1);
+    svp.plname[sizeof svp.plname - 1] = '\0';
+    return TRUE;
+}
+
 /* ---- what the shared effects need from this port (fxview.h) ------- */
 
 static fxv_ms
@@ -2706,6 +3938,7 @@ sdl_init_nhwindows(int *argc, char **argv)
     sdl.zoom_set = iflags.fx_map_zoom; /* fx_map_zoom, or automatic */
     sdl.zoom = sdl_zoom_for(sdl.zoom_set), sdl.zoom_used = -1;
     sdl.bar_open = sdl.bar_hot = sdl.bar_item = -1; /* menu bar closed */
+    sdl.cs.mode = -1;
     sdl.herox = COLNO / 2, sdl.heroy = ROWNO / 2, sdl.recentre = TRUE;
     {
         int x, y;
@@ -2729,6 +3962,23 @@ sdl_init_nhwindows(int *argc, char **argv)
             else
                 sdl_push_key(*k);
     }
+    sdl.dirty = TRUE;
+    sdl_render();
+    /* NetHack Modern: the title screen; it returns when Play is chosen
+       (Exit ends the program) */
+    sdl_title_screen();
+    {
+        /* on Unix the game takes the login name when it isn't given
+           one; ask, as NetHackW does, with that name filled in (a name
+           given with -u or the name option is used as it is) */
+        const char *who = getenv("USER");
+
+        if (!who || !*who)
+            who = getenv("LOGNAME");
+        if (!*svp.plname || (who && !strcmp(who, svp.plname)))
+            while (!sdl_name_screen())
+                sdl_title_screen();
+    }
     iflags.window_inited = TRUE;
     sdl.dirty = TRUE;
     sdl_render();
@@ -2737,16 +3987,10 @@ sdl_init_nhwindows(int *argc, char **argv)
 static void
 sdl_askname(void)
 {
-    char buf[BUFSZ];
-
-    do {
-        getlin("Who are you?", buf);
-        if (buf[0] == '\033')
-            Strcpy(buf, "player");
-        (void) mungspaces(buf);
-    } while (!buf[0]);
-    (void) strncpy(svp.plname, buf, sizeof svp.plname - 1);
-    svp.plname[sizeof svp.plname - 1] = '\0';
+    /* NetHack Modern: asked over the title art; Back returns to the
+       title screen, and from there to here */
+    while (!sdl_name_screen())
+        sdl_title_screen();
 }
 
 static void
@@ -2778,6 +4022,13 @@ sdl_exit_nhwindows(const char *str)
         SDL_DestroyTexture(sdl.light), sdl.light = 0;
     if (sdl.font)
         TTF_CloseFont(sdl.font), sdl.font = 0;
+    for (i = 0; i < SDL_NFACE; i++)
+        if (sdl.face[i])
+            TTF_CloseFont(sdl.face[i]), sdl.face[i] = 0;
+    if (sdl.msgfont)
+        TTF_CloseFont(sdl.msgfont), sdl.msgfont = 0;
+    if (sdl.art)
+        SDL_DestroyTexture(sdl.art), sdl.art = 0;
     if (sdl.tiles)
         SDL_DestroyTexture(sdl.tiles), sdl.tiles = 0;
     if (sdl.tiles_solid)
@@ -3032,9 +4283,24 @@ sdl_raw_print(const char *str)
     }
 }
 
+static void
+sdl_player_selection(void)
+{
+    /* NetHack Modern: the character screen, unless the options already
+       said who the hero is; Back returns to the title screen, and from
+       there to here */
+    fxv_cs_begin();
+    if (!fxv_cs_randomize())
+        while (!sdl_cs_run(SDL_CS_CHAR))
+            sdl_title_screen();
+    sdl_music_end(); /* the hero is chosen: the game begins */
+}
+
 static int
 sdl_nhgetch(void)
 {
+    if (program_state.in_moveloop)
+        sdl_music_end(); /* (a restored game) */
     int c = sdl_wait_key();
 
     if (sdl.nmsgs > sdl.msg_seen)
@@ -3271,7 +4537,7 @@ struct window_procs sdl_procs = {
     (WC2_DARKGRAY | WC2_FLUSH_STATUS),
     { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
     sdl_init_nhwindows,
-    genl_player_selection,
+    sdl_player_selection,
     sdl_askname,
     sdl_get_nh_event,
     sdl_exit_nhwindows,

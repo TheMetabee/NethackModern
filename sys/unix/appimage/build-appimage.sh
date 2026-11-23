@@ -52,10 +52,21 @@ cp -R "$SRC/sounds" "$APPDIR/usr/share/nethackmodern/sounds"
 if [ -f "$SRC/tiles.bmp" ]; then
     cp "$SRC/tiles.bmp" "$APPDIR/usr/share/nethackmodern/tiles.bmp"
 fi
+# the title screens' painting
+if [ -f "$SRC/splash_art.png" ]; then
+    cp "$SRC/splash_art.png" "$APPDIR/usr/share/nethackmodern/splash_art.png"
+fi
 FONT=${FONT:-/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf}
 if [ -f "$FONT" ]; then
     mkdir -p "$APPDIR/usr/share/nethackmodern/fonts"
     cp "$FONT" "$APPDIR/usr/share/nethackmodern/fonts/DejaVuSansMono.ttf"
+    # and the screens' fonts (title, character, death, scores), from
+    # the same family where it's installed
+    for face in DejaVuSerif-Bold.ttf DejaVuSans.ttf DejaVuSans-Bold.ttf; do
+        if [ -f "$(dirname "$FONT")/$face" ]; then
+            cp "$(dirname "$FONT")/$face"                "$APPDIR/usr/share/nethackmodern/fonts/$face"
+        fi
+    done
     if [ -n "$FONT_LICENSE" ] && [ -f "$FONT_LICENSE" ]; then
         cp "$FONT_LICENSE" "$APPDIR/usr/share/nethackmodern/fonts/LICENSE"
     fi

@@ -16,7 +16,7 @@ mkdir -p "$GAMEDIR/save" || {
     echo "NetHack Modern: cannot create $GAMEDIR" >&2
     exit 1
 }
-for f in nhdat symbols license recover sounds tiles.bmp fonts; do
+for f in nhdat symbols license recover sounds tiles.bmp splash_art.png fonts; do
     [ -e "$DATA/$f" ] && ln -sfn "$DATA/$f" "$GAMEDIR/$f"
 done
 # the player's own copy, so it can be edited; never overwritten

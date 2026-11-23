@@ -20,6 +20,7 @@
 #include "mhcharsel.h"
 #include "mhdlg.h"
 #include "mhtheme.h"
+#include "fxview.h"
 
 PNHWinApp GetNHApp(void);
 
@@ -27,21 +28,22 @@ PNHWinApp GetNHApp(void);
 #define CS_CHAR 1 /* choosing role, race, gender, alignment */
 
 /* the groups of choices, then the other things that can have focus */
-#define G_ROLE 0
-#define G_RACE 1
-#define G_GEND 2
-#define G_ALIGN 3
-#define G_NGRP 4
+#define G_ROLE FXV_CS_ROLE
+#define G_RACE FXV_CS_RACE
+#define G_GEND FXV_CS_GEND
+#define G_ALIGN FXV_CS_ALIGN
+#define G_NGRP FXV_CS_NGRP
 #define G_BTN 4 /* the row of buttons */
 #define G_BOX 5 /* the name box */
 #define G_SND 6 /* the speaker icon: the menu music on or off */
 
-#define B_BACK 0
-#define B_RANDOM 1
-#define B_PLAY 2
-#define B_N 3
+#define B_BACK FXV_CSB_BACK
+#define B_RANDOM FXV_CSB_RANDOM
+#define B_PLAY FXV_CSB_PLAY
+#define B_N FXV_CSB_N
 
-#define MAXROWS 32
+#define MAXROWS FXV_CS_MAXROWS
+#define cs_n fxv_cs_n /* how many choices in each group (shared) */
 
 static HWND cs_hwnd;
 static int cs_mode;
@@ -52,7 +54,6 @@ static int cs_lastgrp = G_ROLE; /* where Up from the buttons goes */
 static int cs_lastmid = G_RACE; /* where Right from the roles goes */
 static int cs_hg = -1, cs_hi = -1; /* what's under the mouse */
 static int cs_dg = -1, cs_di = -1; /* what the mouse is pressing */
-static int cs_n[G_NGRP];           /* how many choices in each group */
 static RECT cs_row[G_NGRP][MAXROWS], cs_panel[G_NGRP], cs_info;
 static RECT cs_btn[B_N], cs_box, cs_snd;
 static char cs_name[PL_NSIZ];
@@ -65,192 +66,17 @@ static const char *const cs_btn_label[2][B_N] = {
     { "Back", "Random", "Play" },
 };
 
-/* a few words on each role, by its file code */
-static const struct {
-    const char *code, *text;
-} cs_blurb[] = {
-    { "Arc", "A scholar of ruins and lost places: quick on foot, "
-             "sharp-eyed for traps, and never without a pick-axe." },
-    { "Bar", "A warrior from the wild lands: strong, hardy, resistant "
-             "to poison, and deadly with a two-handed sword or axe." },
-    { "Cav", "A primitive brawler armed with a club and a sling, "
-             "tough as old leather, with a loyal dog at heel." },
-    { "Hea", "A physician with healing spells, a stethoscope and a "
-             "full purse, but little skill at arms. A slow start." },
-    { "Kni", "A mounted warrior on a pony, with lance and long sword, "
-             "bound by a strict code of honor." },
-    { "Mon", "A master of the martial arts who fights barehanded, "
-             "moves fast, and is best without armor." },
-    { "Pri", "A servant of the gods who sees at a glance whether things "
-             "are blessed or cursed, and starts with clerical spells." },
-    { "Rog", "A thief and knife-thrower who prefers to strike from the "
-             "shadows, and is at home among locks and traps." },
-    { "Ran", "A wilderness scout and expert archer, cloaked so that "
-             "foes are never quite sure where to strike." },
-    { "Sam", "A disciplined warrior of the East: fast, well armored, "
-             "and deadly with the katana." },
-    { "Tou", "A sightseer with a camera, a loud shirt and plenty of "
-             "gold. Weak and naive: the hardest way to play." },
-    { "Val", "A shieldmaiden of the north, stealthy, resistant to cold, "
-             "and strong. A good first hero." },
-    { "Wiz", "A student of the arcane with a magic quarterstaff, a "
-             "cloak, and spells, wands and rings to begin with." },
-};
-
 /*
- * the rules
+ * the rules and the words are shared with the SDL port (fxview.c)
  */
 
-static int
-cs_value(int g)
-{
-    switch (g) {
-    case G_ROLE:
-        return flags.initrole;
-    case G_RACE:
-        return flags.initrace;
-    case G_GEND:
-        return flags.initgend;
-    default:
-        return flags.initalign;
-    }
-}
-
-static void
-cs_set(int g, int v)
-{
-    switch (g) {
-    case G_ROLE:
-        flags.initrole = v;
-        break;
-    case G_RACE:
-        flags.initrace = v;
-        break;
-    case G_GEND:
-        flags.initgend = v;
-        break;
-    default:
-        flags.initalign = v;
-        break;
-    }
-}
-
-/* can choice i of group g go with the choices before it? */
-static boolean
-cs_ok(int g, int i)
-{
-    if (i < 0 || i >= cs_n[g])
-        return FALSE;
-    switch (g) {
-    case G_ROLE:
-        return ok_role(i, ROLE_RANDOM, ROLE_RANDOM, ROLE_RANDOM);
-    case G_RACE:
-        return ok_race(flags.initrole, i, ROLE_RANDOM, ROLE_RANDOM);
-    case G_GEND:
-        return ok_gend(flags.initrole, flags.initrace, i, ROLE_RANDOM);
-    default:
-        return ok_align(flags.initrole, flags.initrace, flags.initgend, i);
-    }
-}
-
-/* after a change, move any later choice that no longer fits */
-static void
-cs_fix(void)
-{
-    int g, i;
-
-    for (g = G_RACE; g < G_NGRP; g++) {
-        if (cs_ok(g, cs_value(g)))
-            continue;
-        for (i = 0; i < cs_n[g]; i++)
-            if (cs_ok(g, i))
-                break;
-        if (i < cs_n[g]) {
-            cs_set(g, i);
-        } else { /* shouldn't happen; let the game pick */
-            switch (g) {
-            case G_RACE:
-                flags.initrace = pick_race(flags.initrole, ROLE_RANDOM,
-                                           ROLE_RANDOM, PICK_RANDOM);
-                break;
-            case G_GEND:
-                flags.initgend = pick_gend(flags.initrole, flags.initrace,
-                                           ROLE_RANDOM, PICK_RANDOM);
-                break;
-            default:
-                flags.initalign = pick_align(flags.initrole, flags.initrace,
-                                             flags.initgend, PICK_RANDOM);
-                break;
-            }
-        }
-    }
-}
-
-static boolean
-cs_pick(int g, int i)
-{
-    if (!cs_ok(g, i))
-        return FALSE;
-    cs_set(g, i);
-    cs_fix();
-    return TRUE;
-}
-
-static const char *
-cs_role_name(int r)
-{
-    return (flags.initgend == 1 && roles[r].name.f) ? roles[r].name.f
-                                                     : roles[r].name.m;
-}
-
-static const char *
-cs_label(int g, int i, char *buf)
-{
-    const char *s;
-
-    switch (g) {
-    case G_ROLE:
-        s = cs_role_name(i);
-        break;
-    case G_RACE:
-        s = races[i].noun;
-        break;
-    case G_GEND:
-        s = genders[i].adj;
-        break;
-    default:
-        s = aligns[i].adj;
-        break;
-    }
-    Strcpy(buf, s);
-    buf[0] = highc(buf[0]);
-    return buf;
-}
-
-/* why choice i of group g can't be had, for the info panel */
-static void
-cs_why_not(int g, int i, char *buf)
-{
-    char who[BUFSZ];
-
-    Strcpy(who, makeplural(cs_role_name(flags.initrole)));
-    switch (g) {
-    case G_RACE:
-        Sprintf(buf, "%s can't be %s.", who, makeplural(races[i].noun));
-        break;
-    case G_GEND:
-        Sprintf(buf, "%s can't be %s.", who, genders[i].adj);
-        break;
-    case G_ALIGN:
-        Sprintf(buf, "%s %s can't be %s.", races[flags.initrace].adj, who,
-                aligns[i].adj);
-        buf[0] = highc(buf[0]);
-        break;
-    default:
-        buf[0] = '\0';
-        break;
-    }
-}
+#define cs_value fxv_cs_value
+#define cs_ok fxv_cs_ok
+#define cs_fix fxv_cs_fix
+#define cs_pick fxv_cs_pick
+#define cs_role_name fxv_cs_role_name
+#define cs_label fxv_cs_label
+#define cs_why_not fxv_cs_why_not
 
 /*
  * moving about
@@ -289,17 +115,7 @@ cs_next_btn(int dir)
     return b;
 }
 
-/* the next choice that fits, from the current one, or -1 */
-static int
-cs_step(int g, int from, int dir)
-{
-    int i;
-
-    for (i = from + dir; i >= 0 && i < cs_n[g]; i += dir)
-        if (cs_ok(g, i))
-            return i;
-    return -1;
-}
+#define cs_step fxv_cs_step
 
 static boolean
 cs_move(int g, int dir)
@@ -371,89 +187,40 @@ cs_activate(int b)
 }
 
 /*
- * where things go; sizes are for a 740-pixel-high window, scaled
+ * where things go: shared with the SDL port (fxview.c)
  */
 
 static double
 cs_scale(int w, int h)
 {
-    double s = min(h / 740.0, w / 960.0);
-
-    return s < 0.5 ? 0.5 : s > 2.2 ? 2.2 : s;
+    return fxv_cs_scale(w, h);
 }
 
 #define S(v) ((int) ((v) * s + 0.5))
 
 static void
-cs_layout_buttons(int w, int top, double s)
+cs_rect(RECT *r, const int q[4])
 {
-    int bw = S(150), pw = S(cs_mode == CS_NAME ? 254 : 220), bh = S(46),
-        gap = S(16), x;
-
-    if (cs_mode == CS_NAME) {
-        x = (w - (bw + gap + pw)) / 2;
-        SetRect(&cs_btn[B_BACK], x, top, x + bw, top + bh);
-        SetRectEmpty(&cs_btn[B_RANDOM]);
-        x += bw + gap;
-        SetRect(&cs_btn[B_PLAY], x, top, x + pw, top + bh);
-    } else {
-        x = (w - (2 * bw + 2 * gap + pw)) / 2;
-        SetRect(&cs_btn[B_BACK], x, top, x + bw, top + bh);
-        x += bw + gap;
-        SetRect(&cs_btn[B_RANDOM], x, top, x + bw, top + bh);
-        x += bw + gap;
-        SetRect(&cs_btn[B_PLAY], x, top, x + pw, top + bh);
-    }
+    SetRect(r, q[0], q[1], q[2], q[3]);
 }
 
-/* the character screen: roles on the left; race, gender and alignment
-   stacked in the middle; about the role on the right; buttons below */
 static void
-cs_layout_char(int w, int h, double s, int *ptop)
+cs_layout(int w, int h, int *ptop)
 {
-    int x0 = (w - S(900)) / 2, top = max(S(12), (h - S(710)) / 2);
-    int ptop0 = top + S(112), hh = S(38), rh = S(30), gap = S(16);
-    int g, i, y, colh = 0;
+    struct fxv_cs_layout L;
+    int g, i;
 
-    *ptop = top;
-    /* the middle column, top to bottom */
-    y = ptop0;
-    for (g = G_RACE; g < G_NGRP; g++) {
-        int ph = hh + cs_n[g] * rh + S(10);
-
-        SetRect(&cs_panel[g], x0 + S(272), y, x0 + S(482), y + ph);
-        y += ph + gap;
+    fxv_cs_layout(&L, w, h, cs_mode == CS_NAME);
+    *ptop = L.top;
+    for (g = 0; g < G_NGRP; g++) {
+        cs_rect(&cs_panel[g], L.panel[g]);
+        for (i = 0; i < cs_n[g] && i < MAXROWS; i++)
+            cs_rect(&cs_row[g][i], L.row[g][i]);
     }
-    colh = y - gap - ptop0;
-    SetRect(&cs_panel[G_ROLE], x0, ptop0, x0 + S(250),
-            ptop0 + max(colh, hh + cs_n[G_ROLE] * rh + S(10)));
-    colh = cs_panel[G_ROLE].bottom - ptop0;
-    SetRect(&cs_info, x0 + S(504), ptop0, x0 + S(900), ptop0 + colh);
-
-    for (g = 0; g < G_NGRP; g++)
-        for (i = 0; i < cs_n[g] && i < MAXROWS; i++) {
-            RECT *p = &cs_panel[g];
-
-            SetRect(&cs_row[g][i], p->left + S(8), p->top + hh + i * rh,
-                    p->right - S(8), p->top + hh + (i + 1) * rh - S(2));
-        }
-    cs_layout_buttons(w, ptop0 + colh + S(26), s);
-}
-
-/* the name screen: a heading, the box, and buttons, low in the window
-   like the title screen's */
-static void
-cs_layout_name(int w, int h, double s, int *ptop)
-{
-    int bw = S(420), bh = S(56);
-    int top = (int) (h * 0.50);
-
-    if (top + S(300) > h)
-        top = h - S(300);
-    *ptop = top;
-    SetRect(&cs_box, (w - bw) / 2, top + S(96), (w + bw) / 2,
-            top + S(96) + bh);
-    cs_layout_buttons(w, cs_box.bottom + S(54), s);
+    cs_rect(&cs_info, L.info);
+    cs_rect(&cs_box, L.box);
+    for (i = 0; i < B_N; i++)
+        cs_rect(&cs_btn[i], L.btn[i]);
 }
 
 /*
@@ -468,7 +235,9 @@ cs_round(HDC hdc, const RECT *r, COLORREF fill, COLORREF edge, int pw,
     HPEN p = CreatePen(PS_SOLID, pw, edge);
     HGDIOBJ ob = SelectObject(hdc, b), op = SelectObject(hdc, p);
 
-    RoundRect(hdc, r->left, r->top, r->right, r->bottom, rad, rad);
+    nhUse(rad); /* every box has the panels' small corners */
+    RoundRect(hdc, r->left, r->top, r->right, r->bottom, FXV_CORNER_GDI,
+              FXV_CORNER_GDI);
     SelectObject(hdc, op);
     SelectObject(hdc, ob);
     DeleteObject(p);
@@ -534,7 +303,7 @@ cs_paint_name(HDC hdc, int w, int h, double s)
     int top;
     boolean focus = (cs_fg == G_BOX);
 
-    cs_layout_name(w, h, s, &top);
+    cs_layout(w, h, &top);
 
     of = SelectObject(hdc, big);
     SetRect(&r, 0, top, w, top + S(76));
@@ -655,11 +424,7 @@ cs_paint_info(HDC hdc, double s, HFONT name, HFONT head, HFONT body,
 {
     RECT r = cs_info, line;
     int rl = (cs_hg == G_ROLE && cs_hi >= 0) ? cs_hi : flags.initrole;
-    const struct Role *R = &roles[rl];
-    boolean fem = (flags.initgend == 1);
     char buf[BUFSZ];
-    const char *blurb = NULL;
-    int i, n;
 
     cs_round(hdc, &r, TH_BG_PANEL, TH_SEPARATOR, 1, S(14));
     r.left += S(22), r.right -= S(22), r.top += S(16);
@@ -672,17 +437,15 @@ cs_paint_info(HDC hdc, double s, HFONT name, HFONT head, HFONT body,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     r.top = line.bottom;
 
+    /* the words are shared with the SDL port (fxview.c) */
     SelectObject(hdc, body);
-    Sprintf(buf, "Starts out as %s",
-            an((fem && R->rank[0].f) ? R->rank[0].f : R->rank[0].m));
+    fxv_cs_info(rl, FXV_CSI_STARTS, buf);
     cs_para(hdc, buf, &r, TH_TEXT_DIM);
     r.top += S(12);
 
-    for (i = 0; i < (int) SIZE(cs_blurb); i++)
-        if (!strcmp(cs_blurb[i].code, R->filecode))
-            blurb = cs_blurb[i].text;
-    if (blurb) {
-        cs_para(hdc, blurb, &r, TH_TEXT);
+    fxv_cs_info(rl, FXV_CSI_BLURB, buf);
+    if (*buf) {
+        cs_para(hdc, buf, &r, TH_TEXT);
         r.top += S(16);
     }
 
@@ -690,46 +453,24 @@ cs_paint_info(HDC hdc, double s, HFONT name, HFONT head, HFONT body,
     SelectObject(hdc, head);
     cs_para(hdc, "Races", &r, TH_ACCENT);
     SelectObject(hdc, body);
-    buf[0] = '\0';
-    for (i = n = 0; i < cs_n[G_RACE]; i++)
-        if (ok_race(rl, i, ROLE_RANDOM, ROLE_RANDOM)) {
-            if (n++)
-                Strcat(buf, ", ");
-            Strcat(buf, races[i].noun);
-        }
+    fxv_cs_info(rl, FXV_CSI_RACES, buf);
     cs_para(hdc, buf, &r, TH_TEXT);
     r.top += S(8);
 
     SelectObject(hdc, head);
     cs_para(hdc, "Alignments", &r, TH_ACCENT);
     SelectObject(hdc, body);
-    buf[0] = '\0';
-    for (i = n = 0; i < cs_n[G_ALIGN]; i++)
-        if (ok_align(rl, ROLE_RANDOM, ROLE_RANDOM, i)) {
-            if (n++)
-                Strcat(buf, ", ");
-            Strcat(buf, aligns[i].adj);
-        }
+    fxv_cs_info(rl, FXV_CSI_ALIGNS, buf);
     cs_para(hdc, buf, &r, TH_TEXT);
-    if (ok_gend(rl, ROLE_RANDOM, 0, ROLE_RANDOM)
-        != ok_gend(rl, ROLE_RANDOM, 1, ROLE_RANDOM)) {
-        Sprintf(buf, "Always %s",
-                genders[ok_gend(rl, ROLE_RANDOM, 1, ROLE_RANDOM)].adj);
+    fxv_cs_info(rl, FXV_CSI_GENDER, buf);
+    if (*buf)
         cs_para(hdc, buf, &r, TH_TEXT_DIM);
-    }
     r.top += S(8);
 
     SelectObject(hdc, head);
     cs_para(hdc, "Gods", &r, TH_ACCENT);
     SelectObject(hdc, body);
-    if (R->lgod) {
-#define GOD(g) ((g)[0] == '_' ? (g) + 1 : (g))
-        Sprintf(buf, "%s (lawful), %s (neutral), %s (chaotic)",
-                GOD(R->lgod), GOD(R->ngod), GOD(R->cgod));
-#undef GOD
-    } else {
-        Strcpy(buf, "Another role's pantheon, chosen at random");
-    }
+    fxv_cs_info(rl, FXV_CSI_GODS, buf);
     cs_para(hdc, buf, &r, TH_TEXT);
 
     /* pointing at a choice that doesn't fit: say why */
@@ -764,10 +505,8 @@ cs_paint_char(HDC hdc, int w, int h, double s)
     RECT r;
     int top, g;
     char buf[BUFSZ];
-    const struct Role *R = &roles[flags.initrole];
-    boolean fem = (flags.initgend == 1);
 
-    cs_layout_char(w, h, s, &top);
+    cs_layout(w, h, &top);
 
     of = SelectObject(hdc, big);
     SetRect(&r, 0, top, w, top + S(62));
@@ -776,10 +515,7 @@ cs_paint_char(HDC hdc, int w, int h, double s)
                   max(2, S(3)));
     /* the hero as chosen so far */
     SelectObject(hdc, sub);
-    Sprintf(buf, "%s the %s, %s %s %s %s", svp.plname,
-            (fem && R->rank[0].f) ? R->rank[0].f : R->rank[0].m,
-            aligns[flags.initalign].adj, genders[flags.initgend].adj,
-            races[flags.initrace].adj, cs_role_name(flags.initrole));
+    fxv_cs_hero_line(buf);
     SetRect(&r, 0, top + S(64), w, top + S(94));
     mswin_ms_text(hdc, buf, &r,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
@@ -927,17 +663,13 @@ cs_type(WPARAM ch)
 static void
 cs_letter(int c)
 {
-    int g = (cs_fg < G_NGRP) ? cs_fg : G_ROLE, i, k;
-    char buf[BUFSZ];
+    int g = (cs_fg < G_NGRP) ? cs_fg : G_ROLE,
+        i = fxv_cs_letter(g, c);
 
-    for (k = 1; k <= cs_n[g]; k++) {
-        i = (cs_value(g) + k) % cs_n[g];
-        if (cs_ok(g, i) && lowc(*cs_label(g, i, buf)) == c) {
-            cs_pick(g, i);
-            cs_focus_group(g);
-            InvalidateRect(cs_hwnd, NULL, FALSE);
-            return;
-        }
+    if (i >= 0) {
+        cs_pick(g, i);
+        cs_focus_group(g);
+        InvalidateRect(cs_hwnd, NULL, FALSE);
     }
 }
 
@@ -1234,16 +966,7 @@ mswin_name_screen(char *name, int size)
 int
 mswin_char_screen(void (*randomize)(void *), void *arg)
 {
-    int i;
-
-    for (i = 0; roles[i].name.m && i < MAXROWS; i++)
-        continue;
-    cs_n[G_ROLE] = i;
-    for (i = 0; races[i].noun && i < MAXROWS; i++)
-        continue;
-    cs_n[G_RACE] = i;
-    cs_n[G_GEND] = ROLE_GENDERS;
-    cs_n[G_ALIGN] = ROLE_ALIGNS;
+    fxv_cs_count();
     cs_rnd = randomize;
     cs_rnd_arg = arg;
     cs_fix(); /* should already fit; make sure */

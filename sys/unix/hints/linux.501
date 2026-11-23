@@ -609,6 +609,8 @@ ifdef MAKEFILE_TOP
 # the tile sheet it draws the map from
 POSTINSTALL+= ( cd util && $(MAKE) tile2bmp && ./tile2bmp ../dat/tiles.bmp ) \
 		&& cp dat/tiles.bmp $(INSTDIR)/tiles.bmp;
+# the title screens' painting (shared with NetHackW)
+POSTINSTALL+= cp win/win32/splash_art.png $(INSTDIR)/splash_art.png;
 endif   # MAKEFILE_TOP
 endif   # WANT_WIN_SDL
 

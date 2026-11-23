@@ -3308,3 +3308,508 @@ fxv_msg_shade(int dx, int dy, int fade)
     a = a * a * (3 - 2 * a);
     return (a <= 0.02) ? 0 : (int) (232 * a);
 }
+
+/* ---- the full-window screens (title, character, death, scores) ---- */
+
+/* how big to draw things: 1.0 for a 720-pixel-high window */
+double
+fxv_scr_scale(int w, int h)
+{
+    double s = min(h / 720.0, w / 1100.0);
+
+    return s < 0.55 ? 0.55 : s > 2.5 ? 2.5 : s;
+}
+
+/* the title screen's buttons, as left, top, right, bottom: Play wide
+   and gold, About and Exit side by side beneath it */
+void
+fxv_title_buttons(int w, int h, int r[FXV_TITLE_NBTN][4])
+{
+    double s = fxv_scr_scale(w, h);
+    int pw = (int) (330 * s), ph = (int) (54 * s), gap = (int) (12 * s);
+    int sw = (pw - gap) / 2, sh = (int) (40 * s);
+    int top = (int) (h * 0.70);
+
+    if (top + ph + gap + sh > h - (int) (70 * s))
+        top = h - (int) (70 * s) - ph - gap - sh;
+    r[FXV_TITLE_PLAY][0] = (w - pw) / 2, r[FXV_TITLE_PLAY][1] = top;
+    r[FXV_TITLE_PLAY][2] = (w - pw) / 2 + pw, r[FXV_TITLE_PLAY][3] = top + ph;
+    r[FXV_TITLE_ABOUT][0] = (w - pw) / 2;
+    r[FXV_TITLE_ABOUT][1] = top + ph + gap;
+    r[FXV_TITLE_ABOUT][2] = (w - pw) / 2 + sw;
+    r[FXV_TITLE_ABOUT][3] = top + ph + gap + sh;
+    r[FXV_TITLE_EXIT][0] = (w + pw) / 2 - sw;
+    r[FXV_TITLE_EXIT][1] = top + ph + gap;
+    r[FXV_TITLE_EXIT][2] = (w + pw) / 2;
+    r[FXV_TITLE_EXIT][3] = top + ph + gap + sh;
+}
+
+/* the speaker button for the menu music: the top right corner */
+void
+fxv_title_sound_rect(int w, double s, int r[4])
+{
+    int sz = (int) (42 * s), m = (int) (18 * s);
+
+    r[0] = w - m - sz, r[1] = m, r[2] = w - m, r[3] = m + sz;
+}
+
+/* the shade over the painting, row y of h: how dark (0..235) the black
+   over it is, a little at the very top and deepening down to the
+   buttons, so the title and buttons read over the art */
+int
+fxv_title_shade(int y, int h)
+{
+    double t = (h > 0) ? (double) y / h : 0.0, a;
+
+    if (t < 0.28)
+        a = t < 0.08 ? 70.0 * (0.08 - t) / 0.08 : 0.0;
+    else if (t < 0.74)
+        a = 235.0 * (t - 0.28) / 0.46;
+    else
+        a = 235.0;
+    return (int) (a * a / 235.0); /* eased in */
+}
+
+/* ---- the character screen's rules and words (both ports) ---------- */
+
+/*
+ * The character screen keeps the game's rules about which choices go
+ * together: role first, then race, gender and alignment, each limited by
+ * the ones before it. Choices that don't fit are shown dimmed, and
+ * pointing at one says why. Changing an earlier choice moves a later one
+ * that no longer fits to the first that does.
+ */
+
+int fxv_cs_n[FXV_CS_NGRP]; /* how many choices in each group */
+static int fxv_cs_cfg[FXV_CS_NGRP]; /* what the options asked for */
+
+/* a few words on each role, by its file code */
+static const struct {
+    const char *code, *text;
+} fxv_cs_blurbs[] = {
+    { "Arc", "A scholar of ruins and lost places: quick on foot, "
+             "sharp-eyed for traps, and never without a pick-axe." },
+    { "Bar", "A warrior from the wild lands: strong, hardy, resistant "
+             "to poison, and deadly with a two-handed sword or axe." },
+    { "Cav", "A primitive brawler armed with a club and a sling, "
+             "tough as old leather, with a loyal dog at heel." },
+    { "Hea", "A physician with healing spells, a stethoscope and a "
+             "full purse, but little skill at arms. A slow start." },
+    { "Kni", "A mounted warrior on a pony, with lance and long sword, "
+             "bound by a strict code of honor." },
+    { "Mon", "A master of the martial arts who fights barehanded, "
+             "moves fast, and is best without armor." },
+    { "Pri", "A servant of the gods who sees at a glance whether things "
+             "are blessed or cursed, and starts with clerical spells." },
+    { "Rog", "A thief and knife-thrower who prefers to strike from the "
+             "shadows, and is at home among locks and traps." },
+    { "Ran", "A wilderness scout and expert archer, cloaked so that "
+             "foes are never quite sure where to strike." },
+    { "Sam", "A disciplined warrior of the East: fast, well armored, "
+             "and deadly with the katana." },
+    { "Tou", "A sightseer with a camera, a loud shirt and plenty of "
+             "gold. Weak and naive: the hardest way to play." },
+    { "Val", "A shieldmaiden of the north, stealthy, resistant to cold, "
+             "and strong. A good first hero." },
+    { "Wiz", "A student of the arcane with a magic quarterstaff, a "
+             "cloak, and spells, wands and rings to begin with." },
+};
+
+int
+fxv_cs_value(int g)
+{
+    switch (g) {
+    case FXV_CS_ROLE:
+        return flags.initrole;
+    case FXV_CS_RACE:
+        return flags.initrace;
+    case FXV_CS_GEND:
+        return flags.initgend;
+    default:
+        return flags.initalign;
+    }
+}
+
+static void
+fxv_cs_set(int g, int v)
+{
+    switch (g) {
+    case FXV_CS_ROLE:
+        flags.initrole = v;
+        break;
+    case FXV_CS_RACE:
+        flags.initrace = v;
+        break;
+    case FXV_CS_GEND:
+        flags.initgend = v;
+        break;
+    default:
+        flags.initalign = v;
+        break;
+    }
+}
+
+/* can choice i of group g go with the choices before it? */
+boolean
+fxv_cs_ok(int g, int i)
+{
+    if (g < 0 || g >= FXV_CS_NGRP || i < 0 || i >= fxv_cs_n[g])
+        return FALSE;
+    switch (g) {
+    case FXV_CS_ROLE:
+        return ok_role(i, ROLE_RANDOM, ROLE_RANDOM, ROLE_RANDOM);
+    case FXV_CS_RACE:
+        return ok_race(flags.initrole, i, ROLE_RANDOM, ROLE_RANDOM);
+    case FXV_CS_GEND:
+        return ok_gend(flags.initrole, flags.initrace, i, ROLE_RANDOM);
+    default:
+        return ok_align(flags.initrole, flags.initrace, flags.initgend, i);
+    }
+}
+
+/* after a change, move any later choice that no longer fits */
+void
+fxv_cs_fix(void)
+{
+    int g, i;
+
+    for (g = FXV_CS_RACE; g < FXV_CS_NGRP; g++) {
+        if (fxv_cs_ok(g, fxv_cs_value(g)))
+            continue;
+        for (i = 0; i < fxv_cs_n[g]; i++)
+            if (fxv_cs_ok(g, i))
+                break;
+        if (i < fxv_cs_n[g]) {
+            fxv_cs_set(g, i);
+        } else { /* shouldn't happen; let the game pick */
+            switch (g) {
+            case FXV_CS_RACE:
+                flags.initrace = pick_race(flags.initrole, ROLE_RANDOM,
+                                           ROLE_RANDOM, PICK_RANDOM);
+                break;
+            case FXV_CS_GEND:
+                flags.initgend = pick_gend(flags.initrole, flags.initrace,
+                                           ROLE_RANDOM, PICK_RANDOM);
+                break;
+            default:
+                flags.initalign = pick_align(flags.initrole, flags.initrace,
+                                             flags.initgend, PICK_RANDOM);
+                break;
+            }
+        }
+    }
+}
+
+/* choose choice i of group g, if it fits */
+boolean
+fxv_cs_pick(int g, int i)
+{
+    if (!fxv_cs_ok(g, i))
+        return FALSE;
+    fxv_cs_set(g, i);
+    fxv_cs_fix();
+    return TRUE;
+}
+
+/* the next choice that fits, from 'from' in direction dir, or -1 */
+int
+fxv_cs_step(int g, int from, int dir)
+{
+    int i;
+
+    for (i = from + dir; i >= 0 && i < fxv_cs_n[g]; i += dir)
+        if (fxv_cs_ok(g, i))
+            return i;
+    return -1;
+}
+
+/* the next choice that fits and starts with letter c, after the
+   current one; -1 if none */
+int
+fxv_cs_letter(int g, int c)
+{
+    char buf[BUFSZ];
+    int i, k;
+
+    for (k = 1; k <= fxv_cs_n[g]; k++) {
+        i = (fxv_cs_value(g) + k) % fxv_cs_n[g];
+        if (fxv_cs_ok(g, i) && lowc(*fxv_cs_label(g, i, buf)) == lowc(c))
+            return i;
+    }
+    return -1;
+}
+
+const char *
+fxv_cs_role_name(int r)
+{
+    return (flags.initgend == 1 && roles[r].name.f) ? roles[r].name.f
+                                                     : roles[r].name.m;
+}
+
+const char *
+fxv_cs_label(int g, int i, char *buf)
+{
+    const char *s;
+
+    switch (g) {
+    case FXV_CS_ROLE:
+        s = fxv_cs_role_name(i);
+        break;
+    case FXV_CS_RACE:
+        s = races[i].noun;
+        break;
+    case FXV_CS_GEND:
+        s = genders[i].adj;
+        break;
+    default:
+        s = aligns[i].adj;
+        break;
+    }
+    Strcpy(buf, s);
+    buf[0] = highc(buf[0]);
+    return buf;
+}
+
+/* why choice i of group g can't be had, for the info panel */
+void
+fxv_cs_why_not(int g, int i, char *buf)
+{
+    char who[BUFSZ];
+
+    Strcpy(who, makeplural(fxv_cs_role_name(flags.initrole)));
+    switch (g) {
+    case FXV_CS_RACE:
+        Sprintf(buf, "%s can't be %s.", who, makeplural(races[i].noun));
+        break;
+    case FXV_CS_GEND:
+        Sprintf(buf, "%s can't be %s.", who, genders[i].adj);
+        break;
+    case FXV_CS_ALIGN:
+        Sprintf(buf, "%s %s can't be %s.", races[flags.initrace].adj, who,
+                aligns[i].adj);
+        buf[0] = highc(buf[0]);
+        break;
+    default:
+        buf[0] = '\0';
+        break;
+    }
+}
+
+/* the hero as chosen so far: "Name the Rank, lawful female human Knight" */
+void
+fxv_cs_hero_line(char *buf)
+{
+    const struct Role *R = &roles[flags.initrole];
+    boolean fem = (flags.initgend == 1);
+
+    Sprintf(buf, "%s the %s, %s %s %s %s", svp.plname,
+            (fem && R->rank[0].f) ? R->rank[0].f : R->rank[0].m,
+            aligns[flags.initalign].adj, genders[flags.initgend].adj,
+            races[flags.initrace].adj, fxv_cs_role_name(flags.initrole));
+}
+
+/* what the info panel says about role rl: its kinds of line */
+void
+fxv_cs_info(int rl, int what, char *buf)
+{
+    const struct Role *R = &roles[rl];
+    boolean fem = (flags.initgend == 1);
+    int i, n;
+
+    buf[0] = '\0';
+    switch (what) {
+    case FXV_CSI_STARTS:
+        Sprintf(buf, "Starts out as %s",
+                an((fem && R->rank[0].f) ? R->rank[0].f : R->rank[0].m));
+        break;
+    case FXV_CSI_BLURB:
+        for (i = 0; i < SIZE(fxv_cs_blurbs); i++)
+            if (!strcmp(fxv_cs_blurbs[i].code, R->filecode))
+                Strcpy(buf, fxv_cs_blurbs[i].text);
+        break;
+    case FXV_CSI_RACES: /* what the role allows, by the game's own rules */
+        for (i = n = 0; i < fxv_cs_n[FXV_CS_RACE]; i++)
+            if (ok_race(rl, i, ROLE_RANDOM, ROLE_RANDOM)) {
+                if (n++)
+                    Strcat(buf, ", ");
+                Strcat(buf, races[i].noun);
+            }
+        break;
+    case FXV_CSI_ALIGNS:
+        for (i = n = 0; i < fxv_cs_n[FXV_CS_ALIGN]; i++)
+            if (ok_align(rl, ROLE_RANDOM, ROLE_RANDOM, i)) {
+                if (n++)
+                    Strcat(buf, ", ");
+                Strcat(buf, aligns[i].adj);
+            }
+        break;
+    case FXV_CSI_GENDER: /* only when the role has just the one */
+        if (ok_gend(rl, ROLE_RANDOM, 0, ROLE_RANDOM)
+            != ok_gend(rl, ROLE_RANDOM, 1, ROLE_RANDOM))
+            Sprintf(buf, "Always %s",
+                    genders[ok_gend(rl, ROLE_RANDOM, 1, ROLE_RANDOM)].adj);
+        break;
+    case FXV_CSI_GODS:
+        if (R->lgod) {
+#define GOD(g) ((g)[0] == '_' ? (g) + 1 : (g))
+            Sprintf(buf, "%s (lawful), %s (neutral), %s (chaotic)",
+                    GOD(R->lgod), GOD(R->ngod), GOD(R->cgod));
+#undef GOD
+        } else {
+            Strcpy(buf, "Another role's pantheon, chosen at random");
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* count the choices */
+void
+fxv_cs_count(void)
+{
+    int i;
+
+    for (i = 0; roles[i].name.m && i < FXV_CS_MAXROWS; i++)
+        continue;
+    fxv_cs_n[FXV_CS_ROLE] = i;
+    for (i = 0; races[i].noun && i < FXV_CS_MAXROWS; i++)
+        continue;
+    fxv_cs_n[FXV_CS_RACE] = i;
+    fxv_cs_n[FXV_CS_GEND] = ROLE_GENDERS;
+    fxv_cs_n[FXV_CS_ALIGN] = ROLE_ALIGNS;
+}
+
+/* count the choices, and remember what the options asked for */
+void
+fxv_cs_begin(void)
+{
+    fxv_cs_count();
+    fxv_cs_cfg[FXV_CS_ROLE] = flags.initrole;
+    fxv_cs_cfg[FXV_CS_RACE] = flags.initrace;
+    fxv_cs_cfg[FXV_CS_GEND] = flags.initgend;
+    fxv_cs_cfg[FXV_CS_ALIGN] = flags.initalign;
+}
+
+/* fill in whatever the options left open (or asked to be random), at
+   random, keeping what they did say; TRUE if they said it all (or said
+   'randomall'), so there's nothing to choose */
+boolean
+fxv_cs_randomize(void)
+{
+    boolean full = TRUE;
+    int g;
+
+    for (g = 0; g < FXV_CS_NGRP; g++) {
+        fxv_cs_set(g, fxv_cs_cfg[g]);
+        if (fxv_cs_cfg[g] == ROLE_NONE) {
+            if (!flags.randomall)
+                full = FALSE;
+            fxv_cs_set(g, ROLE_RANDOM);
+        }
+    }
+    rigid_role_checks(); /* picks the random ones */
+    if (!ok_role(flags.initrole, flags.initrace, flags.initgend,
+                 flags.initalign))
+        full = FALSE, flags.initrole = ROLE_RANDOM;
+    if (!ok_race(flags.initrole, flags.initrace, flags.initgend,
+                 flags.initalign))
+        full = FALSE, flags.initrace = ROLE_RANDOM;
+    if (!ok_gend(flags.initrole, flags.initrace, flags.initgend,
+                 flags.initalign))
+        full = FALSE, flags.initgend = ROLE_RANDOM;
+    if (!ok_align(flags.initrole, flags.initrace, flags.initgend,
+                  flags.initalign))
+        full = FALSE, flags.initalign = ROLE_RANDOM;
+    rigid_role_checks();
+    fxv_cs_fix();
+    return full;
+}
+
+/* how big to draw the character screens: 1.0 for 740 pixels high */
+double
+fxv_cs_scale(int w, int h)
+{
+    double s = min(h / 740.0, w / 960.0);
+
+    return s < 0.5 ? 0.5 : s > 2.2 ? 2.2 : s;
+}
+
+#define S(v) ((int) ((v) * s + 0.5))
+#define SETR(r, l, t, rr, b) ((r)[0] = (l), (r)[1] = (t), (r)[2] = (rr), \
+                              (r)[3] = (b))
+
+static void
+fxv_cs_layout_buttons(struct fxv_cs_layout *L, int w, int top, double s,
+                      boolean name)
+{
+    int bw = S(150), pw = S(name ? 254 : 220), bh = S(46), gap = S(16), x;
+
+    if (name) {
+        x = (w - (bw + gap + pw)) / 2;
+        SETR(L->btn[FXV_CSB_BACK], x, top, x + bw, top + bh);
+        SETR(L->btn[FXV_CSB_RANDOM], 0, 0, 0, 0);
+        x += bw + gap;
+        SETR(L->btn[FXV_CSB_PLAY], x, top, x + pw, top + bh);
+    } else {
+        x = (w - (2 * bw + 2 * gap + pw)) / 2;
+        SETR(L->btn[FXV_CSB_BACK], x, top, x + bw, top + bh);
+        x += bw + gap;
+        SETR(L->btn[FXV_CSB_RANDOM], x, top, x + bw, top + bh);
+        x += bw + gap;
+        SETR(L->btn[FXV_CSB_PLAY], x, top, x + pw, top + bh);
+    }
+}
+
+/* where everything goes. The character screen: roles on the left; race,
+   gender and alignment stacked in the middle; about the role on the
+   right; buttons below. The name screen: a heading, the box, and
+   buttons, low in the window like the title screen's. */
+void
+fxv_cs_layout(struct fxv_cs_layout *L, int w, int h, boolean name)
+{
+    double s = fxv_cs_scale(w, h);
+
+    (void) memset((genericptr_t) L, 0, sizeof *L);
+    L->s = s;
+    if (name) {
+        int bw = S(420), bh = S(56), top = (int) (h * 0.50);
+
+        if (top + S(300) > h)
+            top = h - S(300);
+        L->top = top;
+        SETR(L->box, (w - bw) / 2, top + S(96), (w + bw) / 2,
+             top + S(96) + bh);
+        fxv_cs_layout_buttons(L, w, L->box[3] + S(54), s, TRUE);
+    } else {
+        int x0 = (w - S(900)) / 2, top = max(S(12), (h - S(710)) / 2);
+        int ptop0 = top + S(112), hh = S(38), rh = S(30), gap = S(16);
+        int g, i, y, colh;
+
+        L->top = top;
+        y = ptop0; /* the middle column, top to bottom */
+        for (g = FXV_CS_RACE; g < FXV_CS_NGRP; g++) {
+            int ph = hh + fxv_cs_n[g] * rh + S(10);
+
+            SETR(L->panel[g], x0 + S(272), y, x0 + S(482), y + ph);
+            y += ph + gap;
+        }
+        colh = y - gap - ptop0;
+        SETR(L->panel[FXV_CS_ROLE], x0, ptop0, x0 + S(250),
+             ptop0 + max(colh, hh + fxv_cs_n[FXV_CS_ROLE] * rh + S(10)));
+        colh = L->panel[FXV_CS_ROLE][3] - ptop0;
+        SETR(L->info, x0 + S(504), ptop0, x0 + S(900), ptop0 + colh);
+        for (g = 0; g < FXV_CS_NGRP; g++)
+            for (i = 0; i < fxv_cs_n[g] && i < FXV_CS_MAXROWS; i++) {
+                int *p = L->panel[g];
+
+                SETR(L->row[g][i], p[0] + S(8), p[1] + hh + i * rh,
+                     p[2] - S(8), p[1] + hh + (i + 1) * rh - S(2));
+            }
+        fxv_cs_layout_buttons(L, w, ptop0 + colh + S(26), s, FALSE);
+    }
+    fxv_title_sound_rect(w, s, L->snd);
+}
+
+#undef S
+#undef SETR

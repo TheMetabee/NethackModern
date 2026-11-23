@@ -20,6 +20,7 @@
 #include "mhsplash.h"
 #include "mhmsgwnd.h"
 #include "mhtheme.h"
+#include "fxview.h"
 #include "mhend.h"
 
 PNHWinApp GetNHApp(void);
@@ -474,7 +475,9 @@ es_round(HDC hdc, const RECT *r, COLORREF fill, COLORREF edge, int pw,
     HPEN p = CreatePen(PS_SOLID, pw, edge);
     HGDIOBJ ob = SelectObject(hdc, b), op = SelectObject(hdc, p);
 
-    RoundRect(hdc, r->left, r->top, r->right, r->bottom, rad, rad);
+    nhUse(rad); /* every box has the panels' small corners */
+    RoundRect(hdc, r->left, r->top, r->right, r->bottom, FXV_CORNER_GDI,
+              FXV_CORNER_GDI);
     SelectObject(hdc, op);
     SelectObject(hdc, ob);
     DeleteObject(p);
@@ -772,7 +775,7 @@ es_paint_death(HDC hdc, int w, int h, double s)
                 ob = SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
         RoundRect(hdc, panel.left, panel.top, panel.right, panel.bottom,
-                  S(14), S(14));
+                  FXV_CORNER_GDI, FXV_CORNER_GDI);
         SelectObject(hdc, ob);
         SelectObject(hdc, op);
         DeleteObject(p);
@@ -976,7 +979,7 @@ es_paint_scores(HDC hdc, int w, int h, double s)
                 ob = SelectObject(hdc, GetStockObject(NULL_BRUSH));
 
         RoundRect(hdc, panel.left, panel.top, panel.right, panel.bottom,
-                  S(14), S(14));
+                  FXV_CORNER_GDI, FXV_CORNER_GDI);
         SelectObject(hdc, ob);
         SelectObject(hdc, op);
         DeleteObject(p);

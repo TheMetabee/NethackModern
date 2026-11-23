@@ -14,6 +14,7 @@
 #endif
 #include "dlb.h"
 #include "mhtheme.h"
+#include "fxview.h"
 #ifdef SND_LIB_MINIAUDIO
 #include "../../sound/miniaudio/nhminiaudio.h"
 #endif
@@ -417,8 +418,8 @@ NHSplashWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             FillRect(dis->hDC, &r, bg);
             ob = SelectObject(dis->hDC, fill);
             op = SelectObject(dis->hDC, GetStockObject(NULL_PEN));
-            RoundRect(dis->hDC, r.left, r.top, r.right + 1, r.bottom + 1, 10,
-                      10);
+            RoundRect(dis->hDC, r.left, r.top, r.right + 1, r.bottom + 1,
+                      FXV_CORNER_GDI, FXV_CORNER_GDI);
             SelectObject(dis->hDC, op);
             SelectObject(dis->hDC, ob);
             if (dis->itemState & ODS_FOCUS) { /* a gold line underneath */
@@ -550,9 +551,7 @@ ms_font(int px, int weight, BOOL serif)
 static double
 ms_scale(int w, int h)
 {
-    double s = min(h / 720.0, w / 1100.0);
-
-    return s < 0.55 ? 0.55 : s > 2.5 ? 2.5 : s;
+    return fxv_scr_scale(w, h); /* shared with SDL (fxview.c) */
 }
 
 /* the painting fills the window (cropped to keep its shape), darkened
@@ -630,18 +629,9 @@ ms_make_bg(HDC hdc, int w, int h)
             BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
             int y;
 
-            for (y = 0; y < h; y++) {
-                double t = (double) y / h, a;
-
-                if (t < 0.28)      /* a little at the very top too */
-                    a = t < 0.08 ? 70.0 * (0.08 - t) / 0.08 : 0.0;
-                else if (t < 0.74) /* a smooth ramp */
-                    a = 235.0 * (t - 0.28) / 0.46;
-                else
-                    a = 235.0;
-                a = a * a / 235.0; /* ease in */
-                px[y] = ((DWORD) (int) a) << 24; /* black, premultiplied */
-            }
+            for (y = 0; y < h; y++) /* the curve is shared (fxview.c) */
+                px[y] = ((DWORD) fxv_title_shade(y, h)) << 24; /* black,
+                                                                  premult. */
             GdiFlush();
             (void) GdiAlphaBlend(bdc, 0, 0, w, h, sdc, 0, 0, 1, h, bf);
             SelectObject(sdc, os);
@@ -658,19 +648,11 @@ ms_make_bg(HDC hdc, int w, int h)
 static void
 ms_layout(int w, int h)
 {
-    double s = ms_scale(w, h);
-    int pw = (int) (330 * s), ph = (int) (54 * s), gap = (int) (12 * s);
-    int sw = (pw - gap) / 2, sh = (int) (40 * s);
-    int top = (int) (h * 0.70);
+    int r[FXV_TITLE_NBTN][4], i; /* shared with SDL (fxview.c) */
 
-    if (top + ph + gap + sh > h - (int) (70 * s))
-        top = h - (int) (70 * s) - ph - gap - sh;
-    SetRect(&ms_btn[MS_PLAY], (w - pw) / 2, top, (w - pw) / 2 + pw,
-            top + ph);
-    SetRect(&ms_btn[MS_ABOUT], (w - pw) / 2, top + ph + gap,
-            (w - pw) / 2 + sw, top + ph + gap + sh);
-    SetRect(&ms_btn[MS_EXIT], (w + pw) / 2 - sw, top + ph + gap, (w + pw) / 2,
-            top + ph + gap + sh);
+    fxv_title_buttons(w, h, r);
+    for (i = 0; i < MS_NBTN; i++)
+        SetRect(&ms_btn[i], r[i][0], r[i][1], r[i][2], r[i][3]);
 }
 
 static void
@@ -698,7 +680,7 @@ mswin_ms_button(HDC hdc, const RECT *rp, const char *label, boolean primary,
     HBRUSH fb;
     HPEN pen;
     HGDIOBJ ob, op;
-    int rad = (int) (12 * s);
+    int rad = FXV_CORNER_GDI; /* the panels' small corners */
 
     if (!enabled)
         hot = down = FALSE;
@@ -882,9 +864,10 @@ mswin_menu_music_toggle(void)
 void
 mswin_ms_sound_rect(int w, double s, RECT *r)
 {
-    int sz = (int) (42 * s), m = (int) (18 * s);
+    int q[4];
 
-    SetRect(r, w - m - sz, m, w - m, m + sz);
+    fxv_title_sound_rect(w, s, q); /* shared with SDL (fxview.c) */
+    SetRect(r, q[0], q[1], q[2], q[3]);
 }
 
 /* the speaker: with sound waves while the music is on, crossed out when

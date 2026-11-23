@@ -283,4 +283,62 @@ double fxv_msg_fade(long age, boolean recent);
 boolean fxv_msg_place(int *col);
 int fxv_msg_shade(int dx, int dy, int fade);
 
+/* the full-window screens (title, character, death, scores): their
+   sizes scale with the window, 1.0 for one 720 pixels high */
+#define FXV_TITLE_PLAY 0
+#define FXV_TITLE_ABOUT 1
+#define FXV_TITLE_EXIT 2
+#define FXV_TITLE_NBTN 3
+/* every rounded box (panels, bars, chips, buttons, the screens' panels)
+   has the same small corners: this radius in pixels, not scaled; for
+   GDI's RoundRect, which takes the corner's diameter, FXV_CORNER_GDI */
+#define FXV_CORNER 4
+#define FXV_CORNER_GDI (2 * FXV_CORNER - 1)
+double fxv_scr_scale(int w, int h);
+void fxv_title_buttons(int w, int h, int r[FXV_TITLE_NBTN][4]);
+void fxv_title_sound_rect(int w, double s, int r[4]);
+int fxv_title_shade(int y, int h);
+
+/* the name and character screens: the game's rules on which choices go
+   together, the words they show, and where things go */
+#define FXV_CS_ROLE 0
+#define FXV_CS_RACE 1
+#define FXV_CS_GEND 2
+#define FXV_CS_ALIGN 3
+#define FXV_CS_NGRP 4
+#define FXV_CS_MAXROWS 32
+#define FXV_CSB_BACK 0   /* the buttons along the bottom */
+#define FXV_CSB_RANDOM 1 /* (the character screen only) */
+#define FXV_CSB_PLAY 2
+#define FXV_CSB_N 3
+#define FXV_CSI_STARTS 0 /* the info panel's lines, for fxv_cs_info() */
+#define FXV_CSI_BLURB 1
+#define FXV_CSI_RACES 2
+#define FXV_CSI_ALIGNS 3
+#define FXV_CSI_GENDER 4
+#define FXV_CSI_GODS 5
+struct fxv_cs_layout {
+    double s;              /* the scale (1.0 for 740 pixels high) */
+    int top;               /* where the heading goes */
+    int panel[FXV_CS_NGRP][4], row[FXV_CS_NGRP][FXV_CS_MAXROWS][4];
+    int info[4], btn[FXV_CSB_N][4], box[4], snd[4]; /* l, t, r, b */
+};
+extern int fxv_cs_n[FXV_CS_NGRP];
+void fxv_cs_count(void);
+void fxv_cs_begin(void);
+boolean fxv_cs_randomize(void);
+int fxv_cs_value(int g);
+boolean fxv_cs_ok(int g, int i);
+void fxv_cs_fix(void);
+boolean fxv_cs_pick(int g, int i);
+int fxv_cs_step(int g, int from, int dir);
+int fxv_cs_letter(int g, int c);
+const char *fxv_cs_role_name(int r);
+const char *fxv_cs_label(int g, int i, char *buf);
+void fxv_cs_why_not(int g, int i, char *buf);
+void fxv_cs_hero_line(char *buf);
+void fxv_cs_info(int role, int what, char *buf);
+double fxv_cs_scale(int w, int h);
+void fxv_cs_layout(struct fxv_cs_layout *, int w, int h, boolean name);
+
 #endif /* FXVIEW_H */
