@@ -61,8 +61,11 @@ static struct {
     SDL_Texture *tiles_solid;  /* the same, solid: floors, backgrounds */
     int tiles_across;
     int cw, lh;                /* character width, line height */
-    int zoom;                  /* map tile = SDL_TILE * zoom pixels */
-    int camx, camy;            /* map square at the centre of the view */
+    int zoom;                  /* index into sdl_zooms[], -1 = automatic */
+    int zoom_used;             /* the step the last layout used */
+    boolean recentre;          /* put the hero mid-view next layout */
+    int viewx, viewy;          /* first square shown, when it scrolls */
+    int herox, heroy;          /* where cliparound() says the hero is */
     int curx, cury;            /* map cursor (getpos) */
     glyph_info map[COLNO][ROWNO], bkmap[COLNO][ROWNO];
     struct sdl_win win[SDL_MAXWIN];
@@ -81,10 +84,14 @@ static struct {
     struct {                   /* the menu or text window open, if any */
         struct sdl_win *w;
         int first, how;
+        int bx, by, bw, bh;    /* its box on screen, as last drawn */
+        int items_y;           /* where the line for item "first" is */
     } ovl;
 } sdl;
 
 static void sdl_render(void);
+static void sdl_zoom(int);
+static int sdl_page_lines(void);
 static int sdl_wait_key(void);
 static void sdl_add_msg(const char *);
 
@@ -221,6 +228,45 @@ sdl_handle_event(const SDL_Event *e)
             && e->type <= SDL_EVENT_WINDOW_LAST)
             sdl.dirty = TRUE;
         break;
+    case SDL_EVENT_MOUSE_WHEEL:
+        /* the wheel zooms the map, or turns a menu's pages */
+        if (e->wheel.y == 0.0f)
+            break;
+        if (sdl.ovl.w)
+            sdl_push_key(e->wheel.y > 0 ? '<' : '>');
+        else
+            sdl_zoom(e->wheel.y > 0 ? 1 : -1);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        /* the mouse never moves the hero: clicks only work menus and
+           text windows (left picks an item or goes on, right closes) */
+        SDL_Event ev = *e;
+        struct sdl_win *w = sdl.ovl.w;
+        float mx, my;
+
+        if (!w)
+            break;
+        (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        mx = ev.button.x, my = ev.button.y;
+        if (ev.button.button == SDL_BUTTON_RIGHT) {
+            sdl_push_key('\033');
+            break;
+        }
+        if (ev.button.button != SDL_BUTTON_LEFT || mx < sdl.ovl.bx
+            || mx >= sdl.ovl.bx + sdl.ovl.bw || my < sdl.ovl.by
+            || my >= sdl.ovl.by + sdl.ovl.bh)
+            break;
+        if (sdl.ovl.how == PICK_NONE) {
+            sdl_push_key(' ');
+        } else if (my >= sdl.ovl.items_y) {
+            int i = sdl.ovl.first + (int) ((my - sdl.ovl.items_y) / sdl.lh);
+
+            if (i < w->nitems && i < sdl.ovl.first + sdl_page_lines()
+                && w->items[i].id.a_void && w->items[i].acc)
+                sdl_push_key(w->items[i].acc);
+        }
+        break;
+    }
     case SDL_EVENT_TEXT_INPUT:
         if (sdl.skip_text) {
             sdl.skip_text = FALSE;
@@ -236,6 +282,23 @@ sdl_handle_event(const SDL_Event *e)
         boolean numlock = (m & SDL_KMOD_NUM) != 0;
 
         sdl.skip_text = FALSE;
+        /* the map's zoom: Ctrl+= in, Ctrl+- out, Ctrl+0 automatic (also
+           on the keypad); these never reach the game */
+        if (m & SDL_KMOD_CTRL) {
+            int dir = 2; /* not a zoom key */
+
+            if (k == SDLK_EQUALS || k == SDLK_PLUS || k == SDLK_KP_PLUS)
+                dir = 1;
+            else if (k == SDLK_MINUS || k == SDLK_KP_MINUS)
+                dir = -1;
+            else if (k == SDLK_0 || k == SDLK_KP_0)
+                dir = 0;
+            if (dir != 2) {
+                sdl_zoom(dir);
+                sdl.skip_text = TRUE;
+                break;
+            }
+        }
         if ((m & SDL_KMOD_CTRL) && k >= 'a' && k <= 'z') {
             sdl_push_key(C((int) k));
             break;
@@ -336,18 +399,82 @@ sdl_tile_solid(int tile, float x, float y, float size)
                   size);
 }
 
+/* zoom steps: a map square's size on screen, in pixels */
+static const int sdl_zooms[] = { 12, 16, 20, 24, 32, 40, 48, 64, 80 };
+#define SDL_NZOOM ((int) (sizeof sdl_zooms / sizeof sdl_zooms[0]))
+
+/* keep the hero in view along one axis, as NetHackW does: the view only
+   moves when the hero comes within the scroll margin of its edge (or
+   is re-centred, after a zoom or a new level); *v is the first square
+   shown, page how many fit, lo..hi the squares there are */
+static void
+sdl_follow(int *v, int hero, int page, int lo, int hi)
+{
+    int m = iflags.wc_scroll_margin > 0 ? iflags.wc_scroll_margin : 5;
+    int amount = max(1, iflags.wc_scroll_amount);
+
+    m = min(m, max(1, page / 3));
+    if (sdl.recentre)
+        *v = hero - page / 2;
+    else if (hero < *v + m)
+        *v = hero - (m + amount - 1);
+    else if (hero > *v + page - 1 - m)
+        *v = hero - page + 1 + (m + amount - 1);
+    *v = max(lo, min(*v, hi - page));
+}
+
+/* where the map goes: top and bottom of its area, the size of a square,
+   and where square 0,0 is drawn. A level that fits is centred and stays
+   put; one that doesn't follows the hero by its edges. */
 static void
 sdl_layout(int *top, int *bottom, int *ts, int *ox, int *oy)
 {
-    int w, h;
+    int w, h, aw, ah, z;
 
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
     *top = SDL_MSGSHOW * sdl.lh + 8;
     *bottom = h - (2 * sdl.lh + 8);
-    *ts = SDL_TILE * sdl.zoom;
-    /* the camera square sits in the middle of the map area */
-    *ox = w / 2 - sdl.camx * *ts - *ts / 2;
-    *oy = (*top + *bottom) / 2 - sdl.camy * *ts - *ts / 2;
+    aw = w, ah = max(1, *bottom - *top);
+    if (sdl.zoom >= 0) {
+        z = sdl.zoom;
+    } else {
+        /* automatic: the largest step that shows the whole level */
+        for (z = SDL_NZOOM - 1; z > 0; z--)
+            if ((COLNO - 1) * sdl_zooms[z] <= aw
+                && ROWNO * sdl_zooms[z] <= ah)
+                break;
+    }
+    if (z != sdl.zoom_used)
+        sdl.zoom_used = z, sdl.recentre = TRUE;
+    *ts = sdl_zooms[z];
+    /* column 0 is never part of the level */
+    if ((COLNO - 1) * *ts <= aw) {
+        *ox = (aw - (COLNO - 1) * *ts) / 2 - *ts;
+    } else {
+        sdl_follow(&sdl.viewx, sdl.herox, aw / *ts, 1, COLNO);
+        *ox = -sdl.viewx * *ts;
+    }
+    if (ROWNO * *ts <= ah) {
+        *oy = *top + (ah - ROWNO * *ts) / 2;
+    } else {
+        sdl_follow(&sdl.viewy, sdl.heroy, ah / *ts, 0, ROWNO);
+        *oy = *top - sdl.viewy * *ts;
+    }
+    sdl.recentre = FALSE;
+}
+
+/* zoom in (+1), out (-1), or back to automatic (0) */
+static void
+sdl_zoom(int dir)
+{
+    if (!dir)
+        sdl.zoom = -1;
+    else
+        sdl.zoom = max(0, min(SDL_NZOOM - 1,
+                              (sdl.zoom >= 0 ? sdl.zoom : sdl.zoom_used)
+                                  + dir));
+    sdl.recentre = TRUE;
+    sdl.dirty = TRUE;
 }
 
 /* ---- the shared effects (win/share/fxview.c), drawn with SDL ----- */
@@ -882,6 +1009,7 @@ sdl_draw_overlay(void)
     bw = min(sw - 20, width * sdl.cw + 24);
     bh = (min(n, w->nitems) + 3) * sdl.lh + 12;
     x = (sw - bw) / 2, y = max(4, (sh - bh) / 2);
+    sdl.ovl.bx = x, sdl.ovl.by = y, sdl.ovl.bw = bw, sdl.ovl.bh = bh;
     sdl_fill(x, y, bw, bh, 14, 16, 24, 240);
     sdl_fill(x, y, bw, 2, 90, 110, 150, 255);
     y += 8;
@@ -889,6 +1017,7 @@ sdl_draw_overlay(void)
         sdl_text(x + 12, y, w->prompt, sdl_gold);
         y += sdl.lh;
     }
+    sdl.ovl.items_y = y;
     for (i = first; i < w->nitems && i < first + n; i++, y += sdl.lh) {
         struct sdl_item *it = &w->items[i];
         char buf[BUFSZ + 8];
@@ -1122,8 +1251,8 @@ sdl_init_nhwindows(int *argc, char **argv)
     } else {
         raw_printf("SDL: can't load tiles.bmp: %s", SDL_GetError());
     }
-    sdl.zoom = 2;
-    sdl.camx = COLNO / 2, sdl.camy = ROWNO / 2;
+    sdl.zoom = -1, sdl.zoom_used = -1; /* automatic */
+    sdl.herox = COLNO / 2, sdl.heroy = ROWNO / 2, sdl.recentre = TRUE;
     {
         int x, y;
 
@@ -1260,6 +1389,7 @@ sdl_clear_nhwindow(winid w)
             for (y = 0; y < ROWNO; y++)
                 sdl.map[x][y] = sdl.bkmap[x][y] = nul_glyphinfo;
         fxv.nfloaters = 0;
+        sdl.recentre = TRUE; /* a new level: start with the hero mid-view */
         break;
     case NHW_STATUS:
         sw->status[0][0] = sw->status[1][0] = '\0';
@@ -1419,7 +1549,7 @@ sdl_wait_synch(void)
 static void
 sdl_cliparound(int x, int y)
 {
-    sdl.camx = x, sdl.camy = y;
+    sdl.herox = x, sdl.heroy = y;
     sdl.dirty = TRUE;
 }
 #endif
