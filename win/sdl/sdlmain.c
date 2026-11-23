@@ -574,6 +574,34 @@ sdl_draw_lighting(int ox, int oy, int ts, fxv_ms now, boolean *flicker)
     (void) SDL_RenderTexture(sdl.ren, sdl.light, &src, &dst);
 }
 
+/* the gold corner marks round the hero's square, moving with the hero */
+static void
+sdl_draw_hero_frame(int ox, int oy, int ts, fxv_ms now)
+{
+    int r[8][4], k, j, x, y;
+    float sx, sy;
+
+    if (!isok(u.ux, u.uy))
+        return;
+    fxv_hero_slide(now, &sx, &sy);
+    x = ox + u.ux * ts + (int) (sx * ts);
+    y = oy + u.uy * ts + (int) (sy * ts);
+    if (!fxv_hero_frame(x, y, ts, ts, 0, r))
+        return;
+    for (k = iflags.fx_hero_frame_light ? 1 : 0; k < 2; k++) {
+        /* a dark outline one pixel wider, then the gold (the light
+           version: no outline, half see-through) */
+        fxv_color c = iflags.fx_hero_frame_light ? FXV_FRAME_LIGHT
+                      : k ? FXV_FRAME_GOLD : FXV_FRAME_EDGE;
+
+        (void) fxv_hero_frame(x, y, ts, ts, k ? 0 : 1, r);
+        for (j = 0; j < 8; j++)
+            sdl_fill(r[j][0], r[j][1], r[j][2] - r[j][0], r[j][3] - r[j][1],
+                     (Uint8) FXV_R(c), (Uint8) FXV_G(c), (Uint8) FXV_B(c),
+                     iflags.fx_hero_frame_light ? 150 : 255);
+    }
+}
+
 /* the glow primitives the shared aura painter draws through */
 static int sdl_glow_ts;
 
@@ -696,6 +724,7 @@ sdl_draw_map(void)
     sdl_draw_translucent(ox, oy, ts, (fxv_ms) now);
     sdl_draw_sprites(ox, oy, ts, (fxv_ms) now);
     sdl_draw_lighting(ox, oy, ts, (fxv_ms) now, &flicker);
+    sdl_draw_hero_frame(ox, oy, ts, (fxv_ms) now);
     auras = sdl_draw_auras(ox, oy, ts, (fxv_ms) now);
     sdl_draw_particles(ox, oy, ts, (fxv_ms) now);
     sdl_draw_floaters(ox, oy, ts, (fxv_ms) now);

@@ -147,6 +147,17 @@ struct fxv_glow {
 int fxv_paint_auras(const struct fxv_glow *, fxv_ms now, int ox, int oy,
                     int tw, int th);
 
+/* the hero frame (fx_hero_frame): small corner marks round the hero's
+   square, gold over a dark outline, or thinner and half see-through
+   (fx_hero_frame_light). fxv_hero_frame() fills r[8] with the corner
+   arms as left, top, right, bottom for a square at x,y of tw x th,
+   grown by g pixels on every side (the outline is the arms grown by 1);
+   it returns FALSE when the frame isn't shown. Colours: */
+#define FXV_FRAME_GOLD FXV_RGB(229, 186, 96)
+#define FXV_FRAME_EDGE FXV_RGB(10, 10, 14)
+#define FXV_FRAME_LIGHT FXV_RGB(255, 226, 150) /* drawn at 150/255 */
+boolean fxv_hero_frame(int x, int y, int tw, int th, int g, int r[8][4]);
+
 /* lighting: a shade layer over the map, FXV_LIGHT_S pixels per square,
    smoothed between squares so light fades off instead of stopping at
    tile edges. fxv_light_layer() builds it and points *pixels at it:

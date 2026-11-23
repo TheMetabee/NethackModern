@@ -2750,3 +2750,49 @@ fxv_glyph_shown(int x, int y, const glyph_info *shown)
         fxv_ray_particles(x, y, (shown->glyph - GLYPH_ZAP_OFF) >> 2,
                           (shown->glyph - GLYPH_ZAP_OFF) & 3);
 }
+
+/* ---- the hero frame ----------------------------------------------- */
+
+/* the corner arms round the hero's square (see fxview.h) */
+boolean
+fxv_hero_frame(int x, int y, int tw, int th, int g, int r[8][4])
+{
+    int len, t, j;
+    /* top-left, top-right, bottom-left, bottom-right: across, then down;
+       each as offsets from the square's own corners */
+    int arms[8][4];
+
+    if (!iflags.fx_hero_frame || u.uswallow || !isok(u.ux, u.uy))
+        return FALSE;
+    if (iflags.fx_hero_frame_light)
+        len = max(3, min(tw, th) / 5), t = 1, g = 0;
+    else
+        len = max(3, min(tw, th) / 4), t = max(1, min(tw, th) / 16);
+    arms[0][0] = x, arms[0][1] = y, arms[0][2] = x + len,
+        arms[0][3] = y + t;
+    arms[1][0] = x, arms[1][1] = y, arms[1][2] = x + t,
+        arms[1][3] = y + len;
+    arms[2][0] = x + tw - len, arms[2][1] = y, arms[2][2] = x + tw,
+        arms[2][3] = y + t;
+    arms[3][0] = x + tw - t, arms[3][1] = y, arms[3][2] = x + tw,
+        arms[3][3] = y + len;
+    arms[4][0] = x, arms[4][1] = y + th - t, arms[4][2] = x + len,
+        arms[4][3] = y + th;
+    arms[5][0] = x, arms[5][1] = y + th - len, arms[5][2] = x + t,
+        arms[5][3] = y + th;
+    arms[6][0] = x + tw - len, arms[6][1] = y + th - t, arms[6][2] = x + tw,
+        arms[6][3] = y + th;
+    arms[7][0] = x + tw - t, arms[7][1] = y + th - len, arms[7][2] = x + tw,
+        arms[7][3] = y + th;
+    if (iflags.fx_hero_frame_light) {
+        /* the light version's down arms start below the across ones, so
+           the corners aren't drawn twice at half opacity */
+        arms[1][1] += t, arms[3][1] += t;
+        arms[5][3] -= t, arms[7][3] -= t;
+    }
+    for (j = 0; j < 8; j++) {
+        r[j][0] = arms[j][0] - g, r[j][1] = arms[j][1] - g;
+        r[j][2] = arms[j][2] + g, r[j][3] = arms[j][3] + g;
+    }
+    return TRUE;
+}

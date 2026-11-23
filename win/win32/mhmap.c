@@ -2310,15 +2310,10 @@ static void
 fx_paint_hero_frame(PNHMapWindow data, HDC hdc)
 {
     static HBRUSH gold, dark;
-    int ox, oy, tw, th, x, y, len, t, k;
+    int ox, oy, tw, th, x, y, k, j, r[8][4];
 
-    if (!iflags.fx_theme || !iflags.fx_hero_frame || u.uswallow
-        || !isok(u.ux, u.uy))
+    if (!iflags.fx_theme)
         return;
-    if (!gold)
-        gold = CreateSolidBrush(TH_ACCENT);
-    if (!dark)
-        dark = CreateSolidBrush(RGB(10, 10, 14));
     ox = data->map_orig.x - data->xPos * data->xFrontTile;
     oy = data->map_orig.y - data->yPos * data->yFrontTile;
     tw = data->xFrontTile, th = data->yFrontTile;
@@ -2329,63 +2324,43 @@ fx_paint_hero_frame(PNHMapWindow data, HDC hdc)
         fx_hero_slide_offset(data, &sx, &sy); /* move with the hero */
         x += sx, y += sy;
     }
-    len = max(3, min(tw, th) / 4);  /* arm length */
-    t = max(1, min(tw, th) / 16);   /* thickness */
+    /* the corner arms are shared with the other front ends (fxview.c) */
+    if (!fxv_hero_frame(x, y, tw, th, 0, r))
+        return;
     if (iflags.fx_hero_frame_light) {
         /* the light version: thin, short, half see-through, no edge */
         static HDC dotDC;
         static HBITMAP dotBmp;
         BLENDFUNCTION bf;
-        RECT r[8];
-        int j;
 
-        len = max(3, min(tw, th) / 5);
-        t = 1;
         if (!dotDC) {
             dotDC = CreateCompatibleDC(hdc);
             dotBmp = CreateCompatibleBitmap(hdc, 1, 1);
             SelectObject(dotDC, dotBmp);
-            SetPixel(dotDC, 0, 0, RGB(255, 226, 150));
+            SetPixel(dotDC, 0, 0, FXV_FRAME_LIGHT);
         }
         bf.BlendOp = AC_SRC_OVER;
         bf.BlendFlags = 0;
         bf.SourceConstantAlpha = 150;
         bf.AlphaFormat = 0;
-        SetRect(&r[0], x, y, x + len, y + t);
-        SetRect(&r[1], x, y + t, x + t, y + len);
-        SetRect(&r[2], x + tw - len, y, x + tw, y + t);
-        SetRect(&r[3], x + tw - t, y + t, x + tw, y + len);
-        SetRect(&r[4], x, y + th - t, x + len, y + th);
-        SetRect(&r[5], x, y + th - len, x + t, y + th - t);
-        SetRect(&r[6], x + tw - len, y + th - t, x + tw, y + th);
-        SetRect(&r[7], x + tw - t, y + th - len, x + tw, y + th - t);
         for (j = 0; j < 8; j++)
-            (void) GdiAlphaBlend(hdc, r[j].left, r[j].top,
-                                 r[j].right - r[j].left,
-                                 r[j].bottom - r[j].top, dotDC, 0, 0, 1, 1,
-                                 bf);
+            (void) GdiAlphaBlend(hdc, r[j][0], r[j][1], r[j][2] - r[j][0],
+                                 r[j][3] - r[j][1], dotDC, 0, 0, 1, 1, bf);
         return;
     }
+    if (!gold)
+        gold = CreateSolidBrush(FXV_FRAME_GOLD);
+    if (!dark)
+        dark = CreateSolidBrush(FXV_FRAME_EDGE);
     for (k = 0; k < 2; k++) {
         /* first a dark outline one pixel wider, then the gold */
-        HBRUSH br = k ? gold : dark;
-        int g = k ? 0 : 1;
-        RECT r[8];
-        int j;
+        (void) fxv_hero_frame(x, y, tw, th, k ? 0 : 1, r);
+        for (j = 0; j < 8; j++) {
+            RECT rr;
 
-        /* top-left, top-right, bottom-left, bottom-right: across, down */
-        SetRect(&r[0], x - g, y - g, x + len + g, y + t + g);
-        SetRect(&r[1], x - g, y - g, x + t + g, y + len + g);
-        SetRect(&r[2], x + tw - len - g, y - g, x + tw + g, y + t + g);
-        SetRect(&r[3], x + tw - t - g, y - g, x + tw + g, y + len + g);
-        SetRect(&r[4], x - g, y + th - t - g, x + len + g, y + th + g);
-        SetRect(&r[5], x - g, y + th - len - g, x + t + g, y + th + g);
-        SetRect(&r[6], x + tw - len - g, y + th - t - g, x + tw + g,
-                y + th + g);
-        SetRect(&r[7], x + tw - t - g, y + th - len - g, x + tw + g,
-                y + th + g);
-        for (j = 0; j < 8; j++)
-            FillRect(hdc, &r[j], br);
+            SetRect(&rr, r[j][0], r[j][1], r[j][2], r[j][3]);
+            FillRect(hdc, &rr, k ? gold : dark);
+        }
     }
 }
 
