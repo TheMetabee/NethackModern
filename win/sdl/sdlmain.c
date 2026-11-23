@@ -64,6 +64,8 @@ static struct {
     float text_px;             /* the text size, pixels (Alt+= / Alt+-) */
     float auto_text_px;        /* the size that suits the screen */
     int text_set, zoom_set;    /* fx_text_size, fx_map_zoom as applied */
+    int bar_open, bar_hot;     /* menu bar: open topic, topic under mouse */
+    int bar_item;              /* the drop-down item under the mouse */
     int zoom;                  /* index into sdl_zooms[], -1 = automatic */
     int zoom_used;             /* the step the last layout used */
     boolean recentre;          /* put the hero mid-view next layout */
@@ -231,6 +233,387 @@ sdl_dir_key(int dx, int dy)
     return iflags.num_pad ? pad[dy + 1][dx + 1] : vi[dy + 1][dx + 1];
 }
 
+/* ---- the menu bar along the top (as NetHackW's Modern bar) ---------- */
+
+enum sdl_bar_kind {
+    BAR_KEYS,      /* type these keys into the game ("\x1b" c: Meta c) */
+    BAR_ZOOM,      /* map zoom: +1, -1, 0 automatic */
+    BAR_TEXT,      /* text size: +1 larger, -1 smaller */
+    BAR_VOLUME,    /* 1/2 effects up/down, 3/4 ambience up/down */
+    BAR_SHADE,     /* fx_shade 0..3, or 4: lighting off */
+    BAR_SEP
+};
+
+struct sdl_bar_item {
+    const char *label, *hint; /* hint: the key, as shown */
+    int kind;
+    const char *keys;
+    int arg;
+};
+
+#define BK(l, h, k) { l, h, BAR_KEYS, k, 0 }
+#define BSEP { NULL, NULL, BAR_SEP, NULL, 0 }
+#define BMETA(c) "\x1b" c
+
+static const struct sdl_bar_item bar_game[] = {
+    BK("Save and quit", "S", "S"),
+    BK("Quit without saving", "#quit", "#quit\n"),
+    BSEP,
+    BK("Options", "O", "O"),
+    BK("All options", "m O", "mO"),
+    BSEP,
+    { "Sound louder", "", BAR_VOLUME, NULL, 1 },
+    { "Sound quieter", "", BAR_VOLUME, NULL, 2 },
+    { "Ambience louder", "", BAR_VOLUME, NULL, 3 },
+    { "Ambience quieter", "", BAR_VOLUME, NULL, 4 },
+};
+static const struct sdl_bar_item bar_view[] = {
+    { "Zoom in", "Ctrl+=", BAR_ZOOM, NULL, 1 },
+    { "Zoom out", "Ctrl+-", BAR_ZOOM, NULL, -1 },
+    { "Whole level", "Ctrl+0", BAR_ZOOM, NULL, 0 },
+    BSEP,
+    { "Larger text", "Alt+=", BAR_TEXT, NULL, 1 },
+    { "Smaller text", "Alt+-", BAR_TEXT, NULL, -1 },
+    BSEP,
+    { "Shade: light", "", BAR_SHADE, NULL, 0 },
+    { "Shade: medium", "", BAR_SHADE, NULL, 1 },
+    { "Shade: dark", "", BAR_SHADE, NULL, 2 },
+    { "Shade: deep", "", BAR_SHADE, NULL, 3 },
+    { "Lighting off", "", BAR_SHADE, NULL, 4 },
+    BSEP,
+    BK("Previous messages", "Ctrl+P", "\x10"),
+    BK("Dungeon overview", "Ctrl+O", "\x0f"),
+};
+static const struct sdl_bar_item bar_items[] = {
+    BK("Inventory", "i", "i"),
+    BK("Pick up", ",", ","),
+    BK("Drop", "d", "d"),
+    BK("Drop several", "D", "D"),
+    BSEP,
+    BK("Eat", "e", "e"),
+    BK("Quaff", "q", "q"),
+    BK("Read", "r", "r"),
+    BK("Apply", "a", "a"),
+    BK("Throw", "t", "t"),
+    BK("Fire", "f", "f"),
+    BSEP,
+    BK("Loot", "M-l", BMETA("l")),
+    BK("Dip", "M-d", BMETA("d")),
+    BK("Name or call", "M-n", BMETA("n")),
+    BK("Adjust letters", "M-a", BMETA("a")),
+};
+static const struct sdl_bar_item bar_gear[] = {
+    BK("Wield", "w", "w"),
+    BK("Swap weapons", "x", "x"),
+    BK("Quiver", "Q", "Q"),
+    BSEP,
+    BK("Wear", "W", "W"),
+    BK("Take off", "T", "T"),
+    BK("Put on", "P", "P"),
+    BK("Remove", "R", "R"),
+    BSEP,
+    BK("Show equipment", "*", "*"),
+};
+/* (no movement here: the hero is moved only by keys) */
+static const struct sdl_bar_item bar_act[] = {
+    BK("Search", "s", "s"),
+    BK("Rest a turn", ".", "."),
+    BK("Kick", "Ctrl+D", "\x04"),
+    BK("Sit", "M-s", BMETA("s")),
+    BSEP,
+    BK("Open", "o", "o"),
+    BK("Close", "c", "c"),
+    BK("Force a lock", "M-f", BMETA("f")),
+    BK("Untrap", "M-u", BMETA("u")),
+    BK("Engrave", "E", "E"),
+    BSEP,
+    BK("Chat", "M-c", BMETA("c")),
+    BK("Pay", "p", "p"),
+    BK("Pray", "M-p", BMETA("p")),
+    BK("Offer", "M-o", BMETA("o")),
+};
+static const struct sdl_bar_item bar_magic[] = {
+    BK("Cast a spell", "Z", "Z"),
+    BK("Known spells", "+", "+"),
+    BK("Zap a wand", "z", "z"),
+    BSEP,
+    BK("Turn undead", "M-t", BMETA("t")),
+    BK("Invoke", "M-i", BMETA("i")),
+    BK("Enhance skills", "M-e", BMETA("e")),
+};
+static const struct sdl_bar_item bar_info[] = {
+    BK("Attributes", "Ctrl+X", "\x18"),
+    BK("Look here", ":", ":"),
+    BK("Far look", ";", ";"),
+    BK("What is a symbol", "/", "/"),
+    BK("Discoveries", "\\", "\\"),
+    BK("Conduct", "M-C", BMETA("C")),
+};
+static const struct sdl_bar_item bar_help[] = {
+    BK("Help", "?", "?"),
+    BK("Extended commands", "#?", "#?\n"),
+    BK("Game options", "O", "O"),
+};
+#undef BK
+#undef BSEP
+#undef BMETA
+
+static const struct sdl_bar_topic {
+    const char *name;
+    const struct sdl_bar_item *items;
+    int n;
+} bar_topics[] = {
+    { "Game", bar_game, SIZE(bar_game) },
+    { "View", bar_view, SIZE(bar_view) },
+    { "Items", bar_items, SIZE(bar_items) },
+    { "Gear", bar_gear, SIZE(bar_gear) },
+    { "Act", bar_act, SIZE(bar_act) },
+    { "Magic", bar_magic, SIZE(bar_magic) },
+    { "Info", bar_info, SIZE(bar_info) },
+    { "Help", bar_help, SIZE(bar_help) },
+};
+#define BAR_NTOPIC SIZE(bar_topics)
+
+static int bar_x[BAR_NTOPIC + 1]; /* topic left edges, and the end */
+
+/* is this item a setting that's on now? (it gets a tick) */
+static boolean
+sdl_bar_checked(const struct sdl_bar_item *it)
+{
+    switch (it->kind) {
+    case BAR_SHADE:
+        return (it->arg >= 4) ? !iflags.fx_lighting
+                              : (iflags.fx_lighting
+                                 && iflags.fx_shade == it->arg);
+    case BAR_ZOOM:
+        return it->arg == 0 && sdl.zoom < 0; /* "Whole level": auto */
+    default:
+        return FALSE;
+    }
+}
+
+/* the bar's height; the messages start below it */
+static int
+sdl_bar_h(void)
+{
+    return sdl.lh + 8;
+}
+
+/* the open topic's drop-down box, as drawn */
+static void
+sdl_bar_box(int *x, int *y, int *w, int *h)
+{
+    const struct sdl_bar_topic *tp = &bar_topics[sdl.bar_open];
+    int i, wl = 0, wh = 0;
+
+    for (i = 0; i < tp->n; i++)
+        if (tp->items[i].label) {
+            wl = max(wl, (int) strlen(tp->items[i].label));
+            wh = max(wh, (int) strlen(tp->items[i].hint));
+        }
+    *x = bar_x[sdl.bar_open], *y = sdl_bar_h();
+    /* room for a tick, the label, and the key (or a volume like 100%) */
+    *w = (2 + wl + max(wh, 4) + 4) * sdl.cw + 24;
+    *h = 0;
+    for (i = 0; i < tp->n; i++)
+        *h += tp->items[i].kind == BAR_SEP ? sdl.lh / 2 : sdl.lh;
+    *h += 12;
+}
+
+/* the drop-down item at a point, or -1 */
+static int
+sdl_bar_item_at(float mx, float my)
+{
+    const struct sdl_bar_topic *tp;
+    int x, y, w, h, i, iy;
+
+    if (sdl.bar_open < 0)
+        return -1;
+    tp = &bar_topics[sdl.bar_open];
+    sdl_bar_box(&x, &y, &w, &h);
+    if (mx < x || mx >= x + w || my < y + 6 || my >= y + h)
+        return -1;
+    for (i = 0, iy = y + 6; i < tp->n; i++) {
+        int ih = tp->items[i].kind == BAR_SEP ? sdl.lh / 2 : sdl.lh;
+
+        if (my >= iy && my < iy + ih)
+            return tp->items[i].kind == BAR_SEP ? -1 : i;
+        iy += ih;
+    }
+    return -1;
+}
+
+/* the topic at a point on the bar, or -1 */
+static int
+sdl_bar_topic_at(float mx, float my)
+{
+    int i;
+
+    if (my < 0 || my >= sdl_bar_h())
+        return -1;
+    for (i = 0; i < (int) BAR_NTOPIC; i++)
+        if (mx >= bar_x[i] && mx < bar_x[i + 1])
+            return i;
+    return -1;
+}
+
+static void
+sdl_draw_bar(void)
+{
+    SDL_Color hi = { 240, 200, 90, 255 }, txt = { 205, 205, 215, 255 };
+    int i, x = 8, w, h;
+
+    SDL_GetRenderOutputSize(sdl.ren, &w, &h);
+    sdl_fill(0, 0, w, sdl_bar_h(), 22, 24, 34, 255);
+    sdl_fill(0, sdl_bar_h() - 1, w, 1, 60, 66, 90, 255);
+    for (i = 0; i < (int) BAR_NTOPIC; i++) {
+        int tw = (int) strlen(bar_topics[i].name) * sdl.cw + 2 * sdl.cw;
+
+        bar_x[i] = x;
+        if (i == sdl.bar_open || i == sdl.bar_hot)
+            sdl_fill(x, 2, tw, sdl_bar_h() - 4, 50, 58, 88, 255);
+        (void) sdl_text(x + sdl.cw, 4, bar_topics[i].name,
+                        i == sdl.bar_open ? hi : txt);
+        x += tw;
+    }
+    bar_x[BAR_NTOPIC] = x;
+    if (sdl.bar_open >= 0) {
+        const struct sdl_bar_topic *tp = &bar_topics[sdl.bar_open];
+        int bx, by, bw, bh, iy;
+
+        sdl_bar_box(&bx, &by, &bw, &bh);
+        sdl_fill(bx, by, bw, bh, 16, 18, 28, 245);
+        sdl_fill(bx, by, bw, 2, 90, 110, 150, 255);
+        for (i = 0, iy = by + 6; i < tp->n; i++) {
+            const struct sdl_bar_item *it = &tp->items[i];
+
+            if (it->kind == BAR_SEP) {
+                sdl_fill(bx + 8, iy + sdl.lh / 4, bw - 16, 1, 60, 66, 90,
+                         255);
+                iy += sdl.lh / 2;
+                continue;
+            }
+            if (i == sdl.bar_item)
+                sdl_fill(bx + 4, iy, bw - 8, sdl.lh, 70, 92, 140, 150);
+            /* settings show which one is on */
+            if (sdl_bar_checked(it))
+                (void) sdl_text(bx + 10, iy, "\xE2\x9C\x93", hi); /* tick */
+            (void) sdl_text(bx + 12 + 2 * sdl.cw, iy, it->label, txt);
+            {
+                char level[16];
+                const char *hint = it->hint;
+
+                if (it->kind == BAR_VOLUME) { /* the level it's at now */
+                    Snprintf(level, sizeof level, "%d%%",
+                             it->arg <= 2 ? iflags.fx_volume
+                                          : iflags.fx_ambience_volume);
+                    hint = level;
+                }
+                if (*hint)
+                    (void) sdl_text(bx + bw - 12
+                                        - (int) strlen(hint) * sdl.cw,
+                                    iy, hint, sdl_dim);
+            }
+            iy += sdl.lh;
+        }
+    }
+}
+
+/* do what a drop-down item says */
+static void
+sdl_bar_do(const struct sdl_bar_item *it)
+{
+    const char *k;
+
+    switch (it->kind) {
+    case BAR_KEYS:
+        for (k = it->keys; *k; k++) {
+            if (*k == '\x1b' && k[1])
+                sdl_push_key(M((int) *++k));
+            else
+                sdl_push_key(*k);
+        }
+        break;
+    case BAR_ZOOM:
+        sdl_zoom(it->arg);
+        break;
+    case BAR_TEXT:
+        sdl_text_size(sdl.text_px * (it->arg > 0 ? 1.1f : 0.9f));
+        iflags.fx_text_size = sdl.text_set = (int) (sdl.text_px + 0.5f);
+        break;
+    case BAR_VOLUME: {
+        int *v = (it->arg <= 2) ? &iflags.fx_volume
+                                : &iflags.fx_ambience_volume;
+
+        *v = max(0, min(100, *v + ((it->arg & 1) ? 10 : -10)));
+#ifdef SND_LIB_MINIAUDIO
+        {
+            extern void ma_apply_volumes(void); /* masound.c */
+
+            ma_apply_volumes();
+        }
+#endif
+        break;
+    }
+    case BAR_SHADE:
+        if (it->arg >= 4) {
+            iflags.fx_lighting = FALSE;
+        } else {
+            iflags.fx_lighting = TRUE;
+            iflags.fx_shade = it->arg;
+        }
+        break;
+    default:
+        break;
+    }
+    sdl.dirty = TRUE;
+}
+
+/* a mouse event for the bar; TRUE if the bar took it */
+static boolean
+sdl_bar_mouse(const SDL_Event *ev)
+{
+    float mx, my;
+    int t, i;
+    boolean busy = (sdl.ovl.w || sdl.prompt); /* the game is asking */
+
+    if (ev->type == SDL_EVENT_MOUSE_MOTION) {
+        mx = ev->motion.x, my = ev->motion.y;
+        t = sdl_bar_topic_at(mx, my);
+        if (t != sdl.bar_hot)
+            sdl.bar_hot = t, sdl.dirty = TRUE;
+        if (sdl.bar_open >= 0) {
+            if (t >= 0 && t != sdl.bar_open) /* slide along the bar */
+                sdl.bar_open = t, sdl.bar_item = -1;
+            i = sdl_bar_item_at(mx, my);
+            if (i != sdl.bar_item)
+                sdl.bar_item = i;
+            sdl.dirty = TRUE;
+            return TRUE;
+        }
+        return FALSE;
+    }
+    if (ev->type != SDL_EVENT_MOUSE_BUTTON_DOWN)
+        return FALSE;
+    mx = ev->button.x, my = ev->button.y;
+    t = sdl_bar_topic_at(mx, my);
+    if (t >= 0) {
+        if (!busy)
+            sdl.bar_open = (sdl.bar_open == t) ? -1 : t;
+        sdl.bar_item = -1;
+        sdl.dirty = TRUE;
+        return TRUE;
+    }
+    if (sdl.bar_open < 0)
+        return FALSE;
+    i = sdl_bar_item_at(mx, my);
+    t = sdl.bar_open;
+    sdl.bar_open = -1, sdl.bar_item = -1, sdl.dirty = TRUE;
+    if (i >= 0 && ev->button.button == SDL_BUTTON_LEFT && !busy)
+        sdl_bar_do(&bar_topics[t].items[i]);
+    return TRUE; /* a click anywhere else just closes it */
+}
+
 /* the menu item (one with an identifier) under a point of the open menu
    or text window, as last drawn; -1 if none */
 static int
@@ -288,9 +671,11 @@ sdl_handle_event(const SDL_Event *e)
         struct sdl_win *w = sdl.ovl.w;
         float mx, my;
 
+        (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        if (sdl_bar_mouse(&ev)) /* the menu bar first */
+            break;
         if (!w)
             break;
-        (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
         mx = ev.button.x, my = ev.button.y;
         if (ev.button.button == SDL_BUTTON_RIGHT) {
             sdl_push_key('\033');
@@ -315,9 +700,11 @@ sdl_handle_event(const SDL_Event *e)
         SDL_Event ev = *e;
         int i;
 
+        (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
+        if (sdl_bar_mouse(&ev)) /* the menu bar first */
+            break;
         if (!sdl.ovl.w)
             break;
-        (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
         i = sdl_ovl_item_at(ev.motion.x, ev.motion.y);
         if (i != sdl.ovl.hover)
             sdl.ovl.hover = i, sdl.dirty = TRUE;
@@ -338,6 +725,13 @@ sdl_handle_event(const SDL_Event *e)
         boolean numlock = (m & SDL_KMOD_NUM) != 0;
 
         sdl.skip_text = FALSE;
+        if (sdl.bar_open >= 0) {
+            /* a drop-down is open: Escape (or any key) just closes it */
+            sdl.bar_open = sdl.bar_item = -1;
+            sdl.dirty = TRUE;
+            if (k == SDLK_ESCAPE)
+                break;
+        }
         /* the map's zoom: Ctrl+= in, Ctrl+- out, Ctrl+0 automatic (also
            on the keypad); these never reach the game */
         if (m & SDL_KMOD_CTRL) {
@@ -500,7 +894,7 @@ sdl_layout(int *top, int *bottom, int *ts, int *ox, int *oy)
     int w, h, aw, ah, z;
 
     SDL_GetRenderOutputSize(sdl.ren, &w, &h);
-    *top = SDL_MSGSHOW * sdl.lh + 8;
+    *top = sdl_bar_h() + SDL_MSGSHOW * sdl.lh + 8;
     *bottom = h - (2 * sdl.lh + 8);
     aw = w, ah = max(1, *bottom - *top);
     if (sdl.zoom >= 0) {
@@ -975,15 +1369,16 @@ static void
 sdl_draw_messages(void)
 {
     int i, first = max(0, sdl.nmsgs - SDL_MSGSHOW), row = 0;
+    int y0 = sdl_bar_h(); /* below the menu bar */
 
-    sdl_fill(0, 0, 4000, SDL_MSGSHOW * sdl.lh + 6, 8, 8, 12, 230);
+    sdl_fill(0, y0, 4000, SDL_MSGSHOW * sdl.lh + 6, 8, 8, 12, 230);
     if (sdl.prompt) /* a question: it takes the bottom line */
         first = max(0, sdl.nmsgs - (SDL_MSGSHOW - 1));
     for (i = first; i < sdl.nmsgs; i++, row++)
-        sdl_text(8, 3 + row * sdl.lh, sdl.msgs[i % SDL_MSGKEEP],
+        sdl_text(8, y0 + 3 + row * sdl.lh, sdl.msgs[i % SDL_MSGKEEP],
                  i >= sdl.msg_seen ? sdl_white : sdl_dim);
     if (sdl.prompt)
-        sdl_text(8, 3 + row * sdl.lh, sdl.prompt, sdl_gold);
+        sdl_text(8, y0 + 3 + row * sdl.lh, sdl.prompt, sdl_gold);
 }
 
 static void
@@ -1011,6 +1406,7 @@ sdl_draw_screen(void)
     sdl_draw_map();
     sdl_draw_status();
     sdl_draw_messages();
+    sdl_draw_bar(); /* last: its drop-downs go over everything */
 }
 
 /* for testing: NETHACK_SDL_SHOT=file.png saves each frame drawn there */
@@ -1393,6 +1789,7 @@ sdl_init_nhwindows(int *argc, char **argv)
     }
     sdl.zoom_set = iflags.fx_map_zoom; /* fx_map_zoom, or automatic */
     sdl.zoom = sdl_zoom_for(sdl.zoom_set), sdl.zoom_used = -1;
+    sdl.bar_open = sdl.bar_hot = sdl.bar_item = -1; /* menu bar closed */
     sdl.herox = COLNO / 2, sdl.heroy = ROWNO / 2, sdl.recentre = TRUE;
     {
         int x, y;
