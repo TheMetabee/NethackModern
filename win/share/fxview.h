@@ -189,6 +189,16 @@ fxv_color fxv_hp_color(int pct);
 void fxv_stat_arrows(int dir[6]);
 fxv_color fxv_bar_row(fxv_color c, double k, int row, int rows);
 fxv_color fxv_bar_stripe(fxv_color c);
+/* the twelve equipment slots, and a slot's blessed/cursed edge */
+struct obj;
+void fxv_equip_slots(struct obj *slot[12]);
+fxv_color fxv_equip_edge(struct obj *);
+/* the context actions (fxv_actions(); 'moves' adds stairs) */
+struct fxv_action {
+    const char *label, *hint;
+    int key;
+};
+int fxv_actions(struct fxv_action *, int max, boolean moves);
 
 /* lighting: a shade layer over the map, FXV_LIGHT_S pixels per square,
    smoothed between squares so light fades off instead of stopping at

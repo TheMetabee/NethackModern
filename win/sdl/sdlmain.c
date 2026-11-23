@@ -100,6 +100,27 @@ static void sdl_render(void);
 static void sdl_zoom(int);
 static int sdl_page_lines(void);
 static int sdl_status_h(void);
+
+/* the character panel's action buttons, as last drawn */
+#define SDL_MAXBTN 8
+static struct {
+    SDL_Rect r;
+    int key;
+} sdl_btn[SDL_MAXBTN];
+static int sdl_nbtn, sdl_btn_hot = -1, sdl_actx;
+
+/* the action button at a point, or -1 */
+static int
+sdl_btn_at(float mx, float my)
+{
+    int i;
+
+    for (i = 0; i < sdl_nbtn; i++)
+        if (mx >= sdl_btn[i].r.x && mx < sdl_btn[i].r.x + sdl_btn[i].r.w
+            && my >= sdl_btn[i].r.y && my < sdl_btn[i].r.y + sdl_btn[i].r.h)
+            return i;
+    return -1;
+}
 static int sdl_wait_key(void);
 static void sdl_add_msg(const char *);
 
@@ -695,8 +716,16 @@ sdl_handle_event(const SDL_Event *e)
         (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
         if (sdl_bar_mouse(&ev)) /* the menu bar first */
             break;
-        if (!w)
+        if (!w) {
+            /* an action button types its key, unless the game is
+               asking something */
+            int b = sdl_btn_at(ev.button.x, ev.button.y);
+
+            if (b >= 0 && ev.button.button == SDL_BUTTON_LEFT
+                && !sdl.prompt)
+                sdl_push_key(sdl_btn[b].key);
             break;
+        }
         mx = ev.button.x, my = ev.button.y;
         if (ev.button.button == SDL_BUTTON_RIGHT) {
             sdl_push_key('\033');
@@ -724,6 +753,9 @@ sdl_handle_event(const SDL_Event *e)
         (void) SDL_ConvertEventToRenderCoordinates(sdl.ren, &ev);
         if (sdl_bar_mouse(&ev)) /* the menu bar first */
             break;
+        i = sdl.ovl.w ? -1 : sdl_btn_at(ev.motion.x, ev.motion.y);
+        if (i != sdl_btn_hot) /* the action button under the mouse */
+            sdl_btn_hot = i, sdl.dirty = TRUE;
         if (!sdl.ovl.w)
             break;
         i = sdl_ovl_item_at(ev.motion.x, ev.motion.y);
@@ -1788,7 +1820,69 @@ sdl_draw_status(void)
         sdl_rule(x - 9, y1, 2 * rowh - 2);
     }
 
-    /* conditions as chips, wrapping onto the second row (fxview.c) */
+    /* what's worn and wielded: the twelve equipment slots, each
+       edged red or green once known cursed or blessed (fxview.c) */
+    {
+        struct obj *slot[12];
+        int cell = rowh - 3, gap = 4;
+
+        fxv_equip_slots(slot);
+        for (i = 0; i < 12; i++) {
+            int cx = x + (i % 6) * (cell + gap), cy = y1 + (i / 6) * rowh;
+            struct obj *o = slot[i];
+
+            sdl_rbox(cx, cy, cell, cell, 2, fxv_equip_edge(o));
+            sdl_rbox(cx + 1, cy + 1, cell - 2, cell - 2, 1,
+                     o ? FXV_RGB(33, 37, 46) : FXV_RGB(24, 27, 33));
+            if (o) {
+                glyph_info gi_obj;
+                int pad = max(1, cell / 10);
+
+                map_glyphinfo(0, 0, obj_to_glyph(o, rn2_on_display_rng), 0,
+                              &gi_obj);
+                sdl_tile(gi_obj.gm.tileidx, (float) (cx + pad),
+                         (float) (cy + pad), (float) (cell - 2 * pad));
+            }
+        }
+        x += 6 * cell + 5 * gap + 18;
+        sdl_rule(x - 9, y1, 2 * rowh - 2);
+    }
+
+    /* the action buttons, from the right edge over two rows: what makes
+       sense to do here (fxview.c) */
+    {
+        struct fxv_action act[SDL_MAXBTN];
+        int n = fxv_actions(act, SDL_MAXBTN, TRUE), bx = w - 20, row = 0;
+
+        sdl_nbtn = 0, sdl_actx = w;
+        for (i = n - 1; i >= 0; i--) {
+            int lw = sdl_text_w(act[i].label), hw = sdl_text_w(act[i].hint);
+            int bw = lw + hw + 30;
+            SDL_Rect *r = &sdl_btn[sdl_nbtn].r;
+            boolean hot = (sdl_nbtn == sdl_btn_hot);
+
+            if (bx - bw < w / 2 && row == 0) /* wrap to the second row */
+                row = 1, bx = w - 20;
+            if (bx - bw < w / 2)
+                break;
+            r->x = bx - bw, r->y = (row ? y2 : y1) + 1;
+            r->w = bw, r->h = rowh - 4;
+            sdl_btn[sdl_nbtn].key = act[i].key;
+            sdl_rbox(r->x, r->y, r->w, r->h, 4,
+                     hot ? FXV_RGB(52, 58, 70) : FXV_RGB(33, 37, 46));
+            (void) sdl_text(r->x + 10, r->y + (r->h - sdl.lh) / 2,
+                            act[i].label, text);
+            (void) sdl_text(r->x + r->w - 10 - hw,
+                            r->y + (r->h - sdl.lh) / 2, act[i].hint,
+                            hot ? sdl_gold : dim);
+            bx -= bw + 6;
+            sdl_actx = min(sdl_actx, r->x);
+            sdl_nbtn++;
+        }
+    }
+
+    /* conditions as chips, wrapping onto the second row (fxview.c),
+       stopping short of the action buttons */
     {
         struct fxv_chip chip[24];
         int nchip = fxv_status_chips(chip, SIZE(chip)), cx = x, cy = y1;
@@ -1796,9 +1890,9 @@ sdl_draw_status(void)
         for (i = 0; i < nchip; i++) {
             int cw = sdl_text_w(chip[i].name) + 16;
 
-            if (cx + cw > w - 12 && cy == y1)
+            if (cx + cw > sdl_actx - 12 && cy == y1)
                 cx = x, cy = y2;
-            if (cx + cw > w - 12)
+            if (cx + cw > sdl_actx - 12)
                 break;
             sdl_rbox(cx, cy + 1, cw, rowh - 4, 4, FXV_RGB(33, 37, 46));
             (void) sdl_text(cx + 8, cy + 1 + (rowh - 4 - sdl.lh) / 2,

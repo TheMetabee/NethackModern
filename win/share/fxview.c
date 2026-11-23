@@ -3090,3 +3090,100 @@ fxv_bar_stripe(fxv_color c)
     return (iflags.fx_bar_style == 3) ? fxv_mix(c, FXV_RGB(0, 0, 0), 0.3)
                                       : 0;
 }
+
+/* ---- the equipment slots and the action buttons ------------------------ */
+
+/* what's worn and wielded, in the twelve equipment slots (two rows of six:
+   helmet, amulet, cloak, body armour, shirt, shield; weapon, off-hand,
+   gloves, left ring, right ring, boots); empty slots are null */
+void
+fxv_equip_slots(struct obj *slot[12])
+{
+    slot[0] = uarmh, slot[1] = uamul, slot[2] = uarmc, slot[3] = uarm;
+    slot[4] = uarmu, slot[5] = uarms, slot[6] = uwep, slot[7] = uswapwep;
+    slot[8] = uarmg, slot[9] = uleft, slot[10] = uright, slot[11] = uarmf;
+}
+
+/* an equipment slot's edge: red if it's known cursed, green if known blessed,
+   else the separator colour */
+fxv_color
+fxv_equip_edge(struct obj *o)
+{
+    if (o && o->bknown && (o->cursed || o->blessed))
+        return o->cursed ? FXV_RGB(210, 64, 60) : FXV_RGB(92, 190, 92);
+    return FXV_RGB(52, 58, 70);
+}
+
+/* what makes sense to do right where the hero stands and next to them
+   (each a key to type); 'moves' includes going up or down stairs, which
+   moves the hero. Search and Rest are always there. */
+int
+fxv_actions(struct fxv_action *act, int max, boolean moves)
+{
+    struct obj *o;
+    stairway *st;
+    int typ, dx, dy, n = 0;
+    boolean food = FALSE, box = FALSE, door_closed = FALSE,
+            door_open = FALSE, trap = FALSE;
+
+#define ADD(l, h, k) \
+    if (n < max) {                                                \
+        act[n].label = (l), act[n].hint = (h), act[n].key = (k);  \
+        n++;                                                      \
+    }
+    if (!isok(u.ux, u.uy) || u.uswallow)
+        goto always;
+    typ = levl[u.ux][u.uy].typ;
+    if (moves && (st = stairway_at(u.ux, u.uy)) != 0) {
+        ADD(st->up ? "Go up" : "Go down", st->up ? "<" : ">",
+            st->up ? '<' : '>')
+    }
+    if (OBJ_AT(u.ux, u.uy) && !Levitation) {
+        ADD("Pick up", ",", ',')
+        for (o = svl.level.objects[u.ux][u.uy]; o; o = o->nexthere) {
+            if (o->oclass == FOOD_CLASS)
+                food = TRUE;
+            if (Is_container(o))
+                box = TRUE;
+        }
+        if (food)
+            ADD("Eat", "e", 'e')
+        if (box)
+            ADD("Loot", "M-l", M('l'))
+    }
+    if (IS_FOUNTAIN(typ) || IS_SINK(typ))
+        ADD("Quaff", "q", 'q')
+    if (IS_ALTAR(typ))
+        ADD("Offer", "M-o", M('o'))
+    if (IS_THRONE(typ))
+        ADD("Sit", "M-s", M('s'))
+    for (dx = -1; dx <= 1; dx++)
+        for (dy = -1; dy <= 1; dy++) {
+            int x = u.ux + dx, y = u.uy + dy;
+            struct trap *t;
+
+            if ((!dx && !dy) || !isok(x, y))
+                continue;
+            if (IS_DOOR(levl[x][y].typ) && glyph_is_cmap(glyph_at(x, y))) {
+                int dm = levl[x][y].doormask;
+
+                if (dm & (D_CLOSED | D_LOCKED))
+                    door_closed = TRUE;
+                else if ((dm & D_ISOPEN) && !OBJ_AT(x, y) && !m_at(x, y))
+                    door_open = TRUE;
+            }
+            if ((t = t_at(x, y)) != 0 && t->tseen)
+                trap = TRUE;
+        }
+    if (door_closed)
+        ADD("Open", "o", 'o')
+    if (door_open)
+        ADD("Close", "c", 'c')
+    if (trap)
+        ADD("Disarm", "M-u", M('u'))
+ always:
+    ADD("Search", "s", 's')
+    ADD("Rest", ".", '.')
+#undef ADD
+    return n;
+}

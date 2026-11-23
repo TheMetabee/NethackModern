@@ -506,28 +506,17 @@ th_trim(char *dst, const char *src, size_t n)
         memmove(dst, dst + 1, strlen(dst));
 }
 
-/* the equipment doll: what's worn and wielded, as tiles in two rows of
+/* the equipment slots: what's worn and wielded, as tiles in two rows of
    six slots starting at x0; returns its width */
 static int
-th_paint_doll(HDC hdc, int x0, int y1, int rowh)
+th_paint_equip(HDC hdc, int x0, int y1, int rowh)
 {
     struct obj *slot[12];
     int cell = rowh - 3, gap = 4, i;
     HDC tdc;
     HGDIOBJ oldBmp;
 
-    slot[0] = uarmh;   /* helmet */
-    slot[1] = uamul;   /* amulet */
-    slot[2] = uarmc;   /* cloak */
-    slot[3] = uarm;    /* body armour */
-    slot[4] = uarmu;   /* shirt */
-    slot[5] = uarms;   /* shield */
-    slot[6] = uwep;    /* weapon */
-    slot[7] = uswapwep; /* off-hand or alternate weapon */
-    slot[8] = uarmg;   /* gloves */
-    slot[9] = uleft;   /* left ring */
-    slot[10] = uright; /* right ring */
-    slot[11] = uarmf;  /* boots */
+    fxv_equip_slots(slot); /* shared (fxview.c) */
 
     tdc = CreateCompatibleDC(hdc);
     oldBmp = SelectObject(tdc, GetNHApp()->bmpMapTiles);
@@ -535,11 +524,7 @@ th_paint_doll(HDC hdc, int x0, int y1, int rowh)
         int cx = x0 + (i % 6) * (cell + gap);
         int cy = y1 + (i / 6) * rowh;
         struct obj *o = slot[i];
-        COLORREF edge = TH_SEPARATOR;
-
-        if (o && o->bknown)
-            edge = o->cursed ? RGB(210, 64, 60)
-                   : o->blessed ? RGB(92, 190, 92) : TH_SEPARATOR;
+        COLORREF edge = fxv_equip_edge(o); /* blessed/cursed, shared */
         /* the slot: a rounded box, its edge telling blessed/cursed */
         th_round(hdc, cx, cy, cx + cell, cy + cell, 3, edge);
         th_round(hdc, cx + 1, cy + 1, cx + cell - 1, cy + cell - 1, 2,
@@ -583,65 +568,14 @@ th_add_btn(const char *label, const char *hint, int key)
 static void
 th_find_actions(void)
 {
-    struct obj *o;
-    stairway *st;
-    int typ, dx, dy;
-    boolean food = FALSE, box = FALSE, door_closed = FALSE,
-            door_open = FALSE, trap = FALSE;
+    /* which actions apply is shared (fxview.c); NetHackW's bar also
+       offers the stairs */
+    struct fxv_action act[TH_MAXBTN];
+    int i, n = fxv_actions(act, TH_MAXBTN, TRUE);
 
     th_nbtn = 0;
-    if (!isok(u.ux, u.uy) || u.uswallow)
-        goto always;
-    typ = levl[u.ux][u.uy].typ;
-    if ((st = stairway_at(u.ux, u.uy)) != 0)
-        th_add_btn(st->up ? "Go up" : "Go down", st->up ? "<" : ">",
-                   st->up ? '<' : '>');
-    if (OBJ_AT(u.ux, u.uy) && !Levitation) {
-        th_add_btn("Pick up", ",", ',');
-        for (o = svl.level.objects[u.ux][u.uy]; o; o = o->nexthere) {
-            if (o->oclass == FOOD_CLASS)
-                food = TRUE;
-            if (Is_container(o))
-                box = TRUE;
-        }
-        if (food)
-            th_add_btn("Eat", "e", 'e');
-        if (box)
-            th_add_btn("Loot", "M-l", M('l'));
-    }
-    if (IS_FOUNTAIN(typ) || IS_SINK(typ))
-        th_add_btn("Quaff", "q", 'q');
-    if (IS_ALTAR(typ))
-        th_add_btn("Offer", "M-o", M('o'));
-    if (IS_THRONE(typ))
-        th_add_btn("Sit", "M-s", M('s'));
-    for (dx = -1; dx <= 1; dx++)
-        for (dy = -1; dy <= 1; dy++) {
-            int x = u.ux + dx, y = u.uy + dy;
-            struct trap *t;
-
-            if ((!dx && !dy) || !isok(x, y))
-                continue;
-            if (IS_DOOR(levl[x][y].typ) && glyph_is_cmap(glyph_at(x, y))) {
-                int dm = levl[x][y].doormask;
-
-                if (dm & (D_CLOSED | D_LOCKED))
-                    door_closed = TRUE;
-                else if ((dm & D_ISOPEN) && !OBJ_AT(x, y) && !m_at(x, y))
-                    door_open = TRUE;
-            }
-            if ((t = t_at(x, y)) != 0 && t->tseen)
-                trap = TRUE;
-        }
-    if (door_closed)
-        th_add_btn("Open", "o", 'o');
-    if (door_open)
-        th_add_btn("Close", "c", 'c');
-    if (trap)
-        th_add_btn("Disarm", "M-u", M('u'));
- always:
-    th_add_btn("Search", "s", 's');
-    th_add_btn("Rest", ".", '.');
+    for (i = 0; i < n; i++)
+        th_add_btn(act[i].label, act[i].hint, act[i].key);
 }
 
 /* lay the buttons out from the right edge, two rows; returns the left
@@ -700,7 +634,7 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     TEXTMETRIC tm;
     int pad, rowh, y1, y2, x, i, w, colw;
     char buf[BUFSZ], tmp[BUFSZ];
-    int dollx, actx;
+    int equipx, actx;
     int hp = Upolyd ? u.mh : u.uhp, hpmax = Upolyd ? u.mhmax : u.uhpmax;
     int hpct = hpmax > 0 ? (hp * 100) / hpmax : 0;
     COLORREF hpc = fxv_hp_color(hpct); /* shared (fxview.c) */
@@ -820,8 +754,8 @@ th_paint_status(PNHStatusWindow data, HDC hdc, int width, int height)
     th_rule(hdc, x - 9, y1, y2 + rowh - 2);
 
     /* what's worn and wielded */
-    dollx = th_paint_doll(hdc, x, y1, rowh);
-    x += dollx + 18;
+    equipx = th_paint_equip(hdc, x, y1, rowh);
+    x += equipx + 18;
     th_rule(hdc, x - 9, y1, y2 + rowh - 2);
 
     /* the action bar at the right end */
