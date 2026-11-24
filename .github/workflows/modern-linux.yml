@@ -4,10 +4,12 @@
 
 name: modern-linux
 
+# only for a version tag (v0.3.1 and the like), when there's a release to
+# make an AppImage for; Actions > modern-linux > Run workflow builds any
+# branch by hand
 on:
   push:
-    branches: [ '**' ]
-  pull_request:
+    tags: [ 'v[0-9]*' ]
   workflow_dispatch:
 
 permissions:
