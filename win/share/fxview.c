@@ -2838,6 +2838,77 @@ fxv_hero_frame(int x, int y, int tw, int th, int g, int r[8][4])
     return TRUE;
 }
 
+/* ---- the picking cursor ------------------------------------------- */
+
+/* getpos() keeps gg.getposx non-zero (column 0 is never on the map)
+   while a spot is being picked */
+boolean
+fxv_getpos_active(void)
+{
+    return (boolean) (gg.getposx != 0 && !program_state.gameover);
+}
+
+/* the breathing crosshair round the square being picked (fxview.h) */
+void
+fxv_getpos_cursor(fxv_ms now, int x, int y, int tw, int th, int g,
+                  int r[FXV_CURSOR_RECTS][4], fxv_color *c, int *glow)
+{
+    /* 0..1..0 once a second, eased so it lingers at both ends */
+    double k = 0.5 - 0.5 * cos((double) (now % 1000UL) / 1000.0
+                               * 2.0 * 3.14159265358979);
+    int sz = min(tw, th), t = max(1, (sz + 12) / 24),
+        len = max(3, sz / 4), tick = max(2, sz / 6),
+        grow = (int) (k * max(1, sz / 10) + 0.5), j;
+    int mx = x + tw / 2 - t / 2, my = y + th / 2 - t / 2;
+    int l = x - grow, tp = y - grow, rt = x + tw + grow, b = y + th + grow;
+    int arms[FXV_CURSOR_RECTS][4];
+
+    /* thin corner brackets: across, then down, at each of the four */
+    arms[0][0] = l, arms[0][1] = tp, arms[0][2] = l + len,
+        arms[0][3] = tp + t;
+    arms[1][0] = l, arms[1][1] = tp, arms[1][2] = l + t,
+        arms[1][3] = tp + len;
+    arms[2][0] = rt - len, arms[2][1] = tp, arms[2][2] = rt,
+        arms[2][3] = tp + t;
+    arms[3][0] = rt - t, arms[3][1] = tp, arms[3][2] = rt,
+        arms[3][3] = tp + len;
+    arms[4][0] = l, arms[4][1] = b - t, arms[4][2] = l + len,
+        arms[4][3] = b;
+    arms[5][0] = l, arms[5][1] = b - len, arms[5][2] = l + t,
+        arms[5][3] = b;
+    arms[6][0] = rt - len, arms[6][1] = b - t, arms[6][2] = rt,
+        arms[6][3] = b;
+    arms[7][0] = rt - t, arms[7][1] = b - len, arms[7][2] = rt,
+        arms[7][3] = b;
+    /* and the crosshair's ticks, pointing in from the middle of each
+       side (they stay put while the corners breathe out) */
+    arms[8][0] = mx, arms[8][1] = y, arms[8][2] = mx + t,
+        arms[8][3] = y + tick;
+    arms[9][0] = mx, arms[9][1] = y + th - tick, arms[9][2] = mx + t,
+        arms[9][3] = y + th;
+    arms[10][0] = x, arms[10][1] = my, arms[10][2] = x + tick,
+        arms[10][3] = my + t;
+    arms[11][0] = x + tw - tick, arms[11][1] = my, arms[11][2] = x + tw,
+        arms[11][3] = my + t;
+    for (j = 0; j < FXV_CURSOR_RECTS; j++) {
+        r[j][0] = arms[j][0] - g, r[j][1] = arms[j][1] - g;
+        r[j][2] = arms[j][2] + g, r[j][3] = arms[j][3] + g;
+    }
+    if (c) {
+        int lo[3], hi[3], m[3];
+
+        lo[0] = FXV_R(FXV_CURSOR_DIM), lo[1] = FXV_G(FXV_CURSOR_DIM),
+            lo[2] = FXV_B(FXV_CURSOR_DIM);
+        hi[0] = FXV_R(FXV_CURSOR_BRIGHT), hi[1] = FXV_G(FXV_CURSOR_BRIGHT),
+            hi[2] = FXV_B(FXV_CURSOR_BRIGHT);
+        for (j = 0; j < 3; j++)
+            m[j] = lo[j] + (int) ((hi[j] - lo[j]) * k + 0.5);
+        *c = FXV_RGB(m[0], m[1], m[2]);
+    }
+    if (glow)
+        *glow = 10 + (int) (25 * k);
+}
+
 /* ---- missiles pointing where they fly ----------------------------- */
 
 /* Measure a missile's picture (fx_turn_missiles): which way it points

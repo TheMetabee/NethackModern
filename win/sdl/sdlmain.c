@@ -2149,6 +2149,32 @@ sdl_draw_hero_frame(int ox, int oy, int ts, fxv_ms now)
     }
 }
 
+/* the picking cursor (; far look and the rest of getpos): a breathing
+   box, shared shape (fxview.c), over everything else on the map */
+static boolean
+sdl_draw_getpos_cursor(int ox, int oy, int ts, fxv_ms now)
+{
+    int r[FXV_CURSOR_RECTS][4], j, glow, x, y;
+    fxv_color c;
+
+    if (!fxv_getpos_active() || !isok(sdl.curx, sdl.cury))
+        return FALSE;
+    x = ox + sdl.curx * ts, y = oy + sdl.cury * ts;
+    fxv_getpos_cursor(now, x, y, ts, ts, 0, r, &c, &glow);
+    sdl_fill(x, y, ts, ts, (Uint8) FXV_R(c), (Uint8) FXV_G(c),
+             (Uint8) FXV_B(c), (Uint8) glow);
+    fxv_getpos_cursor(now, x, y, ts, ts, 1, r, (fxv_color *) 0, (int *) 0);
+    for (j = 0; j < FXV_CURSOR_RECTS; j++)
+        sdl_fill(r[j][0], r[j][1], r[j][2] - r[j][0], r[j][3] - r[j][1],
+                 (Uint8) FXV_R(FXV_FRAME_EDGE), (Uint8) FXV_G(FXV_FRAME_EDGE),
+                 (Uint8) FXV_B(FXV_FRAME_EDGE), 220);
+    fxv_getpos_cursor(now, x, y, ts, ts, 0, r, (fxv_color *) 0, (int *) 0);
+    for (j = 0; j < FXV_CURSOR_RECTS; j++)
+        sdl_fill(r[j][0], r[j][1], r[j][2] - r[j][0], r[j][3] - r[j][1],
+                 (Uint8) FXV_R(c), (Uint8) FXV_G(c), (Uint8) FXV_B(c), 255);
+    return TRUE;
+}
+
 /* the glow primitives the shared aura painter draws through */
 static int sdl_glow_ts;
 
@@ -2311,7 +2337,7 @@ sdl_draw_map(void)
     int top, bottom, ts, ox, oy, x, y, w, h;
     SDL_Rect clip;
     Uint64 now = SDL_GetTicks();
-    boolean flicker = FALSE;
+    boolean flicker = FALSE, picking;
     int auras;
 
     sdl_layout(&top, &bottom, &ts, &ox, &oy);
@@ -2372,9 +2398,11 @@ sdl_draw_map(void)
     auras = sdl_draw_auras(ox, oy, ts, (fxv_ms) now);
     sdl_draw_particles(ox, oy, ts, (fxv_ms) now);
     sdl_draw_floaters(ox, oy, ts, (fxv_ms) now);
+    picking = sdl_draw_getpos_cursor(ox, oy, ts, (fxv_ms) now);
     SDL_SetRenderClipRect(sdl.ren, NULL);
-    /* lasting effects and flickering light keep moving by themselves */
-    sdl.animating = (auras > 0 || flicker);
+    /* lasting effects, flickering light and the picking cursor keep
+       moving by themselves */
+    sdl.animating = (auras > 0 || flicker || picking);
     (void) fxv_expire((fxv_ms) now);
 }
 
@@ -6703,9 +6731,11 @@ sdl_curs(winid w, int x, int y)
 
     if (!sw)
         return;
-    if (sw->type == NHW_MAP)
+    if (sw->type == NHW_MAP) {
+        if (sdl.curx != x || sdl.cury != y)
+            sdl.dirty = TRUE; /* the picking cursor moved */
         sdl.curx = x, sdl.cury = y;
-    else
+    } else
         sw->cury = y;
 }
 

@@ -152,6 +152,8 @@ static void fx_paint_translucent(PNHMapWindow, HDC);
 static short fx_floor_tile(PNHMapWindow, int, int);
 static void fx_paint_sprites(PNHMapWindow, HDC);
 static void fx_paint_healthbar(PNHMapWindow data, int i, int j, RECT *rect);
+static boolean fx_own_cursor(void);
+static boolean fx_paint_getpos_cursor(PNHMapWindow, HDC);
 static int fx_spun_x = -1, fx_spun_y = -1; /* a missile was drawn turned */
 
 #if (VERSION_MAJOR < 4) && (VERSION_MINOR < 4) && (PATCHLEVEL < 2)
@@ -1318,7 +1320,7 @@ paintTile(PNHMapWindow data, int i, int j, RECT * rect)
     }       /* glyph != NO_GLYPH */
 
     if (i == data->xCur && j == data->yCur &&
-        (data->cursorOn || !win32_cursorblink))
+        (data->cursorOn || !win32_cursorblink) && !fx_own_cursor())
         DrawFocusRect(data->backBufferDC, rect);
 }
 
@@ -1422,7 +1424,7 @@ paintGlyph(PNHMapWindow data, int i, int j, RECT * rect)
     }
 
     if (i == data->xCur && j == data->yCur &&
-        (data->cursorOn || !win32_cursorblink)) {
+        (data->cursorOn || !win32_cursorblink) && !fx_own_cursor()) {
         int yCursor = (win32_cursorblink ? data->yBlinkCursor :
                                            data->yNoBlinkCursor);
         PatBlt(data->backBufferDC,
@@ -1531,7 +1533,8 @@ onPaint(HWND hWnd)
            numbers don't flicker */
         RECT client;
         HDC hdc;
-        boolean flicker;
+        boolean flicker, picking;
+        int auras;
 
         GetClientRect(hWnd, &client);
         if (!data->compDC || data->compW < client.right
@@ -1588,12 +1591,15 @@ onPaint(HWND hWnd)
         fx_paint_sprites(data, hdc);
         flicker = fx_paint_lighting(data, hdc);
         fx_paint_hero_frame(data, hdc);
-        if (!fx_paint_auras(data, hdc) && !flicker)
-            fx_aura_timer(data, FALSE);
-        else if (flicker)
-            fx_aura_timer(data, TRUE); /* lamp flames keep moving */
+        auras = fx_paint_auras(data, hdc);
         fx_paint_particles(data, hdc);
         fx_paint_overlay(data, hdc);
+        picking = fx_paint_getpos_cursor(data, hdc);
+        if (!auras && !flicker && !picking)
+            fx_aura_timer(data, FALSE);
+        else if (flicker || picking)
+            fx_aura_timer(data, TRUE); /* lamp flames and the picking
+                                          cursor keep moving */
         data->map_orig.x -= shx, data->map_orig.y -= shy;
         fx_paint_messages(data, hdc); /* steady, even while shaking */
         BitBlt(hFrontBufferDC, ps.rcPaint.left, ps.rcPaint.top,
@@ -2273,6 +2279,70 @@ fx_paint_hero_frame(PNHMapWindow data, HDC hdc)
             FillRect(hdc, &rr, k ? gold : dark);
         }
     }
+}
+
+/* while a spot is picked (; far look and the rest of getpos), the
+   breathing box (fxview.c) stands in for Windows' dotted focus box */
+static boolean
+fx_own_cursor(void)
+{
+    return (boolean) (iflags.fx_theme && fxv_getpos_active());
+}
+
+static boolean
+fx_paint_getpos_cursor(PNHMapWindow data, HDC hdc)
+{
+    static HBRUSH dark;
+    static HDC dotDC;
+    static HBITMAP dotBmp;
+    int ox, oy, tw, th, x, y, j, glow, r[FXV_CURSOR_RECTS][4];
+    fxv_ms now = (fxv_ms) GetTickCount();
+    fxv_color c;
+    HBRUSH side;
+    BLENDFUNCTION bf;
+
+    if (!fx_own_cursor() || !isok(data->xCur, data->yCur))
+        return FALSE;
+    ox = data->map_orig.x - data->xPos * data->xFrontTile;
+    oy = data->map_orig.y - data->yPos * data->yFrontTile;
+    tw = data->xFrontTile, th = data->yFrontTile;
+    x = ox + data->xCur * tw, y = oy + data->yCur * th;
+    fxv_getpos_cursor(now, x, y, tw, th, 0, r, &c,
+                      &glow);
+    /* a faint tint of the square inside */
+    if (!dotDC) {
+        dotDC = CreateCompatibleDC(hdc);
+        dotBmp = CreateCompatibleBitmap(hdc, 1, 1);
+        SelectObject(dotDC, dotBmp);
+    }
+    SetPixel(dotDC, 0, 0, (COLORREF) c);
+    bf.BlendOp = AC_SRC_OVER;
+    bf.BlendFlags = 0;
+    bf.SourceConstantAlpha = (BYTE) glow;
+    bf.AlphaFormat = 0;
+    (void) GdiAlphaBlend(hdc, x, y, tw, th, dotDC, 0, 0, 1, 1, bf);
+    /* a dark outline one pixel wider, then the box */
+    if (!dark)
+        dark = CreateSolidBrush(FXV_FRAME_EDGE);
+    fxv_getpos_cursor(now, x, y, tw, th, 1, r,
+                      (fxv_color *) 0, (int *) 0);
+    for (j = 0; j < FXV_CURSOR_RECTS; j++) {
+        RECT rr;
+
+        SetRect(&rr, r[j][0], r[j][1], r[j][2], r[j][3]);
+        FillRect(hdc, &rr, dark);
+    }
+    fxv_getpos_cursor(now, x, y, tw, th, 0, r,
+                      (fxv_color *) 0, (int *) 0);
+    side = CreateSolidBrush((COLORREF) c);
+    for (j = 0; j < FXV_CURSOR_RECTS; j++) {
+        RECT rr;
+
+        SetRect(&rr, r[j][0], r[j][1], r[j][2], r[j][3]);
+        FillRect(hdc, &rr, side);
+    }
+    DeleteObject(side);
+    return TRUE;
 }
 
 /* a keypress snaps every sprite back to its square (design rule 2) */

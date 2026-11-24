@@ -158,6 +158,23 @@ int fxv_paint_auras(const struct fxv_glow *, fxv_ms now, int ox, int oy,
 #define FXV_FRAME_LIGHT FXV_RGB(255, 226, 150) /* drawn at 150/255 */
 boolean fxv_hero_frame(int x, int y, int tw, int th, int g, int r[8][4]);
 
+/* the picking cursor (getpos: ; far look, travel _, zap targets...):
+   a crosshair round the square being picked: thin corner brackets that
+   breathe, swelling a little and brightening once a second, and short
+   ticks pointing in from the middle of each side, all over a
+   dark outline so they show on any tile. fxv_getpos_active() says
+   whether a spot is being picked now; fxv_getpos_cursor() fills r[] with
+   the pieces as left, top, right, bottom for a square at x,y of tw x th,
+   each grown by g pixels on every side (the outline is the pieces grown
+   by 1), sets *c to this moment's colour and *glow to how strongly to
+   tint the square inside (0..255, for a front end that can blend). */
+#define FXV_CURSOR_RECTS 12
+#define FXV_CURSOR_BRIGHT FXV_RGB(150, 240, 255)
+#define FXV_CURSOR_DIM FXV_RGB(40, 150, 200)
+boolean fxv_getpos_active(void);
+void fxv_getpos_cursor(fxv_ms now, int x, int y, int tw, int th, int g,
+                       int r[FXV_CURSOR_RECTS][4], fxv_color *c, int *glow);
+
 /* missiles pointing where they fly (fx_turn_missiles, and fx_flight_at()
    in the core for the heading): fxv_missile_shape() measures a tile's
    picture once; fxv_missile_turn() says how to turn it for a heading.
