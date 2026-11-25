@@ -72,7 +72,8 @@ struct sdl_item {              /* a line of a menu or text window */
     char gacc;                 /* group accelerator */
     int attr, color;
     boolean selected;
-    int tile;                  /* its tile, -1 none */
+    long count;                /* how many of it, when selected; 0 all */
+    int tile;                /* its tile, -1 none */
     char *text;
 };
 
@@ -133,6 +134,7 @@ static struct {
         int bx, by, bw, bh;    /* its box on screen, as last drawn */
         int items_y;           /* where the line for item "first" is */
         int hover;             /* the item under the mouse, -1 none */
+        long count;            /* a count typed for the next pick, 0 none */
     } ovl;
     struct {                   /* the title screen, while it's up */
         boolean up;
@@ -3523,7 +3525,8 @@ sdl_draw_overlay(void)
 
         if (it->id.a_void && how != PICK_NONE)
             Snprintf(buf, sizeof buf, "%c %c %s", it->acc ? it->acc : ' ',
-                     it->selected ? '+' : '-', it->text);
+                     !it->selected ? '-' : it->count > 0 ? '#' : '+',
+                     it->text);
         else
             Snprintf(buf, sizeof buf, "%s", it->text);
         if (!it->id.a_void && (it->attr & (ATR_BOLD | ATR_INVERSE)))
@@ -3538,6 +3541,13 @@ sdl_draw_overlay(void)
         Snprintf(pg, sizeof pg, "(%d of %d)  > next  < back", first / n + 1,
                  (w->nitems + n - 1) / n);
         sdl_text(x + 12, y + 4, pg, sdl_dim);
+    }
+    if (sdl.ovl.count > 0 && how != PICK_NONE) {
+        char cb[40];
+
+        Snprintf(cb, sizeof cb, "Count: %ld", sdl.ovl.count);
+        sdl_text(x + bw - 12 - (int) strlen(cb) * sdl.cw, y + 4, cb,
+                 sdl_gold);
     }
 }
 
@@ -3564,19 +3574,43 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
     int first = 0, n = sdl_page_lines(), c, i, count;
     struct sdl_win *outer = sdl.ovl.w; /* a menu opened from a menu */
     int outer_first = sdl.ovl.first, outer_how = sdl.ovl.how;
+    long outer_count = sdl.ovl.count, cnt;
 
     if (how != PICK_NONE)
         sdl_assign_accels(w);
     sdl.ovl.w = w, sdl.ovl.how = how, sdl.ovl.hover = -1;
+    sdl.ovl.count = 0;
     for (;;) {
         sdl.ovl.first = first;
         sdl_render();
         c = sdl_wait_key();
+        /* a count before an item's letter: take only that many of it */
+        if (how != PICK_NONE && ((c >= '0' && c <= '9')
+                                 || ((c == '\b' || c == 127)
+                                     && sdl.ovl.count > 0))) {
+            boolean is_acc = FALSE;
+
+            for (i = first; i < w->nitems && i < first + n; i++)
+                if (w->items[i].id.a_void && w->items[i].acc == c)
+                    is_acc = TRUE;
+            if (!is_acc) {
+                if (c == '\b' || c == 127)
+                    sdl.ovl.count /= 10;
+                else if (sdl.ovl.count < 100000000L)
+                    sdl.ovl.count = sdl.ovl.count * 10 + (c - '0');
+                sdl.dirty = TRUE;
+                continue;
+            }
+        }
+        cnt = sdl.ovl.count; /* for this key only */
+        sdl.ovl.count = 0;
         if (c == '\033') {
             if (how == PICK_NONE)
                 break;
+            if (cnt) /* the first escape drops a typed count */
+                continue;
             sdl.ovl.w = outer, sdl.ovl.first = outer_first;
-            sdl.ovl.how = outer_how;
+            sdl.ovl.how = outer_how, sdl.ovl.count = outer_count;
             sdl.dirty = TRUE;
             return -1;
         }
@@ -3597,7 +3631,7 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
             for (i = 0; i < w->nitems; i++)
                 if (w->items[i].id.a_void
                     && (c == '.' || (i >= first && i < first + n)))
-                    w->items[i].selected = (c != '-');
+                    w->items[i].selected = (c != '-'), w->items[i].count = 0;
             continue;
         }
         /* an accelerator on this page, or a group accelerator anywhere */
@@ -3608,7 +3642,10 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
                 continue;
             if ((it->acc == c && i >= first && i < first + n)
                 || (it->gacc && it->gacc == c)) {
-                it->selected = !it->selected;
+                if (cnt > 0) /* a count selects that many */
+                    it->selected = TRUE, it->count = cnt;
+                else /* no count toggles it */
+                    it->selected = !it->selected, it->count = 0;
                 if (how == PICK_ONE) {
                     int j;
 
@@ -3625,6 +3662,7 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
     }
  done:
     sdl.ovl.w = outer, sdl.ovl.first = outer_first, sdl.ovl.how = outer_how;
+    sdl.ovl.count = outer_count;
     sdl.dirty = TRUE;
     if (how == PICK_NONE || !picks)
         return 0;
@@ -3639,7 +3677,8 @@ sdl_run_overlay(struct sdl_win *w, int how, menu_item **picks)
         for (i = 0; i < w->nitems; i++)
             if (w->items[i].id.a_void && w->items[i].selected) {
                 (*picks)[k].item = w->items[i].id;
-                (*picks)[k].count = -1L;
+                (*picks)[k].count = w->items[i].count > 0
+                                        ? w->items[i].count : -1L;
                 k++;
             }
     }
