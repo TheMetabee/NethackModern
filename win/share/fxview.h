@@ -325,14 +325,19 @@ int fxv_title_shade(int y, int h);
 #define FXV_UPD_GET 1  /* the download page */
 #define FXV_UPD_SKIP 2 /* skip this version */
 #define FXV_UPD_NBTN 3
-extern const char *const fxv_upd_label[FXV_UPD_NBTN];
+#define FXV_UPD_REDRAW 1  /* what choosing did: the badge changed */
+#define FXV_UPD_RESTART 2 /* ... an update is in: start the game again */
 extern const char fxv_upd_key[]; /* "wds" */
-void fxv_update_title(void);
+const char *fxv_update_btn(int which);
+boolean fxv_update_title(void);
 boolean fxv_update_badge(char *text, size_t sz);
-void fxv_update_layout(int w, int h, int panel[4],
-                       int btn[FXV_UPD_NBTN][4]);
-boolean fxv_update_choose(int which);
-void fxv_update_news(void);
+boolean fxv_update_note(char *buf, size_t sz, double *frac);
+void fxv_update_layout(int w, int h, boolean note, int panel[4],
+                       int btn[FXV_UPD_NBTN][4], int notebox[4]);
+int fxv_update_choose(int which);
+int fxv_update_tick(void);
+boolean fxv_update_install(void);
+int fxv_update_news(void);
 void fxv_update_check_now(void);
 
 /* the name and character screens: the game's rules on which choices go

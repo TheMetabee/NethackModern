@@ -3501,16 +3501,88 @@ fxv_title_shade(int y, int h)
 /*
  * The title screen asks fxupdate.c to look (at most once a day, and only
  * with fx_check_updates on); while it looks, the screen carries on as
- * usual. Once a newer release is known, a badge in the top left corner
- * says so, with What's new, the download page, and Skip this version.
- * Help > Check for updates asks at once, from the game.
+ * usual. Once a newer release is known, a badge at the top says so, with
+ * What's new, Update and restart (or, where this copy can't update
+ * itself, the download page), and Skip this version. A line under the
+ * buttons says what Update will do, then how the download is going.
+ * Once it's downloaded and checked, it's installed and the game starts
+ * again. Help > Check for updates asks at once, from the game; an update
+ * chosen there is downloaded meanwhile and installed back at the title
+ * screen, so a game is never interrupted.
  */
 
-const char *const fxv_upd_label[FXV_UPD_NBTN] = {
-    "What's new", "Download page", "Skip this version"
-};
 const char fxv_upd_key[] = "wds"; /* a key for each (a string, so
                                        strchr can look in it) */
+static char fxv_upd_err[BUFSZ];   /* why installing failed, if it did */
+
+/* a badge button's words */
+const char *
+fxv_update_btn(int which)
+{
+    switch (which) {
+    case FXV_UPD_NEWS:
+        return "What's new";
+    case FXV_UPD_GET:
+        return (fxu_can_update() && fxu_job((long *) 0, (long *) 0)
+                                        != FXU_JOB_FAILED
+                && !fxv_upd_err[0])
+                   ? "Update and restart"
+                   : "Download page";
+    default:
+        return "Skip this version";
+    }
+}
+
+/* the line under the badge's buttons, if there's one, and how far along
+   the download is (0..1, or -1 for no bar) */
+boolean
+fxv_update_note(char *buf, size_t sz, double *frac)
+{
+    const struct fxu_result *r = fxu_get();
+    long done = 0, total = 0;
+    int job = fxu_job(&done, &total);
+
+    *frac = -1.0;
+    if (fxv_upd_err[0]) {
+        Snprintf(buf, sz, "It couldn't be installed: %s.", fxv_upd_err);
+        return TRUE;
+    }
+    switch (job) {
+    case FXU_JOB_DOWNLOAD:
+        if (total > 0) {
+            *frac = (double) done / total;
+            Snprintf(buf, sz, "Downloading... %d%% of %ld MB",
+                     (int) (100.0 * done / total + 0.5),
+                     (total + 512L * 1024) / (1024L * 1024));
+        } else {
+            Snprintf(buf, sz, "Downloading... %ld MB",
+                     done / (1024L * 1024));
+        }
+        if (*frac > 1.0)
+            *frac = 1.0;
+        return TRUE;
+    case FXU_JOB_VERIFY:
+        Strcpy(buf, "Checking that it's signed...");
+        return TRUE;
+    case FXU_JOB_UNPACK:
+        Strcpy(buf, "Unpacking...");
+        return TRUE;
+    case FXU_JOB_READY:
+        Strcpy(buf, "Installing...");
+        return TRUE;
+    case FXU_JOB_FAILED:
+        Snprintf(buf, sz, "The update failed: %s.", fxu_job_error());
+        return TRUE;
+    default:
+        if (!fxu_can_update() || !r)
+            return FALSE;
+        Snprintf(buf, sz,
+                 "Update downloads about %ld MB, then the game closes and"
+                 " opens again here.",
+                 (r->dl_size + 512L * 1024) / (1024L * 1024));
+        return TRUE;
+    }
+}
 
 static void
 fxv_update_init(void)
@@ -3523,13 +3595,34 @@ fxv_update_init(void)
     }
 }
 
-/* the title screen is up */
-void
+/* install a downloaded update now; TRUE if done (the front end starts
+   the game again), else why is kept for the badge's line */
+boolean
+fxv_update_install(void)
+{
+    char why[BUFSZ];
+
+    if (fxv_upd_err[0])
+        return FALSE; /* (tried and failed: not again this time) */
+    if (fxu_install(why, sizeof why))
+        return TRUE;
+    Strcpy(fxv_upd_err, why[0] ? why : "something went wrong");
+    return FALSE;
+}
+
+/* the title screen is up: clear what earlier updates left, install one
+   downloaded during a game (TRUE: start the game again, it's done), and
+   look for a newer release if the player lets us */
+boolean
 fxv_update_title(void)
 {
     fxv_update_init();
+    fxu_cleanup();
+    if (fxu_pending() && fxv_update_install())
+        return TRUE;
     if (iflags.fx_check_updates && fxu_status() == FXU_IDLE)
         fxu_start(FALSE);
+    return FALSE;
 }
 
 /* is the badge to be shown? If so, what it says, into text */
@@ -3545,11 +3638,13 @@ fxv_update_badge(char *text, size_t sz)
 }
 
 /* the badge, as left, top, right, bottom: a panel centred at the top,
-   its words along its top and its buttons in a row beneath */
+   its words along its top, its buttons in a row beneath, and (with
+   'note') a line under them (note[]) */
 void
-fxv_update_layout(int w, int h, int panel[4], int btn[FXV_UPD_NBTN][4])
+fxv_update_layout(int w, int h, boolean note, int panel[4],
+                  int btn[FXV_UPD_NBTN][4], int notebox[4])
 {
-    static const int bw[FXV_UPD_NBTN] = { 150, 185, 205 };
+    static const int bw[FXV_UPD_NBTN] = { 150, 205, 205 };
     double s = fxv_scr_scale(w, h);
     int m = (int) (18 * s), pad = (int) (12 * s), gap = (int) (8 * s),
         top = (int) (34 * s), bh = (int) (36 * s), x, i;
@@ -3566,34 +3661,65 @@ fxv_update_layout(int w, int h, int panel[4], int btn[FXV_UPD_NBTN][4])
         x = btn[i][2] + gap;
     }
     panel[2] = x - gap + pad;
-    panel[3] = btn[0][3] + pad;
+    notebox[0] = panel[0] + pad, notebox[2] = panel[2] - pad;
+    notebox[1] = btn[0][3] + (int) (6 * s);
+    notebox[3] = notebox[1] + (note ? (int) (24 * s) : 0);
+    panel[3] = (note ? notebox[3] : btn[0][3]) + pad;
 }
 
-/* a badge button (or its key) was chosen: do it; TRUE if the badge
-   changed */
-boolean
+/* Update and restart (at the title screen): start the download, or if
+   this copy can't update itself, open the page instead */
+static void
+fxv_update_get(void)
+{
+    int job = fxu_job((long *) 0, (long *) 0);
+
+    if (!fxu_can_update() || job == FXU_JOB_FAILED || fxv_upd_err[0])
+        (void) fxu_open_page();
+    else if (job == FXU_JOB_NONE)
+        fxu_update_start();
+    /* (else it's under way) */
+}
+
+/* a badge button (or its key) was chosen: do it. FXV_UPD_REDRAW if the
+   badge changed, FXV_UPD_RESTART if the game is to start again */
+int
 fxv_update_choose(int which)
 {
     switch (which) {
     case FXV_UPD_NEWS:
-        fxv_update_news();
-        return !fxu_badge();
+        return fxv_update_news();
     case FXV_UPD_GET:
-        (void) fxu_open_page();
-        return FALSE;
+        fxv_update_get();
+        return FXV_UPD_REDRAW;
     case FXV_UPD_SKIP:
-        fxu_skip();
-        return TRUE;
+        if (fxu_job((long *) 0, (long *) 0) == FXU_JOB_NONE)
+            fxu_skip(); /* (not once it's downloading) */
+        return FXV_UPD_REDRAW;
     }
-    return FALSE;
+    return 0;
+}
+
+/* the title screen's look at the download, now and then: once it's
+   ready, it's installed (FXV_UPD_RESTART: start the game again) */
+int
+fxv_update_tick(void)
+{
+    if (fxu_job((long *) 0, (long *) 0) == FXU_JOB_READY
+        && !fxv_upd_err[0])
+        return fxv_update_install() ? FXV_UPD_RESTART : FXV_UPD_REDRAW;
+    return 0;
 }
 
 /* What's new: the release's notes in a menu, with what can be done
-   about it at the end */
-void
+   about it at the end; as fxv_update_choose */
+int
 fxv_update_news(void)
 {
     const struct fxu_result *r = fxu_get();
+    boolean playing = program_state.in_moveloop,
+            can = fxu_can_update()
+                  && fxu_job((long *) 0, (long *) 0) == FXU_JOB_NONE;
     winid win;
     anything any;
     menu_item *pick = (menu_item *) 0;
@@ -3602,7 +3728,7 @@ fxv_update_news(void)
     int n, what = 0;
 
     if (!r || !r->ok)
-        return;
+        return 0;
     win = create_nhwindow(NHW_MENU);
     start_menu(win, MENU_BEHAVE_STANDARD);
     any = cg.zeroany;
@@ -3631,6 +3757,17 @@ fxv_update_news(void)
     }
     add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR, "",
              MENU_ITEMFLAGS_NONE);
+    if (can) {
+        /* in a game, it's only downloaded: the game goes on */
+        any.a_int = 3;
+        Snprintf(buf, sizeof buf,
+                 playing ? "Download it now (about %ld MB); it installs"
+                           " back at the title screen"
+                         : "Update and restart (downloads about %ld MB)",
+                 (r->dl_size + 512L * 1024) / (1024L * 1024));
+        add_menu(win, &nul_glyphinfo, &any, 'u', 0, ATR_NONE, NO_COLOR, buf,
+                 MENU_ITEMFLAGS_NONE);
+    }
     any.a_int = 1;
     add_menu(win, &nul_glyphinfo, &any, 'd', 0, ATR_NONE, NO_COLOR,
              r->newer ? "Open the download page" : "Open the release page",
@@ -3647,10 +3784,18 @@ fxv_update_news(void)
         what = pick[0].item.a_int;
         free((genericptr_t) pick);
     }
-    if (what == 1)
+    if (what == 1) {
         (void) fxu_open_page();
-    else if (what == 2)
+    } else if (what == 2) {
         fxu_skip();
+    } else if (what == 3) {
+        fxu_update_start();
+        if (playing)
+            pline("NetHack Modern %s is downloading; it will install when"
+                  " you're back at the title screen.",
+                  r->tag);
+    }
+    return FXV_UPD_REDRAW;
 }
 
 /* Help > Check for updates: ask GitHub now (whatever fx_check_updates
@@ -3678,7 +3823,7 @@ fxv_update_check_now(void)
         pline("NetHack Modern couldn't reach GitHub to look for a newer"
               " version.");
     else if (r->newer)
-        fxv_update_news();
+        (void) fxv_update_news();
     else
         pline("This is the latest NetHack Modern (v%s).",
               MODERN_VERSION_STRING);

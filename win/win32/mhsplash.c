@@ -541,6 +541,7 @@ static RECT ms_snd;
                           has an answer */
 static boolean ms_upd;
 static RECT ms_upanel, ms_ubtn[FXV_UPD_NBTN];
+static boolean ms_restart; /* an update is in: start the game again */
 static HBITMAP ms_bg;         /* the painting, cropped, scaled, shaded */
 static int ms_bg_w, ms_bg_h;  /* ... for this size */
 
@@ -750,8 +751,10 @@ ms_next(int f, int dir)
 static void
 ms_update_badge(HDC hdc, int w, int h, double s, HFONT words, HFONT btn)
 {
-    char text[BUFSZ];
-    int panel[4], b[FXV_UPD_NBTN][4], i;
+    char text[BUFSZ], note[BUFSZ];
+    int panel[4], b[FXV_UPD_NBTN][4], nb[4], i;
+    double frac;
+    boolean has_note;
     HBRUSH fill;
     HPEN edge;
     HGDIOBJ ob, op, of;
@@ -763,7 +766,8 @@ ms_update_badge(HDC hdc, int w, int h, double s, HFONT words, HFONT btn)
             ms_focus = MS_PLAY;
         return;
     }
-    fxv_update_layout(w, h, panel, b);
+    has_note = fxv_update_note(note, sizeof note, &frac);
+    fxv_update_layout(w, h, has_note, panel, b, nb);
     SetRect(&ms_upanel, panel[0], panel[1], panel[2], panel[3]);
     for (i = 0; i < FXV_UPD_NBTN; i++)
         SetRect(&ms_ubtn[i], b[i][0], b[i][1], b[i][2], b[i][3]);
@@ -785,10 +789,31 @@ ms_update_badge(HDC hdc, int w, int h, double s, HFONT words, HFONT btn)
     ms_text(hdc, text, &r, DT_CENTER | DT_TOP | DT_SINGLELINE, TH_ACCENT, 1);
     SelectObject(hdc, btn);
     for (i = 0; i < FXV_UPD_NBTN; i++)
-        mswin_ms_button(hdc, &ms_ubtn[i], fxv_upd_label[i], FALSE,
+        mswin_ms_button(hdc, &ms_ubtn[i], fxv_update_btn(i), FALSE,
                         ms_hot == MS_UPD + i, ms_focus == MS_UPD + i,
                         ms_down == MS_UPD + i && ms_hot == MS_UPD + i, TRUE,
                         s);
+    if (has_note) {
+        /* how the download goes: a thin bar, the words over it */
+        if (frac >= 0.0) {
+            int bh = max(3, (int) (4 * s));
+            RECT bar;
+            HBRUSH track = CreateSolidBrush(TH_SEPARATOR),
+                   done = CreateSolidBrush(TH_ACCENT);
+
+            SetRect(&bar, nb[0], nb[3] - bh, nb[2], nb[3]);
+            FillRect(hdc, &bar, track);
+            bar.right = nb[0] + max(1, (int) ((nb[2] - nb[0]) * frac));
+            FillRect(hdc, &bar, done);
+            DeleteObject(track);
+            DeleteObject(done);
+        }
+        SetRect(&r, nb[0], nb[1], nb[2], nb[3]);
+        SelectObject(hdc, words);
+        ms_text(hdc, note, &r, DT_CENTER | DT_TOP | DT_SINGLELINE
+                                   | DT_END_ELLIPSIS,
+                TH_TEXT_DIM, 1);
+    }
     SelectObject(hdc, of);
 }
 
@@ -1144,11 +1169,14 @@ static void
 ms_choose(HWND hWnd, int i)
 {
     if (i >= MS_UPD && i < MS_UPD + FXV_UPD_NBTN) {
-        /* What's new, the download page, or skip it */
+        /* What's new, update (or the download page), or skip it */
         (void) fxv_update_choose(i - MS_UPD);
         GetNHApp()->hPopupWnd = hWnd;
         SetFocus(hWnd);
         InvalidateRect(hWnd, NULL, FALSE);
+        /* the timer watches the download, if one has started */
+        if (fxu_job((long *) 0, (long *) 0) != FXU_JOB_NONE)
+            SetTimer(hWnd, MS_UPD_TIMER, 500, NULL);
         return;
     }
     if (i == MS_SOUND) {
@@ -1261,9 +1289,22 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
         /* the update check (on its own thread) has an answer: show the
            badge if there's news, and stop looking */
-        if (wParam == MS_UPD_TIMER && fxu_status() != FXU_BUSY) {
-            KillTimer(hWnd, MS_UPD_TIMER);
-            InvalidateRect(hWnd, NULL, FALSE);
+        if (wParam == MS_UPD_TIMER) {
+            int job = fxu_job((long *) 0, (long *) 0);
+
+            InvalidateRect(hWnd, NULL, FALSE); /* (the progress, too) */
+            if (job == FXU_JOB_READY) {
+                /* downloaded and checked: in it goes, and the game
+                   starts again */
+                KillTimer(hWnd, MS_UPD_TIMER);
+                if (fxv_update_tick() == FXV_UPD_RESTART) {
+                    ms_restart = TRUE;
+                    ms_result = MS_EXIT;
+                }
+            } else if (fxu_status() != FXU_BUSY
+                       && (job == FXU_JOB_NONE || job == FXU_JOB_FAILED)) {
+                KillTimer(hWnd, MS_UPD_TIMER); /* nothing to watch */
+            }
         }
         return 0;
     case WM_CHAR: {
@@ -1346,11 +1387,16 @@ mswin_display_menu_screen(void)
     }
     mswin_menu_screen_place(main);
     mswin_menu_music_start();
-    /* is there a newer version? It's asked in the background; the timer
-       looks for the answer */
-    fxv_update_title();
-    if (fxu_status() == FXU_BUSY)
+    /* an update downloaded during a game goes in now (and the game starts
+       again, as the new version); and is there a newer version? It's
+       asked in the background; the timer looks for the answer */
+    ms_restart = FALSE;
+    if (fxv_update_title()) {
+        ms_restart = TRUE;
+        ms_result = MS_EXIT;
+    } else if (fxu_status() == FXU_BUSY) {
         SetTimer(ms_hwnd, MS_UPD_TIMER, 500, NULL);
+    }
     GetNHApp()->hPopupWnd = ms_hwnd; /* the main window sends focus here */
     SetForegroundWindow(main);
     SetFocus(ms_hwnd);
@@ -1369,7 +1415,12 @@ mswin_display_menu_screen(void)
         ShowWindow(bar, SW_SHOW);
     SetFocus(main);
 
-    if (ms_result != MS_PLAY)
-        bail((char *) 0); /* Exit: nothing started, nothing to save */
+    if (ms_result != MS_PLAY) {
+        /* Exit: nothing started, nothing to save; after an update, the
+           new version starts (see mswin_relaunch) */
+        if (ms_restart)
+            mswin_play_again = TRUE;
+        bail((char *) 0);
+    }
     mswin_play_again = TRUE; /* from now on, a finished game comes back */
 }

@@ -120,6 +120,8 @@ GENTILECFILE = $(SRCDIR)/tile.c
 GENTILEOFILE = $(SRCDIR)/tile.o
 WINSRC += ../win/sdl/sdlmain.c ../win/share/fxview.c ../win/share/fxupdate.c
 WINOBJ0 += $(TARGETPFX)sdlmain.o $(TARGETPFX)fxview.o $(TARGETPFX)fxupdate.o
+# (Monocypher checks updates' signatures; see win/share/monocypher)
+WINOBJ0 += $(TARGETPFX)monocypher.o $(TARGETPFX)monocypher-ed25519.o
 # (the update check runs on a thread, and loads libcurl if it's there)
 WINLIB += $(shell pkg-config --libs $(SDL_PKGS)) -lm -lpthread -ldl
 endif

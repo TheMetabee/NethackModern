@@ -142,7 +142,8 @@ static struct {
                                 * SDL_TITLE_UPD + FXV_UPD_* */
         int btn[FXV_TITLE_NBTN][4], snd[4]; /* as last laid out */
         boolean upd;           /* the newer-version badge is showing */
-        int upanel[4], ubtn[FXV_UPD_NBTN][4]; /* ... and where */
+        int upanel[4], ubtn[FXV_UPD_NBTN][4], unote[4]; /* ... where */
+        boolean uready;        /* the download is in: install it */
     } title;
     struct {                   /* the name and character screens */
         int mode;              /* SDL_CS_NAME or _CHAR; -1 when not up */
@@ -985,6 +986,7 @@ static void sdl_fonts_dialog(void);
 /* the title screen's things to point at, besides FXV_TITLE_* */
 #define SDL_TITLE_SOUND FXV_TITLE_NBTN /* the speaker, beside the buttons */
 #define SDL_TITLE_UPD (SDL_TITLE_SOUND + 1) /* the badge's buttons */
+#define SDL_TITLE_INSTALL 0x15 /* (^U) a key of its own: the update is in */
 static int sdl_title_key(int);
 static int sdl_title_next(int, int);
 
@@ -4702,7 +4704,13 @@ sdl_draw_title(void)
        thread, has an answer; until then this just finds none) */
     sdl.title.upd = fxv_update_badge(buf, sizeof buf);
     if (sdl.title.upd) {
-        fxv_update_layout(w, h, sdl.title.upanel, sdl.title.ubtn);
+        char note[BUFSZ];
+        double frac;
+        boolean has_note = fxv_update_note(note, sizeof note, &frac);
+        int *nb = sdl.title.unote;
+
+        fxv_update_layout(w, h, has_note, sdl.title.upanel, sdl.title.ubtn,
+                          nb);
         sdl_edged(sdl.title.upanel, FXV_RGB(16, 18, 24), FXV_RGB(52, 58, 70),
                   1);
         f = sdl_face(SDL_FACE_UI_BOLD, max(10, (int) (17 * s)));
@@ -4713,9 +4721,28 @@ sdl_draw_title(void)
         for (i = 0; i < FXV_UPD_NBTN; i++) {
             int at = SDL_TITLE_UPD + i;
 
-            sdl_button(sdl.title.ubtn[i], fxv_upd_label[i], FALSE,
+            sdl_button(sdl.title.ubtn[i], fxv_update_btn(i), FALSE,
                        sdl.title.hot == at, sdl.title.focus == at,
                        sdl.title.down == at && sdl.title.hot == at, TRUE, s);
+        }
+        if (has_note) {
+            /* how the download goes: a thin bar, the words over it */
+            if (frac >= 0.0) {
+                int bw = nb[2] - nb[0], bh = max(3, (int) (4 * s));
+
+                sdl_rbox(nb[0], nb[3] - bh, bw, bh, 1, FXV_RGB(40, 45, 56));
+                sdl_rbox(nb[0], nb[3] - bh, max(1, (int) (bw * frac)), bh, 1,
+                         accent);
+            }
+            f = sdl_face(SDL_FACE_UI, max(10, (int) (13 * s)));
+            (void) sdl_face_text(f, note, (nb[0] + nb[2]) / 2, nb[1], 1, dim,
+                                 1);
+        }
+        /* downloaded and checked: in it goes (see sdl_title_screen) */
+        if (fxu_job((long *) 0, (long *) 0) == FXU_JOB_READY
+            && !sdl.title.uready) {
+            sdl.title.uready = TRUE;
+            sdl_push_key(SDL_TITLE_INSTALL);
         }
     } else if (sdl.title.focus >= SDL_TITLE_UPD) {
         sdl.title.focus = FXV_TITLE_PLAY; /* (it was skipped) */
@@ -4758,6 +4785,16 @@ sdl_title_about(void)
     sdl_destroy_nhwindow(w);
 }
 
+/* an update is in: the game ends and starts again, as the new version
+   (by the relaunch after a game: see sdl_relaunch) */
+static void
+sdl_update_restart(void)
+{
+    sdl_play_again = TRUE;
+    sdl_exit_nhwindows((char *) 0);
+    nh_terminate(EXIT_SUCCESS);
+}
+
 /* show the title screen and wait; returns only when Play is chosen
    (Exit, or closing the window, ends the program) */
 static void
@@ -4767,14 +4804,31 @@ sdl_title_screen(void)
 
     sdl.title.up = TRUE;
     sdl.title.focus = FXV_TITLE_PLAY, sdl.title.hot = sdl.title.down = -1;
+    sdl.title.uready = FALSE;
+    /* an update downloaded during a game goes in now; and is there a
+       newer version? (asked in the background) */
+    if (fxv_update_title())
+        sdl_update_restart();
     sdl_music_sync();
-    fxv_update_title(); /* is there a newer version? (in the background) */
     for (;;) {
         sdl.dirty = TRUE;
         c = sdl_wait_key();
+        if (c == SDL_TITLE_INSTALL) { /* downloaded and checked */
+            if (fxv_update_tick() == FXV_UPD_RESTART)
+                sdl_update_restart();
+            continue;
+        }
         if (c == '\n' || c == '\r' || c == ' ')
             c = sdl_title_key(sdl.title.focus);
         c = lowc(c);
+        if (c && strchr(fxv_upd_key, c) && fxu_status() == FXU_BUSY) {
+            /* a badge's key before the badge: the answer is moments away
+               (a fast typist, or a test's keys) */
+            int waited = 0;
+
+            while (fxu_status() == FXU_BUSY && waited < 3000)
+                SDL_Delay(20), waited += 20;
+        }
         if (fxu_badge() && c && strchr(fxv_upd_key, c)) {
             (void) fxv_update_choose((int) (strchr(fxv_upd_key, c)
                                             - fxv_upd_key));

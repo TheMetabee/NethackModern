@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\config.props" />
   <ItemGroup Label="ProjectConfigurations">
@@ -248,6 +248,10 @@
     </ClCompile>
     <ClCompile Include="$(WinShareDir)fxview.c" />
     <ClCompile Include="$(WinShareDir)fxupdate.c" />
+    <ClCompile Include="$(WinShareDir)monocypher\monocypher.c">
+      <DisableSpecificWarnings>4244;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="$(WinShareDir)monocypher\monocypher-ed25519.c" />
     <ClCompile Include="$(RootDir)win\sdl\sdlmain.c" />
     <ClCompile Include="$(SrcDir)sfbase.c" />
     <ClCompile Include="$(SrcDir)revision.c" />

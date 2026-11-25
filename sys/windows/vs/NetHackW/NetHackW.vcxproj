@@ -280,6 +280,10 @@
     <ClCompile Include="$(WinWin32Dir)mhmap.c" />
     <ClCompile Include="$(WinShareDir)fxview.c" />
     <ClCompile Include="$(WinShareDir)fxupdate.c" />
+    <ClCompile Include="$(WinShareDir)monocypher\monocypher.c">
+      <DisableSpecificWarnings>4244;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="$(WinShareDir)monocypher\monocypher-ed25519.c" />
     <ClCompile Include="$(WinWin32Dir)mhmenu.c" />
     <ClCompile Include="$(WinWin32Dir)mhmsgwnd.c" />
     <ClCompile Include="$(WinWin32Dir)mhrip.c" />
