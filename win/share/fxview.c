@@ -9,6 +9,9 @@
 
 #include "hack.h"
 #include "fxview.h"
+#ifdef SND_LIB_MINIAUDIO
+#include "nhminiaudio.h" /* (an update closes the sound files first) */
+#endif
 
 #include <math.h>
 
@@ -3604,6 +3607,13 @@ fxv_update_install(void)
 
     if (fxv_upd_err[0])
         return FALSE; /* (tried and failed: not again this time) */
+#ifdef SND_LIB_MINIAUDIO
+    /* the music plays from its file, which stays open (and so can't be
+       replaced on Windows) until the sound is let go: all of it goes
+       now. The game starts again after; if installing fails, the title
+       screen carries on without sound until then */
+    nhma_shutdown();
+#endif
     if (fxu_install(why, sizeof why))
         return TRUE;
     Strcpy(fxv_upd_err, why[0] ? why : "something went wrong");

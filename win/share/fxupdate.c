@@ -1664,6 +1664,39 @@ fxu_collect(const char *root, const char *rel, char ***list, int *n,
     FindClose(h);
 }
 
+/* are these two files the same, byte for byte? (an update leaves those
+   alone: fewer files moved, fewer that can be in use) */
+static int
+fxu_same_file(const char *a, const char *b)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fa, fb;
+    static char ba[65536], bb[65536]; /* (main thread only) */
+    FILE *pa, *pb;
+    size_t na, nb;
+    int same = 1;
+
+    if (!GetFileAttributesExA(a, GetFileExInfoStandard, &fa)
+        || !GetFileAttributesExA(b, GetFileExInfoStandard, &fb)
+        || fa.nFileSizeLow != fb.nFileSizeLow
+        || fa.nFileSizeHigh != fb.nFileSizeHigh)
+        return 0;
+    if (!(pa = fopen(a, "rb")))
+        return 0;
+    if (!(pb = fopen(b, "rb"))) {
+        fclose(pa);
+        return 0;
+    }
+    do {
+        na = fread(ba, 1, sizeof ba, pa);
+        nb = fread(bb, 1, sizeof bb, pb);
+        if (na != nb || memcmp(ba, bb, na))
+            same = 0;
+    } while (same && na > 0);
+    fclose(pa);
+    fclose(pb);
+    return same;
+}
+
 /* the player's own files: an update never writes over these, even if it
    has one (the release zip has an empty score list, for a new install) */
 static int
@@ -1893,6 +1926,8 @@ fxu_install(char *why, size_t whysz)
         if (fxu_players(rel) && fxu_exists(dst))
             continue; /* the player's: never */
         snprintf(src, sizeof src, "%s%s", root, rel);
+        if (fxu_exists(dst) && fxu_same_file(src, dst))
+            continue; /* unchanged since the last version: left alone */
         snprintf(old, sizeof old, "%s.old", dst);
         /* its folder, if new (sounds\, say) */
         for (bs = strchr(dst + strlen(inst), '\\'); bs;
