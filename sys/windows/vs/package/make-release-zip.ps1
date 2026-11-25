@@ -18,6 +18,9 @@
     Files taken from the repo replace any same-named copy in vsbinary, so
     the zip always has the latest docs even if vsbinary is stale.
 
+    A signature left from an earlier zip of the same name is removed;
+    sign-release.ps1 makes the new one.
+
 .PARAMETER Repo
     The NetHack Modern checkout. Defaults to the one this script is in.
 
@@ -87,6 +90,8 @@ $skipped = Get-ChildItem -Path $source -Recurse -File | Where-Object {
 if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir | Out-Null }
 $zipPath = Join-Path $destDir ("{0}-{1}-{2}.zip" -f $zipBase, $Version, $platform)
 if (Test-Path $zipPath) { Remove-Item $zipPath -Confirm:$false }
+# a signature of the old zip would fail for the new one: away with it
+if (Test-Path "$zipPath.minisig") { Remove-Item "$zipPath.minisig" -Confirm:$false }
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -107,3 +112,7 @@ $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
 Write-Host ("Packed {0} files into {1} ({2} MB)" -f $entries.Count, $zipPath, $sizeMB)
 Write-Host ("From the repo: {0}" -f ($fromRepo.Keys -join ', '))
 if ($skipped) { Write-Host ("Left out: {0}" -f (($skipped | ForEach-Object Name) -join ', ')) }
+# the updater installs only signed downloads; signing asks for the key's
+# password, so it's a step of its own
+Write-Host ("Next: sign it with {0} (writes {1}.minisig)" -f
+            (Join-Path $PSScriptRoot 'sign-release.ps1'), (Split-Path $zipPath -Leaf))

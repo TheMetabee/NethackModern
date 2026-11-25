@@ -486,6 +486,24 @@ make WANT_WIN_TTY=1 WANT_WIN_CURSES=1 WANT_WIN_SDL=1 WANT_DEFAULT=sdl \
 workflow `.github/workflows/modern-linux.yml` builds the AppImage the
 same way, with `sys/unix/appimage/build-appimage.sh`.
 
+### Signed releases
+
+The game's updater installs only downloads signed with the release key
+(minisign, Ed25519), and only the file the signature names. The public
+key is `sys/share/nethackmodern.pub`; the password-protected secret key
+stays off the repository. Each release has these four files:
+
+| File | Made by |
+|---|---|
+| `NetHackModern-v<version>-windows-x64.zip` | the `package` build |
+| `NetHackModern-v<version>-windows-x64.zip.minisig` | `sys\windows\vs\package\sign-release.ps1` (asks for the password) |
+| `NetHackModern-v<version>-x86_64.AppImage` | `modern-linux`, on the version tag |
+| `NetHackModern-v<version>-x86_64.AppImage.minisig` | `modern-linux`, with the `MINISIGN_KEY` and `MINISIGN_PASSWORD` secrets |
+
+Pushing a version tag makes a draft release with the AppImage and its
+signature attached; add the zip, its signature and the notes, then
+publish.
+
 ### Testing
 
 For testing, `scripts\wizard.cmd` starts the build in wizard (debug) mode
