@@ -1334,6 +1334,13 @@ fxu_init(const char *statedir, const char *version)
     fxu_copy(fxu_dir, sizeof fxu_dir, statedir ? statedir : "");
     fxu_copy(fxu_ver, sizeof fxu_ver, version);
     snprintf(fxu_agent, sizeof fxu_agent, "NetHackModern/%s", fxu_ver);
+    /* testing from the start: a download waiting from a test isn't one
+       for a normal game (see fxu_workdir) */
+    {
+        const char *env = getenv("NETHACK_UPDATE_URL");
+
+        fxu_testing = (env && *env);
+    }
 }
 
 void
@@ -1579,9 +1586,11 @@ fxu_workdir(char *buf, size_t sz)
     char tmp[MAX_PATH];
     DWORD n = GetTempPathA(sizeof tmp, tmp);
 
-    if (!n || n >= sizeof tmp || n + sizeof FXU_WORK + 2 > sz)
+    if (!n || n >= sizeof tmp || n + sizeof FXU_WORK + 8 > sz)
         return 0;
-    snprintf(buf, sz, "%s%s\\", tmp, FXU_WORK);
+    /* a test release's download stays apart, so that a game started
+       normally never installs it */
+    snprintf(buf, sz, "%s%s%s\\", tmp, FXU_WORK, fxu_testing ? "-test" : "");
     return 1;
 }
 
