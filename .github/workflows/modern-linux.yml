@@ -198,40 +198,10 @@ jobs:
           test -s "$RUNNER_TEMP/frame.png"
           grep -q "welcome to NetHack" sdl.out
 
-      # sign it with the release key: the game's updater installs only what
-      # this key signed, and only the very file the signature names (the
-      # trusted comment, "file:<name>"). The key (password-protected) and
-      # its password are repository secrets; without them (a fork, say) the
-      # AppImage is left unsigned, with a warning. The signature is checked
-      # against the public key in the repo before anything goes further.
-      - name: Sign the AppImage
-        env:
-          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
-        run: |
-          if [ -z "$MINISIGN_KEY" ]; then
-            echo "::warning::No MINISIGN_KEY secret: the AppImage is not signed"
-            exit 0
-          fi
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            --no-install-recommends minisign
-          minisign -v || true
-          key="$RUNNER_TEMP/minisign.key"
-          trap 'rm -f "$key"' EXIT
-          (umask 077 && printf '%s\n' "$MINISIGN_KEY" > "$key")
-          image=$(ls dist/*.AppImage)
-          name=$(basename "$image")
-          printf '%s\n' "$MINISIGN_PASSWORD" |
-            minisign -S -s "$key" -m "$image" -t "file:$name"
-          minisign -V -p sys/share/nethackmodern.pub -m "$image"
-          ls -l dist
-
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.image.outputs.artifact }}
-          path: |
-            dist/*.AppImage
-            dist/*.AppImage.minisig
+          path: dist/*.AppImage
           retention-days: 30
           if-no-files-found: error
 
@@ -246,6 +216,67 @@ jobs:
     outputs:
       artifact: ${{ steps.image.outputs.artifact }}
 
+  # sign the AppImage with the release key: the game's updater installs
+  # only what this key signed, and only the very file the signature names
+  # (the trusted comment, "file:<name>"). A job of its own, so the key is
+  # never where the build's tools run: it gets just the finished AppImage
+  # and uploads just the signature. The key (password-protected) and its
+  # password are repository secrets; without them (a fork, say) nothing is
+  # signed, with a warning. The signature is checked against the public
+  # key in the repo before it goes anywhere.
+  sign:
+    name: Sign the AppImage
+    needs: appimage
+    runs-on: ubuntu-latest   # (22.04 has no minisign package)
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: sys/share/nethackmodern.pub
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.appimage.outputs.artifact }}
+          path: dist
+
+      - name: Sign and check
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_KEY" ]; then
+            echo "::warning::No MINISIGN_KEY secret: the AppImage is not signed"
+            exit 0
+          fi
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            --no-install-recommends minisign
+          minisign -v || true
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$MINISIGN_KEY" > "$key")
+          image=$(ls dist/*.AppImage)
+          name=$(basename "$image")
+          # the password on minisign's input; should it want a terminal for
+          # that, it gets a pretend one from script(1)
+          if ! printf '%s\n' "$MINISIGN_PASSWORD" |
+              minisign -S -s "$key" -m "$image" -t "file:$name"; then
+            echo "Again, with a terminal for the password"
+            printf '%s\n' "$MINISIGN_PASSWORD" |
+              script -qec "minisign -S -s '$key' -m '$image' -t 'file:$name'" \
+                /dev/null
+          fi
+          minisign -V -p sys/share/nethackmodern.pub -m "$image"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.appimage.outputs.artifact }}-minisig
+          path: dist/*.AppImage.minisig
+          retention-days: 30
+          if-no-files-found: ignore
+
   # a version tag: a draft release (not published) with the AppImage and
   # its signature attached under their own names, as the game's updater
   # looks for them. Before publishing, add the Windows zip, its .minisig
@@ -253,16 +284,18 @@ jobs:
   # that may write to the repository; a re-run updates the same draft.
   release:
     name: Draft release
-    needs: appimage
+    needs: [appimage, sign]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      # the AppImage, and its signature if it was signed
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.appimage.outputs.artifact }}
+          pattern: ${{ needs.appimage.outputs.artifact }}*
+          merge-multiple: true
           path: dist
 
       - name: Files to attach
