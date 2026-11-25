@@ -70,6 +70,9 @@ a **Linux AppImage** with sound.
   ARM; neither is built yet.
 - Bring the SDL window up to NetHackW where it's behind: NetHackW still
   has the tileset picker and ASCII map modes.
+- **Update check.** The game will tell you when a new release is out
+  and let you update from inside it, with an option to turn the check
+  off.
 
 [`docs/modern/ROADMAP.md`](docs/modern/ROADMAP.md) has the full history
 and design notes.
