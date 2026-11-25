@@ -330,6 +330,8 @@ struct instance_flags {
     boolean fx_hide_inventory; /* NetHack Modern: inventory panel hidden */
     boolean fx_action_buttons; /* NetHack Modern: buttons for what can be
                                 * done here (stairs, doors, search) */
+    boolean fx_check_updates;  /* NetHack Modern: ask GitHub for a newer
+                                * release, once a day, on the title screen */
     int fx_msg_pos;            /* NetHack Modern: message corner, 0..5:
                                 * top left/centre/right, bottom
                                 * left/centre/right */

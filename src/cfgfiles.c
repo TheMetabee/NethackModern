@@ -257,6 +257,31 @@ modern_rcfile(void)
                                   player's own file */
 }
 
+/* the folder nethackmodern.rc is in (with its trailing separator), for
+   NetHack Modern's other small files; "" if there's no config file */
+const char *
+modern_rcdir(void)
+{
+    static char dir[BUFSZ];
+    char *sep;
+
+    Strcpy(dir, modern_cfg);
+    sep = strrchr(dir, '/');
+#ifdef WIN32
+    {
+        char *bs = strrchr(dir, '\\');
+
+        if (!sep || (bs && bs > sep))
+            sep = bs;
+    }
+#endif
+    if (sep)
+        sep[1] = '\0';
+    else
+        dir[0] = '\0';
+    return dir;
+}
+
 /* keep one option in nethackmodern.rc.  'setting' is what follows
    OPTIONS=, such as "fx_bar_style:gloss" or "!fx_bar_border"; 'name' is
    the bare option name.  An earlier line for it is replaced; the others

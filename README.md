@@ -70,9 +70,9 @@ a **Linux AppImage** with sound.
   ARM; neither is built yet.
 - Bring the SDL window up to NetHackW where it's behind: NetHackW still
   has the tileset picker and ASCII map modes.
-- **Update check.** The game will tell you when a new release is out
-  and let you update from inside it, with an option to turn the check
-  off.
+- **Updating from inside the game.** The title screen already says when
+  a new release is out (`fx_check_updates`); next, one click will
+  download, check and install it.
 
 [`docs/modern/ROADMAP.md`](docs/modern/ROADMAP.md) has the full history
 and design notes.
@@ -410,6 +410,7 @@ Every addition has an option, under `fx_` names in the full options list
 | `fx_death_music` | on | a mournful tune when your hero dies |
 | `fx_hide_inventory` | off | keep the inventory side panel hidden |
 | `fx_action_buttons` | on | buttons for what can be done here, above the panel |
+| `fx_check_updates` | on | look for a newer NetHack Modern once a day, on the title screen (Help > Check for updates works either way) |
 
 These are for the SDL window only:
 

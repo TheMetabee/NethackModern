@@ -3496,6 +3496,194 @@ fxv_title_shade(int y, int h)
     return (int) (a * a / 235.0); /* eased in */
 }
 
+/* ---- a newer NetHack Modern (both ports) ---------------------------- */
+
+/*
+ * The title screen asks fxupdate.c to look (at most once a day, and only
+ * with fx_check_updates on); while it looks, the screen carries on as
+ * usual. Once a newer release is known, a badge in the top left corner
+ * says so, with What's new, the download page, and Skip this version.
+ * Help > Check for updates asks at once, from the game.
+ */
+
+const char *const fxv_upd_label[FXV_UPD_NBTN] = {
+    "What's new", "Download page", "Skip this version"
+};
+const char fxv_upd_key[] = "wds"; /* a key for each (a string, so
+                                       strchr can look in it) */
+
+static void
+fxv_update_init(void)
+{
+    static boolean done;
+
+    if (!done) {
+        fxu_init(modern_rcdir(), MODERN_VERSION_STRING);
+        done = TRUE;
+    }
+}
+
+/* the title screen is up */
+void
+fxv_update_title(void)
+{
+    fxv_update_init();
+    if (iflags.fx_check_updates && fxu_status() == FXU_IDLE)
+        fxu_start(FALSE);
+}
+
+/* is the badge to be shown? If so, what it says, into text */
+boolean
+fxv_update_badge(char *text, size_t sz)
+{
+    const struct fxu_result *r;
+
+    if (!fxu_badge() || !(r = fxu_get()))
+        return FALSE;
+    Snprintf(text, sz, "NetHack Modern %s is out", r->tag);
+    return TRUE;
+}
+
+/* the badge, as left, top, right, bottom: a panel centred at the top,
+   its words along its top and its buttons in a row beneath */
+void
+fxv_update_layout(int w, int h, int panel[4], int btn[FXV_UPD_NBTN][4])
+{
+    static const int bw[FXV_UPD_NBTN] = { 150, 185, 205 };
+    double s = fxv_scr_scale(w, h);
+    int m = (int) (18 * s), pad = (int) (12 * s), gap = (int) (8 * s),
+        top = (int) (34 * s), bh = (int) (36 * s), x, i;
+
+    /* centred across the top */
+    x = 2 * pad - gap;
+    for (i = 0; i < FXV_UPD_NBTN; i++)
+        x += (int) (bw[i] * s) + gap;
+    panel[0] = (w - x) / 2, panel[1] = m;
+    x = panel[0] + pad;
+    for (i = 0; i < FXV_UPD_NBTN; i++) {
+        btn[i][0] = x, btn[i][1] = m + pad + top;
+        btn[i][2] = x + (int) (bw[i] * s), btn[i][3] = m + pad + top + bh;
+        x = btn[i][2] + gap;
+    }
+    panel[2] = x - gap + pad;
+    panel[3] = btn[0][3] + pad;
+}
+
+/* a badge button (or its key) was chosen: do it; TRUE if the badge
+   changed */
+boolean
+fxv_update_choose(int which)
+{
+    switch (which) {
+    case FXV_UPD_NEWS:
+        fxv_update_news();
+        return !fxu_badge();
+    case FXV_UPD_GET:
+        (void) fxu_open_page();
+        return FALSE;
+    case FXV_UPD_SKIP:
+        fxu_skip();
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* What's new: the release's notes in a menu, with what can be done
+   about it at the end */
+void
+fxv_update_news(void)
+{
+    const struct fxu_result *r = fxu_get();
+    winid win;
+    anything any;
+    menu_item *pick = (menu_item *) 0;
+    char buf[BUFSZ];
+    const char *p, *nl;
+    int n, what = 0;
+
+    if (!r || !r->ok)
+        return;
+    win = create_nhwindow(NHW_MENU);
+    start_menu(win, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    Snprintf(buf, sizeof buf, "NetHack Modern %s%s", r->tag,
+             r->newer ? " is out" : "");
+    add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_BOLD, NO_COLOR, buf,
+             MENU_ITEMFLAGS_NONE);
+    Snprintf(buf, sizeof buf, "(this is v%s)", MODERN_VERSION_STRING);
+    add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR, buf,
+             MENU_ITEMFLAGS_NONE);
+    add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR, "",
+             MENU_ITEMFLAGS_NONE);
+    /* the notes, a line at a time */
+    for (p = r->notes; p && *p; p = nl) {
+        size_t len;
+
+        nl = strchr(p, '\n');
+        len = nl ? (size_t) (nl - p) : strlen(p);
+        if (len >= sizeof buf)
+            len = sizeof buf - 1;
+        memcpy(buf, p, len);
+        buf[len] = '\0';
+        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR, buf,
+                 MENU_ITEMFLAGS_NONE);
+        nl = nl ? nl + 1 : p + strlen(p);
+    }
+    add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR, "",
+             MENU_ITEMFLAGS_NONE);
+    any.a_int = 1;
+    add_menu(win, &nul_glyphinfo, &any, 'd', 0, ATR_NONE, NO_COLOR,
+             r->newer ? "Open the download page" : "Open the release page",
+             MENU_ITEMFLAGS_NONE);
+    if (r->newer && !r->skipped) {
+        any.a_int = 2;
+        add_menu(win, &nul_glyphinfo, &any, 's', 0, ATR_NONE, NO_COLOR,
+                 "Skip this version", MENU_ITEMFLAGS_NONE);
+    }
+    end_menu(win, "What's new");
+    n = select_menu(win, PICK_ONE, &pick);
+    destroy_nhwindow(win);
+    if (n > 0) {
+        what = pick[0].item.a_int;
+        free((genericptr_t) pick);
+    }
+    if (what == 1)
+        (void) fxu_open_page();
+    else if (what == 2)
+        fxu_skip();
+}
+
+/* Help > Check for updates: ask GitHub now (whatever fx_check_updates
+   says) and tell the player what it says */
+void
+fxv_update_check_now(void)
+{
+    static boolean asking;
+    const struct fxu_result *r;
+    int waited = 0;
+
+    if (asking) /* (chosen again while waiting: the first will answer) */
+        return;
+    asking = TRUE;
+    fxv_update_init();
+    fxu_start(TRUE);
+    /* usually a fraction of a second; the window keeps drawing (each
+       nh_delay_output is 50ms of it), menus and all */
+    while (fxu_status() == FXU_BUSY && waited < 30000) {
+        nh_delay_output();
+        waited += 50;
+    }
+    asking = FALSE;
+    if (!(r = fxu_get()) || !r->reached)
+        pline("NetHack Modern couldn't reach GitHub to look for a newer"
+              " version.");
+    else if (r->newer)
+        fxv_update_news();
+    else
+        pline("This is the latest NetHack Modern (v%s).",
+              MODERN_VERSION_STRING);
+}
+
 /* ---- the character screen's rules and words (both ports) ---------- */
 
 /*

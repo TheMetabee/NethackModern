@@ -118,9 +118,10 @@ WINCFLAGS += -DSDL_GRAPHICS -DTILES_IN_GLYPHMAP -I../win/share \
 # the glyph-to-tile table (generated src/tile.c), for glyphinfo's tileidx
 GENTILECFILE = $(SRCDIR)/tile.c
 GENTILEOFILE = $(SRCDIR)/tile.o
-WINSRC += ../win/sdl/sdlmain.c ../win/share/fxview.c
-WINOBJ0 += $(TARGETPFX)sdlmain.o $(TARGETPFX)fxview.o
-WINLIB += $(shell pkg-config --libs $(SDL_PKGS)) -lm
+WINSRC += ../win/sdl/sdlmain.c ../win/share/fxview.c ../win/share/fxupdate.c
+WINOBJ0 += $(TARGETPFX)sdlmain.o $(TARGETPFX)fxview.o $(TARGETPFX)fxupdate.o
+# (the update check runs on a thread, and loads libcurl if it's there)
+WINLIB += $(shell pkg-config --libs $(SDL_PKGS)) -lm -lpthread -ldl
 endif
 
 ifndef WANT_WIN_QT

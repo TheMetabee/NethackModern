@@ -247,6 +247,7 @@
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="$(WinShareDir)fxview.c" />
+    <ClCompile Include="$(WinShareDir)fxupdate.c" />
     <ClCompile Include="$(RootDir)win\sdl\sdlmain.c" />
     <ClCompile Include="$(SrcDir)sfbase.c" />
     <ClCompile Include="$(SrcDir)revision.c" />

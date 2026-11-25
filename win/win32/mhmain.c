@@ -21,6 +21,7 @@
 #include "mhsplash.h"
 #include "mhcharsel.h"
 #include "mhend.h"
+#include "fxview.h" /* NetHack Modern: Help > Check for updates */
 
 typedef struct mswin_nethack_main_window {
     int mapAcsiiModeSave;
@@ -1508,6 +1509,8 @@ nh_compose_unicode_screenshot(void)
 #define TB_MSGPOS 10  /* arg: fx_msg_pos 0..5 */
 #define TB_TILES 11   /* arg: 0 built-in tiles, 1 pick a tile file */
 #define TB_MISSILES 12 /* missiles point where they fly, or not */
+#define TB_UPDNOW 13   /* look for a newer NetHack Modern now */
+#define TB_UPDAUTO 14  /* fx_check_updates: look on the title screen */
 
 extern void ma_apply_volumes(void);  /* masound.c */
 extern void ma_volume_preview(void);
@@ -1652,6 +1655,9 @@ static const struct tb_item tb_help[] = {
     TBC("Game options", "", IDM_HELP_OPTIONS),
     TBC("Long description of the game", "", IDM_HELP_LONG),
     TBC("NetHack for Windows", "", IDM_HELP_PORTHELP),
+    TBSEP,
+    { "Check for updates", "", TB_UPDNOW, NULL, 0 },
+    { "Check at startup", "", TB_UPDAUTO, NULL, 0 },
     TBSEP,
     TBC("About", "", IDM_ABOUT),
 };
@@ -1846,6 +1852,16 @@ tb_run(const struct tb_item *it)
         cfg_remember_option("fx_turn_missiles", iflags.fx_turn_missiles
                                                     ? "fx_turn_missiles"
                                                     : "!fx_turn_missiles");
+        SetTimer(tb_hwnd, 1, 1800, NULL);
+        InvalidateRect(tb_hwnd, NULL, FALSE);
+        break;
+    case TB_UPDNOW:
+        fxv_update_check_now(); /* (fxview.c) */
+        break;
+    case TB_UPDAUTO: /* (kept by fx_options_remember below) */
+        iflags.fx_check_updates = !iflags.fx_check_updates;
+        Sprintf(tb_toast, "Check at startup %s",
+                iflags.fx_check_updates ? "on" : "off");
         SetTimer(tb_hwnd, 1, 1800, NULL);
         InvalidateRect(tb_hwnd, NULL, FALSE);
         break;
@@ -2189,6 +2205,8 @@ tb_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
                           ? (iflags.fx_bar_border ? "on" : "off")
                       : (it->kind == TB_MISSILES)
                           ? (iflags.fx_turn_missiles ? "on" : "off")
+                      : (it->kind == TB_UPDAUTO)
+                          ? (iflags.fx_check_updates ? "on" : "off")
                           : it->hint,
                       -1, &r,
                       DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);

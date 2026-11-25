@@ -405,6 +405,9 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(fx_action_buttons, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_action_buttons, Term_False,
            "NetHackW: buttons for what can be done here (stairs, doors, search)")
+    NHOPTB(fx_check_updates, Advanced, 0, opt_out, set_in_game,
+           On, Yes, No, No, NoAlias, &iflags.fx_check_updates, Term_False,
+           "look for a newer NetHack Modern once a day, on the title screen")
     NHOPTB(fx_lighting, Advanced, 0, opt_out, set_in_game,
            On, Yes, No, No, NoAlias, &iflags.fx_lighting, Term_False,
            "NetHackW: soft light on the map; remembered squares dimmed")

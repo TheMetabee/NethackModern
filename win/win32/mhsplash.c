@@ -534,6 +534,13 @@ static int ms_focus = MS_PLAY, ms_hot = -1, ms_down = -1;
 static RECT ms_btn[MS_NBTN];
 #define MS_SOUND MS_NBTN /* the speaker icon, beside the buttons */
 static RECT ms_snd;
+/* a newer version: the badge in the top left corner and its buttons
+   (fxview.c); they're MS_UPD + FXV_UPD_* for focus and the mouse */
+#define MS_UPD (MS_SOUND + 1)
+#define MS_UPD_TIMER 1 /* looks at the check every half second until it
+                          has an answer */
+static boolean ms_upd;
+static RECT ms_upanel, ms_ubtn[FXV_UPD_NBTN];
 static HBITMAP ms_bg;         /* the painting, cropped, scaled, shaded */
 static int ms_bg_w, ms_bg_h;  /* ... for this size */
 
@@ -718,6 +725,71 @@ ms_button(HDC hdc, int i, double s)
 {
     mswin_ms_button(hdc, &ms_btn[i], ms_label[i], i == MS_PLAY, ms_hot == i,
                     ms_focus == i, ms_down == i && ms_hot == i, TRUE, s);
+}
+
+/* Tab and the arrows go round the buttons: Play, About, Exit, then the
+   badge's, if it's there */
+static int
+ms_next(int f, int dir)
+{
+    int order[MS_NBTN + FXV_UPD_NBTN], n = 0, i;
+
+    for (i = 0; i < MS_NBTN; i++)
+        order[n++] = i;
+    if (ms_upd)
+        for (i = 0; i < FXV_UPD_NBTN; i++)
+            order[n++] = MS_UPD + i;
+    for (i = 0; i < n; i++)
+        if (order[i] == f)
+            return order[(i + dir + n) % n];
+    return MS_PLAY;
+}
+
+/* the newer-version badge, if there's a newer version: a panel in the
+   top left corner, its words, and its buttons in a row */
+static void
+ms_update_badge(HDC hdc, int w, int h, double s, HFONT words, HFONT btn)
+{
+    char text[BUFSZ];
+    int panel[4], b[FXV_UPD_NBTN][4], i;
+    HBRUSH fill;
+    HPEN edge;
+    HGDIOBJ ob, op, of;
+    RECT r;
+
+    ms_upd = fxv_update_badge(text, sizeof text);
+    if (!ms_upd) {
+        if (ms_focus >= MS_UPD) /* (it was skipped) */
+            ms_focus = MS_PLAY;
+        return;
+    }
+    fxv_update_layout(w, h, panel, b);
+    SetRect(&ms_upanel, panel[0], panel[1], panel[2], panel[3]);
+    for (i = 0; i < FXV_UPD_NBTN; i++)
+        SetRect(&ms_ubtn[i], b[i][0], b[i][1], b[i][2], b[i][3]);
+
+    fill = CreateSolidBrush(TH_BG_APP);
+    edge = CreatePen(PS_SOLID, 1, TH_SEPARATOR);
+    ob = SelectObject(hdc, fill);
+    op = SelectObject(hdc, edge);
+    RoundRect(hdc, panel[0], panel[1], panel[2], panel[3], FXV_CORNER_GDI,
+              FXV_CORNER_GDI);
+    SelectObject(hdc, op);
+    SelectObject(hdc, ob);
+    DeleteObject(edge);
+    DeleteObject(fill);
+
+    of = SelectObject(hdc, words);
+    SetRect(&r, panel[0], panel[1] + (int) (10 * s), panel[2],
+            b[0][1] - (int) (4 * s));
+    ms_text(hdc, text, &r, DT_CENTER | DT_TOP | DT_SINGLELINE, TH_ACCENT, 1);
+    SelectObject(hdc, btn);
+    for (i = 0; i < FXV_UPD_NBTN; i++)
+        mswin_ms_button(hdc, &ms_ubtn[i], fxv_upd_label[i], FALSE,
+                        ms_hot == MS_UPD + i, ms_focus == MS_UPD + i,
+                        ms_down == MS_UPD + i && ms_hot == MS_UPD + i, TRUE,
+                        s);
+    SelectObject(hdc, of);
 }
 
 /* the shared pieces of the full-window screens (see mhcharsel.c) */
@@ -1007,6 +1079,10 @@ ms_paint(HWND hWnd, HDC hdc)
     mswin_ms_sound_rect(w, s, &ms_snd);
     mswin_ms_sound_icon(mdc, &ms_snd, ms_hot == MS_SOUND, s);
 
+    /* a newer version: the badge, top left (once the check, on its own
+       thread, has an answer; until then this just finds none) */
+    ms_update_badge(mdc, w, h, s, small_b, btn);
+
     /* the versions, bottom left */
     r.left = (int) (24 * s), r.right = w / 2;
     r.bottom = h - (int) (18 * s);
@@ -1057,12 +1133,24 @@ ms_hit(int x, int y)
             return i;
     if (PtInRect(&ms_snd, pt))
         return MS_SOUND;
+    if (ms_upd)
+        for (i = 0; i < FXV_UPD_NBTN; i++)
+            if (PtInRect(&ms_ubtn[i], pt))
+                return MS_UPD + i;
     return -1;
 }
 
 static void
 ms_choose(HWND hWnd, int i)
 {
+    if (i >= MS_UPD && i < MS_UPD + FXV_UPD_NBTN) {
+        /* What's new, the download page, or skip it */
+        (void) fxv_update_choose(i - MS_UPD);
+        GetNHApp()->hPopupWnd = hWnd;
+        SetFocus(hWnd);
+        InvalidateRect(hWnd, NULL, FALSE);
+        return;
+    }
     if (i == MS_SOUND) {
         mswin_menu_music_toggle();
         InvalidateRect(hWnd, NULL, FALSE);
@@ -1099,7 +1187,7 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             TRACKMOUSEEVENT tme;
 
             ms_hot = hot;
-            if (hot >= 0 && hot < MS_NBTN)
+            if (hot >= 0 && hot != MS_SOUND)
                 ms_focus = hot;
             tme.cbSize = sizeof tme;
             tme.dwFlags = TME_LEAVE;
@@ -1147,12 +1235,15 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         switch (wParam) {
         case VK_LEFT:
         case VK_UP:
-            ms_focus = (ms_focus + MS_NBTN - 1) % MS_NBTN;
+            ms_focus = ms_next(ms_focus, -1);
+            break;
+        case VK_TAB:
+            ms_focus = ms_next(ms_focus,
+                               (GetKeyState(VK_SHIFT) < 0) ? -1 : 1);
             break;
         case VK_RIGHT:
         case VK_DOWN:
-        case VK_TAB:
-            ms_focus = (ms_focus + 1) % MS_NBTN;
+            ms_focus = ms_next(ms_focus, 1);
             break;
         case VK_RETURN:
         case VK_SPACE:
@@ -1167,8 +1258,23 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         InvalidateRect(hWnd, NULL, FALSE);
         return 0;
-    case WM_CHAR:
-        switch (tolower((int) wParam)) {
+    case WM_TIMER:
+        /* the update check (on its own thread) has an answer: show the
+           badge if there's news, and stop looking */
+        if (wParam == MS_UPD_TIMER && fxu_status() != FXU_BUSY) {
+            KillTimer(hWnd, MS_UPD_TIMER);
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+        return 0;
+    case WM_CHAR: {
+        int c = tolower((int) wParam);
+
+        if (fxu_badge() && c && strchr(fxv_upd_key, c)) {
+            ms_choose(hWnd, MS_UPD + (int) (strchr(fxv_upd_key, c)
+                                            - fxv_upd_key));
+            return 0;
+        }
+        switch (c) {
         case 'p':
             ms_choose(hWnd, MS_PLAY);
             break;
@@ -1184,6 +1290,7 @@ ms_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             break;
         }
         return 0;
+    }
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
@@ -1239,6 +1346,11 @@ mswin_display_menu_screen(void)
     }
     mswin_menu_screen_place(main);
     mswin_menu_music_start();
+    /* is there a newer version? It's asked in the background; the timer
+       looks for the answer */
+    fxv_update_title();
+    if (fxu_status() == FXU_BUSY)
+        SetTimer(ms_hwnd, MS_UPD_TIMER, 500, NULL);
     GetNHApp()->hPopupWnd = ms_hwnd; /* the main window sends focus here */
     SetForegroundWindow(main);
     SetFocus(ms_hwnd);

@@ -138,8 +138,11 @@ static struct {
     } ovl;
     struct {                   /* the title screen, while it's up */
         boolean up;
-        int focus, hot, down;  /* FXV_TITLE_*, or SDL_TITLE_SOUND */
+        int focus, hot, down;  /* FXV_TITLE_*, SDL_TITLE_SOUND, or
+                                * SDL_TITLE_UPD + FXV_UPD_* */
         int btn[FXV_TITLE_NBTN][4], snd[4]; /* as last laid out */
+        boolean upd;           /* the newer-version badge is showing */
+        int upanel[4], ubtn[FXV_UPD_NBTN][4]; /* ... and where */
     } title;
     struct {                   /* the name and character screens */
         int mode;              /* SDL_CS_NAME or _CHAR; -1 when not up */
@@ -821,6 +824,8 @@ enum sdl_bar_kind {
     BAR_FONTS,     /* the Fonts window */
     BAR_CONDPOS,   /* fx_cond_pos: the next place, each click */
     BAR_CONDROW,   /* fx_cond_layout: row or column */
+    BAR_UPDNOW,    /* look for a newer NetHack Modern now */
+    BAR_UPDAUTO,   /* fx_check_updates: look on the title screen */
     BAR_SEP
 };
 
@@ -946,6 +951,9 @@ static const struct sdl_bar_item bar_help[] = {
     BK("Help", "?", "?"),
     BK("Extended commands", "#?", "#?\n"),
     BK("Game options", "O", "O"),
+    BSEP,
+    { "Check for updates", "", BAR_UPDNOW, NULL, 0 },
+    { "Check at startup", "", BAR_UPDAUTO, NULL, 0 },
 };
 #undef BK
 #undef BSEP
@@ -974,6 +982,12 @@ static void sdl_toggle_inven(void);
 static void sdl_thick_line(float, float, float, float, float, fxv_color);
 static void sdl_fonts_dialog(void);
 
+/* the title screen's things to point at, besides FXV_TITLE_* */
+#define SDL_TITLE_SOUND FXV_TITLE_NBTN /* the speaker, beside the buttons */
+#define SDL_TITLE_UPD (SDL_TITLE_SOUND + 1) /* the badge's buttons */
+static int sdl_title_key(int);
+static int sdl_title_next(int, int);
+
 /* is this item a setting that's on now? (it gets a tick) */
 static boolean
 sdl_bar_checked(const struct sdl_bar_item *it)
@@ -993,6 +1007,8 @@ sdl_bar_checked(const struct sdl_bar_item *it)
         return iflags.perm_invent && !iflags.fx_hide_inventory;
     case BAR_ACTIONS:
         return iflags.fx_action_buttons;
+    case BAR_UPDAUTO:
+        return iflags.fx_check_updates;
     default:
         return FALSE;
     }
@@ -1262,6 +1278,13 @@ sdl_bar_do(const struct sdl_bar_item *it)
         iflags.fx_action_buttons = !iflags.fx_action_buttons;
         fx_options_remember();
         break;
+    case BAR_UPDNOW:
+        fxv_update_check_now();
+        break;
+    case BAR_UPDAUTO: /* (kept in nethackmodern.rc at once) */
+        iflags.fx_check_updates = !iflags.fx_check_updates;
+        fx_options_remember();
+        break;
     default:
         break;
     }
@@ -1501,9 +1524,7 @@ sdl_handle_event(const SDL_Event *e)
             at = sdl_title_hit(ev.button.x, ev.button.y);
             sdl.title.down = -1, sdl.dirty = TRUE;
             if (was >= 0 && was == at)
-                sdl_push_key(at == FXV_TITLE_PLAY ? 'p'
-                             : at == FXV_TITLE_ABOUT ? 'a'
-                             : at == FXV_TITLE_EXIT ? 'x' : 'm');
+                sdl_push_key(sdl_title_key(at));
         }
         break;
     case SDL_EVENT_MOUSE_MOTION: {
@@ -1535,7 +1556,7 @@ sdl_handle_event(const SDL_Event *e)
             i = sdl_title_hit(ev.motion.x, ev.motion.y);
             if (i != sdl.title.hot) {
                 sdl.title.hot = i;
-                if (i >= 0 && i < FXV_TITLE_NBTN)
+                if (i >= 0 && i != SDL_TITLE_SOUND)
                     sdl.title.focus = i;
                 sdl.dirty = TRUE;
             }
@@ -1622,12 +1643,14 @@ sdl_handle_event(const SDL_Event *e)
             switch (k) {
             case SDLK_LEFT:
             case SDLK_UP:
-                f = (f + FXV_TITLE_NBTN - 1) % FXV_TITLE_NBTN;
+                f = sdl_title_next(f, -1);
+                break;
+            case SDLK_TAB:
+                f = sdl_title_next(f, (m & SDL_KMOD_SHIFT) ? -1 : 1);
                 break;
             case SDLK_RIGHT:
             case SDLK_DOWN:
-            case SDLK_TAB:
-                f = (f + 1) % FXV_TITLE_NBTN;
+                f = sdl_title_next(f, 1);
                 break;
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
@@ -4587,10 +4610,12 @@ sdl_music_toggle(void)
 
 /* ---- the title screen (as NetHackW's) ------------------------------ */
 
-#define SDL_TITLE_SOUND FXV_TITLE_NBTN /* the speaker, beside the buttons */
 static const char *const sdl_title_label[FXV_TITLE_NBTN] = {
     "Play NetHack Modern", "About", "Exit"
 };
+
+#define SDL_IN4(r, x, y) \
+    ((x) >= (r)[0] && (x) < (r)[2] && (y) >= (r)[1] && (y) < (r)[3])
 
 /* the button (or the speaker) at a point, or -1 */
 static int
@@ -4599,13 +4624,43 @@ sdl_title_hit(float x, float y)
     int i;
 
     for (i = 0; i < FXV_TITLE_NBTN; i++)
-        if (x >= sdl.title.btn[i][0] && x < sdl.title.btn[i][2]
-            && y >= sdl.title.btn[i][1] && y < sdl.title.btn[i][3])
+        if (SDL_IN4(sdl.title.btn[i], x, y))
             return i;
-    if (x >= sdl.title.snd[0] && x < sdl.title.snd[2]
-        && y >= sdl.title.snd[1] && y < sdl.title.snd[3])
+    if (SDL_IN4(sdl.title.snd, x, y))
         return SDL_TITLE_SOUND;
+    if (sdl.title.upd)
+        for (i = 0; i < FXV_UPD_NBTN; i++)
+            if (SDL_IN4(sdl.title.ubtn[i], x, y))
+                return SDL_TITLE_UPD + i;
     return -1;
+}
+
+/* the key a title screen button stands for */
+static int
+sdl_title_key(int at)
+{
+    if (at >= SDL_TITLE_UPD && at < SDL_TITLE_UPD + FXV_UPD_NBTN)
+        return fxv_upd_key[at - SDL_TITLE_UPD];
+    return (at == FXV_TITLE_PLAY) ? 'p' : (at == FXV_TITLE_ABOUT) ? 'a'
+           : (at == FXV_TITLE_EXIT) ? 'x' : 'm';
+}
+
+/* Tab and the arrows go round the buttons: Play, About, Exit, then the
+   badge's, if it's there */
+static int
+sdl_title_next(int f, int dir)
+{
+    int order[FXV_TITLE_NBTN + FXV_UPD_NBTN], n = 0, i;
+
+    for (i = 0; i < FXV_TITLE_NBTN; i++)
+        order[n++] = i;
+    if (sdl.title.upd)
+        for (i = 0; i < FXV_UPD_NBTN; i++)
+            order[n++] = SDL_TITLE_UPD + i;
+    for (i = 0; i < n; i++)
+        if (order[i] == f)
+            return order[(i + dir + n) % n];
+    return FXV_TITLE_PLAY;
 }
 
 static void
@@ -4642,6 +4697,29 @@ sdl_draw_title(void)
                    sdl.title.focus == i,
                    sdl.title.down == i && sdl.title.hot == i, TRUE, s);
     sdl_sound_icon(sdl.title.snd, sdl.title.hot == SDL_TITLE_SOUND, s);
+
+    /* a newer version: the badge, top left (once the check, on its own
+       thread, has an answer; until then this just finds none) */
+    sdl.title.upd = fxv_update_badge(buf, sizeof buf);
+    if (sdl.title.upd) {
+        fxv_update_layout(w, h, sdl.title.upanel, sdl.title.ubtn);
+        sdl_edged(sdl.title.upanel, FXV_RGB(16, 18, 24), FXV_RGB(52, 58, 70),
+                  1);
+        f = sdl_face(SDL_FACE_UI_BOLD, max(10, (int) (17 * s)));
+        (void) sdl_face_text(f, buf,
+                             (sdl.title.upanel[0] + sdl.title.upanel[2]) / 2,
+                             sdl.title.upanel[1] + (int) (12 * s), 1, accent,
+                             1);
+        for (i = 0; i < FXV_UPD_NBTN; i++) {
+            int at = SDL_TITLE_UPD + i;
+
+            sdl_button(sdl.title.ubtn[i], fxv_upd_label[i], FALSE,
+                       sdl.title.hot == at, sdl.title.focus == at,
+                       sdl.title.down == at && sdl.title.hot == at, TRUE, s);
+        }
+    } else if (sdl.title.focus >= SDL_TITLE_UPD) {
+        sdl.title.focus = FXV_TITLE_PLAY; /* (it was skipped) */
+    }
 
     /* the versions, bottom left; the copyright, bottom right */
     m = (int) (24 * s);
@@ -4690,14 +4768,17 @@ sdl_title_screen(void)
     sdl.title.up = TRUE;
     sdl.title.focus = FXV_TITLE_PLAY, sdl.title.hot = sdl.title.down = -1;
     sdl_music_sync();
+    fxv_update_title(); /* is there a newer version? (in the background) */
     for (;;) {
         sdl.dirty = TRUE;
         c = sdl_wait_key();
         if (c == '\n' || c == '\r' || c == ' ')
-            c = (sdl.title.focus == FXV_TITLE_ABOUT) ? 'a'
-                : (sdl.title.focus == FXV_TITLE_EXIT) ? 'x' : 'p';
+            c = sdl_title_key(sdl.title.focus);
         c = lowc(c);
-        if (c == 'p') {
+        if (fxu_badge() && c && strchr(fxv_upd_key, c)) {
+            (void) fxv_update_choose((int) (strchr(fxv_upd_key, c)
+                                            - fxv_upd_key));
+        } else if (c == 'p') {
             sdl_play_again = TRUE; /* a finished game comes back here */
             break;
         }
