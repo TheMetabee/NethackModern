@@ -70,9 +70,10 @@ a **Linux AppImage** with sound.
   ARM; neither is built yet.
 - Bring the SDL window up to NetHackW where it's behind: NetHackW still
   has the tileset picker and ASCII map modes.
-- **Updating from inside the game.** The title screen already says when
-  a new release is out (`fx_check_updates`); next, one click will
-  download, check and install it.
+- **Try the updater on a real release.** The title screen says when a
+  new release is out (`fx_check_updates`), and Update and restart
+  downloads it, checks its signature and installs it (the Windows zip
+  install and the Linux AppImage); it has only met test releases so far.
 
 [`docs/modern/ROADMAP.md`](docs/modern/ROADMAP.md) has the full history
 and design notes.

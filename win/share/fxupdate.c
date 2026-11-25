@@ -46,11 +46,14 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
 
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -854,13 +857,13 @@ fxu_read_file(const char *path)
 /* where what's fetched goes, a piece at a time: 0 to stop */
 typedef int (*fxu_sink_fn)(void *ud, const char *p, size_t n);
 
-#ifdef _WIN32
-
 static int
 fxu_sink_mem(void *ud, const char *p, size_t n)
 {
     return fxu_put((struct fxu_buf *) ud, p, n);
 }
+
+#ifdef _WIN32
 
 /* GET url, handing what comes to sink; *total (if given) is set from the
    reply's length, when it says; 1 if it all came */
@@ -985,16 +988,27 @@ typedef int (*fxu_curl_setopt_fn)(void *, int, ...);
 typedef int (*fxu_curl_perform_fn)(void *);
 typedef void (*fxu_curl_cleanup_fn)(void *);
 
+#define FXU_CURLOPT_LOW_SPEED_LIMIT 19
+#define FXU_CURLOPT_LOW_SPEED_TIME 20
+
+struct fxu_curl_to {
+    fxu_sink_fn sink;
+    void *ud;
+};
+
 static size_t
 fxu_curl_write(char *p, size_t size, size_t n, void *ud)
 {
-    return fxu_put((struct fxu_buf *) ud, p, size * n) ? size * n : 0;
+    struct fxu_curl_to *to = (struct fxu_curl_to *) ud;
+
+    return to->sink(to->ud, p, size * n) ? size * n : 0;
 }
 
-/* 1 if libcurl was there and answered (*out set, or null on failure);
-   0 if there's no libcurl */
+/* GET url with libcurl, if the system has it, handing what comes to
+   sink: 1 if it all came, 0 if not, -1 if there's no libcurl. 'big' (a
+   download) has no time limit, only a limit on stalling */
 static int
-fxu_fetch_libcurl(const char *url, char **out)
+fxu_fetch_libcurl(const char *url, fxu_sink_fn sink, void *ud, int big)
 {
     static const char *const libs[] = {
         "libcurl.so.4", "libcurl-gnutls.so.4", "libcurl.so", 0
@@ -1004,14 +1018,13 @@ fxu_fetch_libcurl(const char *url, char **out)
     fxu_curl_setopt_fn c_set;
     fxu_curl_perform_fn c_perform;
     fxu_curl_cleanup_fn c_cleanup;
-    struct fxu_buf b = { 0, 0, 0, 0 };
+    struct fxu_curl_to to;
     int i, rc;
 
-    *out = 0;
     for (i = 0; libs[i] && !lib; i++)
         lib = dlopen(libs[i], RTLD_NOW | RTLD_LOCAL);
     if (!lib)
-        return 0;
+        return -1;
     /* (dlsym gives a data pointer; ISO C won't cast one to a function
        pointer, so its bytes are copied, as POSIX suggests) */
 #define FXU_SYM(var, name) \
@@ -1026,36 +1039,36 @@ fxu_fetch_libcurl(const char *url, char **out)
 #undef FXU_SYM
     if (!c_init || !c_set || !c_perform || !c_cleanup || !(h = c_init())) {
         dlclose(lib);
-        return 0;
+        return -1;
     }
+    to.sink = sink, to.ud = ud;
     (void) c_set(h, FXU_CURLOPT_URL, url);
     (void) c_set(h, FXU_CURLOPT_USERAGENT, fxu_agent);
     (void) c_set(h, FXU_CURLOPT_WRITEFUNCTION, fxu_curl_write);
-    (void) c_set(h, FXU_CURLOPT_WRITEDATA, (void *) &b);
+    (void) c_set(h, FXU_CURLOPT_WRITEDATA, (void *) &to);
     (void) c_set(h, FXU_CURLOPT_FOLLOWLOCATION, 1L);
     (void) c_set(h, FXU_CURLOPT_MAXREDIRS, 5L);
     (void) c_set(h, FXU_CURLOPT_FAILONERROR, 1L);
     (void) c_set(h, FXU_CURLOPT_CONNECTTIMEOUT, 8L);
-    (void) c_set(h, FXU_CURLOPT_TIMEOUT, 20L);
+    if (big) { /* give up only if under 1 KB a second for 30 seconds */
+        (void) c_set(h, FXU_CURLOPT_LOW_SPEED_LIMIT, 1024L);
+        (void) c_set(h, FXU_CURLOPT_LOW_SPEED_TIME, 30L);
+    } else {
+        (void) c_set(h, FXU_CURLOPT_TIMEOUT, 20L);
+    }
     (void) c_set(h, FXU_CURLOPT_NOSIGNAL, 1L); /* we're not the main thread */
     rc = c_perform(h);
     c_cleanup(h);
     /* (libcurl stays loaded: unloading it can upset its TLS library) */
-    if (rc != 0 || b.over) {
-        free(b.p);
-        return 1;
-    }
-    *out = b.p;
-    return 1;
+    return rc == 0;
 }
 
-/* a program's output (curl or wget), or null */
-static char *
-fxu_fetch_program(const char *argv[])
+/* a program's output (curl or wget) handed to sink; 1 if it all came */
+static int
+fxu_fetch_program(const char *argv[], fxu_sink_fn sink, void *ud)
 {
-    struct fxu_buf b = { 0, 0, 0, 0 };
-    char tmp[8192];
-    int fd[2], status = 0;
+    char tmp[16384];
+    int fd[2], status = 0, ok = 1;
     ssize_t n;
     pid_t pid;
 
@@ -1080,32 +1093,49 @@ fxu_fetch_program(const char *argv[])
     }
     close(fd[1]);
     while ((n = read(fd[0], tmp, sizeof tmp)) > 0)
-        if (!fxu_put(&b, tmp, (size_t) n))
+        if (!sink(ud, tmp, (size_t) n)) {
+            ok = 0;
+            kill(pid, SIGTERM);
             break;
+        }
     close(fd[0]);
     (void) waitpid(pid, &status, 0);
-    if (b.over || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        free(b.p);
-        return 0;
-    }
-    return b.p;
+    return ok && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+/* GET url by whatever this system has: libcurl, else curl, else wget */
+static int
+fxu_net_get(const char *url, fxu_sink_fn sink, void *ud, int big)
+{
+    const char *curl[] = { "curl", "-sfL", "-A", 0, 0, 0, 0, 0, 0, 0 };
+    const char *wget[] = { "wget", "-q", "-O", "-", "--timeout=30", "-U",
+                           0, 0, 0 };
+    int got = fxu_fetch_libcurl(url, sink, ud, big);
+
+    if (got >= 0)
+        return got;
+    curl[3] = fxu_agent;
+    if (big) /* (as for libcurl: no limit but stalling) */
+        curl[4] = "--speed-limit", curl[5] = "1024",
+        curl[6] = "--speed-time", curl[7] = "30", curl[8] = url;
+    else
+        curl[4] = "--max-time", curl[5] = "20", curl[6] = url;
+    if (fxu_fetch_program(curl, sink, ud))
+        return 1;
+    wget[6] = fxu_agent, wget[7] = url;
+    return fxu_fetch_program(wget, sink, ud);
 }
 
 static char *
 fxu_fetch_net(const char *url)
 {
-    char *got;
-    const char *curl[] = { "curl", "-sfL", "--max-time", "20", "-A", 0, 0, 0 };
-    const char *wget[] = { "wget", "-q", "-O", "-", "--timeout=20", "-U",
-                           0, 0, 0 };
+    struct fxu_buf b = { 0, 0, 0, 0 };
 
-    if (fxu_fetch_libcurl(url, &got))
-        return got;
-    curl[5] = fxu_agent, curl[6] = url;
-    if ((got = fxu_fetch_program(curl)) != 0)
-        return got;
-    wget[6] = fxu_agent, wget[7] = url;
-    return fxu_fetch_program(wget);
+    if (!fxu_net_get(url, fxu_sink_mem, &b, 0) || b.over) {
+        free(b.p);
+        return 0;
+    }
+    return b.p ? b.p : fxu_strdup("");
 }
 
 #endif /* !_WIN32 */
@@ -1446,10 +1476,97 @@ fxu_job_error(void)
     return (FXU_ALOAD(fxu_jst) == FXU_JOB_FAILED) ? fxu_jerr : "";
 }
 
-#ifdef _WIN32
-
 /* what the job is fetching: set before it starts, then only read */
 static char fxu_jtag[40], fxu_jname[200], fxu_jbase[1100];
+
+static void
+fxu_job_fail(const char *why)
+{
+    fxu_copy(fxu_jerr, sizeof fxu_jerr, why);
+    FXU_ASTORE(fxu_jst, FXU_JOB_FAILED); /* last: fxu_jerr is written */
+}
+
+static int
+fxu_sink_file(void *ud, const char *p, size_t n)
+{
+    if (fwrite(p, 1, n, (FILE *) ud) != n)
+        return 0;
+    FXU_AADD(fxu_jdone, (long) n);
+    return 1;
+}
+
+/* url (or, testing, a local file) into fp, counting as it comes */
+static int
+fxu_fetch_to(const char *url, FILE *fp)
+{
+    if (strncmp(url, "https://", 8) && strncmp(url, "http://", 7)) {
+        char tmp[65536];
+        size_t n;
+        int ok = 1;
+        FILE *in = fopen(url, "rb");
+
+        if (!in)
+            return 0;
+        while ((n = fread(tmp, 1, sizeof tmp, in)) > 0)
+            if (!fxu_sink_file(fp, tmp, n)) {
+                ok = 0;
+                break;
+            }
+        fclose(in);
+        return ok;
+    }
+#ifdef _WIN32
+    return fxu_http_get(url, fxu_sink_file, fp, (long *) 0);
+#else
+    return fxu_net_get(url, fxu_sink_file, fp, 1);
+#endif
+}
+
+/* the signature, then the download into 'path' (created), checked: 1 if
+   it's ours; else the job has failed, saying why */
+static int
+fxu_job_fetch(const char *path)
+{
+    char url[1400], why[160], msg[sizeof fxu_jerr];
+    char *sigtext;
+    FILE *fp;
+    int ok;
+
+    /* the signature first: it's small, and without it there's no point */
+    snprintf(url, sizeof url, "%s%s.minisig", fxu_jbase, fxu_jname);
+    if (!(sigtext = fxu_fetch(url))) {
+        fxu_job_fail("its signature could not be downloaded");
+        return 0;
+    }
+    if (!(fp = fopen(path, "wb"))) {
+        free(sigtext);
+        fxu_job_fail("the download can't be saved");
+        return 0;
+    }
+    snprintf(url, sizeof url, "%s%s", fxu_jbase, fxu_jname);
+    ok = fxu_fetch_to(url, fp);
+    if (fclose(fp) != 0)
+        ok = 0;
+    if (!ok) {
+        (void) remove(path);
+        free(sigtext);
+        fxu_job_fail("the download broke off");
+        return 0;
+    }
+    /* is it ours? */
+    FXU_ASTORE(fxu_jst, FXU_JOB_VERIFY);
+    ok = fxu_verify(path, sigtext, fxu_jname, why, sizeof why);
+    free(sigtext);
+    if (!ok) {
+        (void) remove(path);
+        snprintf(msg, sizeof msg, "it was refused: %s", why);
+        fxu_job_fail(msg);
+        return 0;
+    }
+    return 1;
+}
+
+#ifdef _WIN32
 
 #define FXU_ZIP_TOP "NethackModernW"   /* the folder inside the zip */
 #define FXU_OLD_LIST "nethackmodern-update-old.txt"
@@ -1613,45 +1730,6 @@ fxu_can_update(void)
     return 1;
 }
 
-static void
-fxu_job_fail(const char *why)
-{
-    fxu_copy(fxu_jerr, sizeof fxu_jerr, why);
-    FXU_ASTORE(fxu_jst, FXU_JOB_FAILED); /* last: fxu_jerr is written */
-}
-
-static int
-fxu_sink_file(void *ud, const char *p, size_t n)
-{
-    if (fwrite(p, 1, n, (FILE *) ud) != n)
-        return 0;
-    FXU_AADD(fxu_jdone, (long) n);
-    return 1;
-}
-
-/* url (or, testing, a local file) into fp, counting as it comes */
-static int
-fxu_fetch_to(const char *url, FILE *fp)
-{
-    if (strncmp(url, "https://", 8) && strncmp(url, "http://", 7)) {
-        char tmp[65536];
-        size_t n;
-        int ok = 1;
-        FILE *in = fopen(url, "rb");
-
-        if (!in)
-            return 0;
-        while ((n = fread(tmp, 1, sizeof tmp, in)) > 0)
-            if (!fxu_sink_file(fp, tmp, n)) {
-                ok = 0;
-                break;
-            }
-        fclose(in);
-        return ok;
-    }
-    return fxu_http_get(url, fxu_sink_file, fp, (long *) 0);
-}
-
 /* run a program (its full command line), hidden; 1 if it ended well */
 static int
 fxu_run(char *cmd, DWORD wait_ms)
@@ -1678,10 +1756,8 @@ fxu_run(char *cmd, DWORD wait_ms)
 static void
 fxu_job_run(void)
 {
-    char dir[MAX_PATH], zip[MAX_PATH + 256], url[1400], unpack[MAX_PATH + 16],
-        probe[MAX_PATH + 64], cmd[3 * MAX_PATH + 64], why[160],
-        msg[sizeof fxu_jerr];
-    char *sigtext;
+    char dir[MAX_PATH], zip[MAX_PATH + 256], unpack[MAX_PATH + 16],
+        probe[MAX_PATH + 64], cmd[3 * MAX_PATH + 64];
     FILE *fp;
     int ok;
 
@@ -1693,39 +1769,10 @@ fxu_job_run(void)
     snprintf(probe, sizeof probe, "%sready.txt", dir);
     (void) DeleteFileA(probe); /* (nothing is ready until this ends) */
 
-    /* the signature first: it's small, and without it there's no point */
-    snprintf(url, sizeof url, "%s%s.minisig", fxu_jbase, fxu_jname);
-    if (!(sigtext = fxu_fetch(url))) {
-        fxu_job_fail("its signature could not be downloaded");
-        return;
-    }
+    /* the signature, the zip, the check (shared with Linux) */
     snprintf(zip, sizeof zip, "%s%s", dir, fxu_jname);
-    if (!(fp = fopen(zip, "wb"))) {
-        free(sigtext);
-        fxu_job_fail("the temporary folder can't be written to");
+    if (!fxu_job_fetch(zip))
         return;
-    }
-    snprintf(url, sizeof url, "%s%s", fxu_jbase, fxu_jname);
-    ok = fxu_fetch_to(url, fp);
-    if (fclose(fp) != 0)
-        ok = 0;
-    if (!ok) {
-        (void) DeleteFileA(zip);
-        free(sigtext);
-        fxu_job_fail("the download broke off");
-        return;
-    }
-
-    /* is it ours? */
-    FXU_ASTORE(fxu_jst, FXU_JOB_VERIFY);
-    ok = fxu_verify(zip, sigtext, fxu_jname, why, sizeof why);
-    free(sigtext);
-    if (!ok) {
-        (void) DeleteFileA(zip);
-        snprintf(msg, sizeof msg, "it was refused: %s", why);
-        fxu_job_fail(msg);
-        return;
-    }
 
     /* only now, unpacked (by Windows' own tar) */
     FXU_ASTORE(fxu_jst, FXU_JOB_UNPACK);
@@ -1766,42 +1813,16 @@ fxu_job_thread(LPVOID arg)
     return 0;
 }
 
-void
-fxu_update_start(void)
+/* the job on a thread of its own; 0 if it can't be */
+static int
+fxu_job_spawn(void)
 {
-    const struct fxu_result *r = fxu_get();
-    int st = (int) FXU_ALOAD(fxu_jst);
-    HANDLE t;
+    HANDLE t = CreateThread(NULL, 0, fxu_job_thread, NULL, 0, NULL);
 
-    if (!fxu_can_update()
-        || (st != FXU_JOB_NONE && st != FXU_JOB_FAILED))
-        return; /* (can't, or under way, or done) */
-    fxu_copy(fxu_jtag, sizeof fxu_jtag, r->tag);
-    fxu_asset_name(r->tag, fxu_jname, sizeof fxu_jname);
-    if (fxu_testing) {
-        /* a test release: its files beside its JSON */
-        char *sep;
-
-        fxu_copy(fxu_jbase, sizeof fxu_jbase, fxu_url);
-        sep = strrchr(fxu_jbase, '/');
-        if (!sep || strrchr(fxu_jbase, '\\') > sep)
-            sep = strrchr(fxu_jbase, '\\');
-        if (sep)
-            sep[1] = '\0';
-        else
-            fxu_jbase[0] = '\0';
-    } else {
-        /* made here from the tag, never taken from the reply */
-        snprintf(fxu_jbase, sizeof fxu_jbase, "%s/download/%s/",
-                 FXU_PAGE_URL, r->tag);
-    }
-    FXU_ASTORE(fxu_jdone, 0);
-    FXU_ASTORE(fxu_jtotal, r->dl_size);
-    FXU_ASTORE(fxu_jst, FXU_JOB_DOWNLOAD);
-    if ((t = CreateThread(NULL, 0, fxu_job_thread, NULL, 0, NULL)) != 0)
-        CloseHandle(t);
-    else
-        fxu_job_fail("it could not be started");
+    if (!t)
+        return 0;
+    CloseHandle(t); /* it ends by itself */
+    return 1;
 }
 
 /* the version a finished download is for, if there is one */
@@ -1974,35 +1995,219 @@ fxu_cleanup(void)
     free(keep.p);
 }
 
-#else /* !_WIN32: the AppImage's way comes later */
+const char *
+fxu_restart_path(void)
+{
+    return (const char *) 0; /* (the .exe is where it was: as ever) */
+}
+
+#else /* !_WIN32: the AppImage */
+
+/*
+ * On Linux, only the AppImage updates itself: it's a single file, and
+ * its launcher says where it is ($APPIMAGE). The new one is downloaded
+ * beside it (the same folder, so the same file system), checked, made
+ * runnable and only then given its waiting name, with a marker saying
+ * which version it is. Installing is one rename over the old file, which
+ * on Linux happens whole or not at all; the running game carries on from
+ * the old file (it's kept until nothing has it open). A distribution's
+ * or a source build has no $APPIMAGE: it gets the release page.
+ */
+#define FXU_PART ".nethackmodern-update.part"
+#define FXU_NEW ".nethackmodern-update.AppImage"
+#define FXU_READY ".nethackmodern-update.ready"
+
+static char fxu_restart[1024]; /* the AppImage, once updated: run it */
+
+/* the AppImage this game runs from, and its folder (ending in '/') */
+static int
+fxu_appimage(char *path, size_t psz, char *dir, size_t dsz)
+{
+    const char *a = getenv("APPIMAGE");
+    struct stat sb;
+
+    if (!a || a[0] != '/' || strlen(a) >= psz || strlen(a) >= dsz
+        || stat(a, &sb) != 0 || !S_ISREG(sb.st_mode))
+        return 0;
+    strcpy(path, a);
+    strcpy(dir, a);
+    strrchr(dir, '/')[1] = '\0';
+    return 1;
+}
+
+/* dir/name into buf; 0 if it won't fit */
+static int
+fxu_in(char *buf, size_t sz, const char *dir, const char *name)
+{
+    return snprintf(buf, sz, "%s%s", dir, name) < (int) sz;
+}
 
 int
 fxu_can_update(void)
 {
+    const struct fxu_result *r = fxu_get();
+    char path[1024], dir[1024];
+
+    if (!r || !r->ok || !r->newer || r->dl_size <= 0 || !r->dl_signed)
+        return 0;
+    /* an AppImage, in a folder the player may write in */
+    return fxu_appimage(path, sizeof path, dir, sizeof dir)
+           && access(dir, W_OK) == 0;
+}
+
+/* the job: the signature, the AppImage, the check, then it waits */
+static void
+fxu_job_run(void)
+{
+    char path[1024], dir[1024], part[1100], neu[1100], ready[1100];
+    FILE *fp;
+
+    if (!fxu_appimage(path, sizeof path, dir, sizeof dir)
+        || !fxu_in(part, sizeof part, dir, FXU_PART)
+        || !fxu_in(neu, sizeof neu, dir, FXU_NEW)
+        || !fxu_in(ready, sizeof ready, dir, FXU_READY)) {
+        fxu_job_fail("the AppImage can't be found");
+        return;
+    }
+    (void) remove(ready); /* (nothing is ready until this ends) */
+    if (!fxu_job_fetch(part))
+        return;
+    /* runnable, and then under its waiting name: only a whole, checked
+       file ever has it */
+    FXU_ASTORE(fxu_jst, FXU_JOB_UNPACK);
+    if (chmod(part, 0755) != 0 || rename(part, neu) != 0) {
+        (void) remove(part);
+        fxu_job_fail("it can't be saved beside the game");
+        return;
+    }
+    if ((fp = fopen(ready, "w")) != 0) {
+        fprintf(fp, "%s\n", fxu_jtag);
+        fclose(fp);
+    }
+    FXU_ASTORE(fxu_jst, FXU_JOB_READY);
+}
+
+static void *
+fxu_job_thread(void *arg)
+{
+    (void) arg;
+    fxu_job_run();
     return 0;
 }
 
-void
-fxu_update_start(void)
+/* the job on a thread of its own; 0 if it can't be */
+static int
+fxu_job_spawn(void)
 {
+    pthread_t t;
+
+    if (pthread_create(&t, NULL, fxu_job_thread, NULL) != 0)
+        return 0;
+    (void) pthread_detach(t); /* it ends by itself */
+    return 1;
 }
 
 int
 fxu_pending(void)
 {
+    char path[1024], dir[1024], neu[1100], ready[1100], tag[40], *t, *e;
+    struct stat sb;
+
+    if (!fxu_appimage(path, sizeof path, dir, sizeof dir)
+        || !fxu_in(neu, sizeof neu, dir, FXU_NEW)
+        || !fxu_in(ready, sizeof ready, dir, FXU_READY)
+        || !(t = fxu_read_file(ready)))
+        return 0;
+    if ((e = strpbrk(t, "\r\n")) != 0)
+        *e = '\0';
+    fxu_copy(tag, sizeof tag, t);
+    free(t);
+    if (fxu_tag_ok(tag) && fxu_compare(tag, fxu_ver) > 0
+        && stat(neu, &sb) == 0 && S_ISREG(sb.st_mode)) {
+        fxu_copy(fxu_jtag, sizeof fxu_jtag, tag);
+        return 1;
+    }
+    /* for this version or an older one: done with */
+    (void) remove(neu);
+    (void) remove(ready);
     return 0;
 }
 
 int
 fxu_install(char *why, size_t whysz)
 {
-    fxu_copy(why, whysz, "not on this system yet");
-    return 0;
+    char path[1024], dir[1024], neu[1100], ready[1100];
+
+    why[0] = '\0';
+    if (!fxu_appimage(path, sizeof path, dir, sizeof dir)
+        || !fxu_in(neu, sizeof neu, dir, FXU_NEW)
+        || !fxu_in(ready, sizeof ready, dir, FXU_READY)) {
+        fxu_copy(why, whysz, "the AppImage can't be found");
+        return 0;
+    }
+    /* the one step: all of the new file in place of the old, or nothing */
+    if (rename(neu, path) != 0) {
+        snprintf(why, whysz, "%s", strerror(errno));
+        return 0;
+    }
+    (void) remove(ready);
+    fxu_copy(fxu_restart, sizeof fxu_restart, path);
+    return 1;
 }
 
 void
 fxu_cleanup(void)
 {
+    char path[1024], dir[1024], part[1100];
+
+    /* a download cut off when the game closed */
+    if (fxu_appimage(path, sizeof path, dir, sizeof dir)
+        && fxu_in(part, sizeof part, dir, FXU_PART))
+        (void) remove(part);
+}
+
+/* after an update, the game starts again from this (the new AppImage):
+   not from the running program, which is the old one's */
+const char *
+fxu_restart_path(void)
+{
+    return fxu_restart[0] ? fxu_restart : (const char *) 0;
 }
 
 #endif /* !_WIN32 */
+
+/* start downloading the release found (both systems) */
+void
+fxu_update_start(void)
+{
+    const struct fxu_result *r = fxu_get();
+    int st = (int) FXU_ALOAD(fxu_jst);
+
+    if (!fxu_can_update()
+        || (st != FXU_JOB_NONE && st != FXU_JOB_FAILED))
+        return; /* (can't, or under way, or done) */
+    fxu_copy(fxu_jtag, sizeof fxu_jtag, r->tag);
+    fxu_asset_name(r->tag, fxu_jname, sizeof fxu_jname);
+    if (fxu_testing) {
+        /* a test release: its files beside its JSON */
+        char *sep;
+
+        fxu_copy(fxu_jbase, sizeof fxu_jbase, fxu_url);
+        sep = strrchr(fxu_jbase, '/');
+        if (!sep || strrchr(fxu_jbase, '\\') > sep)
+            sep = strrchr(fxu_jbase, '\\');
+        if (sep)
+            sep[1] = '\0';
+        else
+            fxu_jbase[0] = '\0';
+    } else {
+        /* made here from the tag, never taken from the reply */
+        snprintf(fxu_jbase, sizeof fxu_jbase, "%s/download/%s/",
+                 FXU_PAGE_URL, r->tag);
+    }
+    FXU_ASTORE(fxu_jdone, 0);
+    FXU_ASTORE(fxu_jtotal, r->dl_size);
+    FXU_ASTORE(fxu_jst, FXU_JOB_DOWNLOAD);
+    if (!fxu_job_spawn())
+        fxu_job_fail("it could not be started");
+}

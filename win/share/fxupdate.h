@@ -92,5 +92,8 @@ int fxu_pending(void);
 int fxu_install(char *why, size_t whysz);
 /* remove what earlier updates left (running files renamed *.old) */
 void fxu_cleanup(void);
+/* once installed, where to start the game again from, if not the usual
+   way: the new AppImage (the running program is still the old one's) */
+const char *fxu_restart_path(void);
 
 #endif /* FXUPDATE_H */

@@ -6448,8 +6448,16 @@ sdl_relaunch(void)
 {
 #ifdef __linux__
     if (sdl_play_again && sdl_argv && !sdl.closing
-        && !getenv("NETHACK_SDL_KEYS")) /* (not when testing) */
+        && !getenv("NETHACK_SDL_KEYS")) { /* (not when testing) */
+        /* after an update, the new AppImage: this program is the old
+           one's (still mounted), so starting it again would bring the
+           old version back */
+        const char *upd = fxu_restart_path();
+
+        if (upd)
+            (void) execv(upd, sdl_argv);
         (void) execv("/proc/self/exe", sdl_argv);
+    }
 #elif defined(_WIN32)
     /* no exec on Windows: start a new copy, and this one ends */
     if (sdl_play_again && sdl_argv && !sdl.closing
