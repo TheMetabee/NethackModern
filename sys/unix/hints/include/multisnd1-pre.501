@@ -33,7 +33,7 @@ SNDLIBOBJ += $(MASOUNDOBJ)
 LIBS += -lpthread -lm -ldl
 ifdef MAKEFILE_TOP
 POSTINSTALL+= mkdir -p $(INSTDIR)/sounds && \
-		cp sound/modern/*.wav sound/modern/*.flac sound/modern/*.mp3 \
+		cp sound/modern/*.ogg sound/modern/*.mp3 \
 		   sound/modern/attributions.txt $(INSTDIR)/sounds/;
 endif   # MAKEFILE_TOP
 endif   # WANT_MINIAUDIO

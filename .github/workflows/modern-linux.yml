@@ -54,8 +54,8 @@ jobs:
           test -f nhdat
           test -f sysconf
           ./nethack --version
-          test -f sounds/hit_1.wav
-          test -f sounds/amb_cave.flac
+          test -f sounds/hit_1.ogg
+          test -f sounds/amb_cave.ogg
           test -f sounds/attributions.txt
           n=$(ls sounds | wc -l)
           echo "sounds installed: $n"
@@ -186,7 +186,7 @@ jobs:
           test -L "$dir/nhdat"
           test -f "$dir/sysconf"
           test -d "$dir/save"
-          test -f "$dir/sounds/hit_1.wav"
+          test -f "$dir/sounds/hit_1.ogg"
           test -f "$dir/tiles.bmp"
           test -f "$dir/splash_art.png"
           test -f "$dir/fonts/DejaVuSansMono.ttf"

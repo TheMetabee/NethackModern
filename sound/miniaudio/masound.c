@@ -80,7 +80,7 @@ struct sound_procs miniaudio_procs = {
     ma_verbal,
 };
 
-/* sample groups: files <name>_1.wav .. <name>_N.wav */
+/* sample groups: files <name>_1.ogg .. <name>_N.ogg */
 enum ma_group {
     MAG_HIT, MAG_HURT, MAG_MISS, MAG_DEATH, MAG_HIT_COLD, MAG_HIT_MAGIC,
     MAG_HIT_FIRE, MAG_DOOR_OPEN, MAG_DOOR_CLOSE, MAG_HEAR, MAG_SWAP,
@@ -92,7 +92,7 @@ static const char *const ma_group_names[MAG_COUNT] = {
 };
 #define MA_MAXVAR 9
 
-/* core sound effect names (seffects.h), so any se_<name>_N.wav dropped
+/* core sound effect names (seffects.h), so any se_<name>_N.ogg dropped
    into the sounds folder plays for that effect */
 struct ma_semap {
     enum sound_effect_entries seid;
@@ -134,7 +134,7 @@ ma_dir_has_samples(const char *dir)
 {
     char path[MA_PATHMAX + 32];
 
-    Snprintf(path, sizeof path, "%s%s_1.wav", dir, ma_group_names[MAG_HIT]);
+    Snprintf(path, sizeof path, "%s%s_1.ogg", dir, ma_group_names[MAG_HIT]);
     return ma_file_exists(path);
 }
 
@@ -211,7 +211,7 @@ ma_init_nhsound(void)
     if (ma_find_dir()) {
         for (g = 0; g < MAG_COUNT; g++) {
             for (v = 1; v <= MA_MAXVAR; v++) {
-                Snprintf(path, sizeof path, "%s%s_%d.wav", ma.dir,
+                Snprintf(path, sizeof path, "%s%s_%d.ogg", ma.dir,
                          ma_group_names[g], v);
                 if (!ma_file_exists(path))
                     break;
@@ -265,7 +265,7 @@ ma_play_group(enum ma_group g, float volume, float pitch, float pan)
     if (now - ma.last_play[g] < 35)
         return;
     ma.last_play[g] = now;
-    Snprintf(path, sizeof path, "%s%s_%u.wav", ma.dir, ma_group_names[g],
+    Snprintf(path, sizeof path, "%s%s_%u.ogg", ma.dir, ma_group_names[g],
              1 + ma_rand((unsigned) ma.nvar[g]));
     started = nhma_play(path, volume, pitch, pan);
     Snprintf(note, sizeof note,
@@ -275,7 +275,7 @@ ma_play_group(enum ma_group g, float volume, float pitch, float pan)
     fx_debug_log(note);
 }
 
-/* named sample sets looked up on first use: <name>_1.wav .. <name>_N.wav */
+/* named sample sets looked up on first use: <name>_1.ogg .. <name>_N.ogg */
 #define MA_MAXNAMED 256
 static struct {
     const char *name;
@@ -298,7 +298,7 @@ ma_named_find(const char *name)
     if (ma_nnamed >= MA_MAXNAMED || !ma.ok)
         return -1;
     for (n = 1; n <= MA_MAXVAR; n++) {
-        Snprintf(path, sizeof path, "%s%s_%d.wav", ma.dir, name, n);
+        Snprintf(path, sizeof path, "%s%s_%d.ogg", ma.dir, name, n);
         if (!ma_file_exists(path))
             break;
     }
@@ -332,7 +332,7 @@ ma_play_named(const char *name, float volume, float pitch, float pan)
     if (!ma_named[i].nvar || now - ma_named[i].last < 35)
         return;
     ma_named[i].last = now;
-    Snprintf(path, sizeof path, "%s%s_%u.wav", ma.dir, name,
+    Snprintf(path, sizeof path, "%s%s_%u.ogg", ma.dir, name,
              1 + ma_rand((unsigned) ma_named[i].nvar));
     {
         char note[MA_PATHMAX + 96];
@@ -684,7 +684,7 @@ ma_pickup(int oclass, int otyp, boolean drop, int weight)
     ma_play_named(name, 0.6f, pitch, 0.0f);
 }
 
-/* a trap going off: trap_<kind>_N.wav. Traps whose code already plays
+/* a trap going off: trap_<kind>_N.ogg. Traps whose code already plays
    a core sound effect (squeaky board, land mine) are left to that. */
 static void
 ma_trap(int ttyp, float vol, float pan)
@@ -753,9 +753,9 @@ ma_trap(int ttyp, float vol, float pan)
     ma_play_named(name, 0.75f * vol, pitch, pan);
 }
 
-/* eating: a sound per kind of food (eat_<kind>_N.wav), each food with
+/* eating: a sound per kind of food (eat_<kind>_N.ogg), each food with
    its own pitch so similar foods still sound different; corpses by how
-   they tasted. Falls back to the plain chew (eat_N.wav). */
+   they tasted. Falls back to the plain chew (eat_N.ogg). */
 static const struct ma_food {
     int otyp;
     const char *kind;
@@ -827,8 +827,8 @@ ma_eat(int otyp, int texture)
 }
 
 /*
- * Weapons. Each weapon skill maps to a sample set: wpn_<set>_hit_N.wav
- * on a hit and wpn_<set>_swing_N.wav on a miss, at a pitch that sets
+ * Weapons. Each weapon skill maps to a sample set: wpn_<set>_hit_N.ogg
+ * on a hit and wpn_<set>_swing_N.ogg on a miss, at a pitch that sets
  * light and heavy weapons of the same family apart. A weapon's special
  * effect (Fire Brand burning, Frost Brand freezing, Mjollnir's lightning,
  * Stormbringer draining) adds a layer only when it actually lands, i.e.
@@ -1054,7 +1054,7 @@ ma_launch(const struct fx_event *ev, float vol, float pan)
  */
 static struct ma_msgsnd {
     const char *pat;
-    const char *snd;    /* sample set: <snd>_N.wav */
+    const char *snd;    /* sample set: <snd>_N.ogg */
     float vol, pitch;
     ma_ms last;         /* per-pattern cooldown */
 } ma_msgsnds[] = {
@@ -1280,7 +1280,7 @@ ma_message(const char *text)
                       ma_frand(-0.5f, 0.5f));
 }
 
-/* death cry by monster class: death_<kind>_N.wav; silent if none */
+/* death cry by monster class: death_<kind>_N.ogg; silent if none */
 static void
 ma_death_cry(int mndx, float vol, float pan)
 {
@@ -1700,7 +1700,7 @@ ma_ambience_update(unsigned fade_ms)
         return;
     }
     name = ma_level_ambience(&vol);
-    Snprintf(path, sizeof path, "%s%s.flac", ma.dir, name);
+    Snprintf(path, sizeof path, "%s%s.ogg", ma.dir, name);
     if (!ma_file_exists(path)) {
         nhma_ambience((const char *) 0, 0.0f, 1500);
         return;
@@ -2212,7 +2212,7 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
     default:
         break;
     }
-    /* any other effect with a se_<name>_N.wav sample of its own */
+    /* any other effect with a se_<name>_N.ogg sample of its own */
     if (ma.ok && seid > se_zero_invalid && seid < number_of_se_entries
         && iflags.sounds && !Deaf) {
         char path[MA_PATHMAX + 64];
@@ -2220,7 +2220,7 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
 
         if (ma.se_nvar[seid] < 0) {
             for (n = 1; n <= MA_MAXVAR; n++) {
-                Snprintf(path, sizeof path, "%sse_%s_%d.wav", ma.dir,
+                Snprintf(path, sizeof path, "%sse_%s_%d.ogg", ma.dir,
                          ma_se_names[seid].name, n);
                 if (!ma_file_exists(path))
                     break;
@@ -2228,7 +2228,7 @@ ma_soundeffect(char *desc, int32_t seid, int32_t volume)
             ma.se_nvar[seid] = (signed char) (n - 1);
         }
         if (ma.se_nvar[seid] > 0) {
-            Snprintf(path, sizeof path, "%sse_%s_%u.wav", ma.dir,
+            Snprintf(path, sizeof path, "%sse_%s_%u.ogg", ma.dir,
                      ma_se_names[seid].name,
                      1 + ma_rand((unsigned) ma.se_nvar[seid]));
             ma.last_se = ma_ticks();

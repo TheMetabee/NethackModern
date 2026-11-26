@@ -6,11 +6,20 @@
  * include hack.h; see nhminiaudio.h.
  */
 
+/* Ogg Vorbis comes from stb_vorbis (public domain, nothings/stb v1.25):
+   its declarations go before miniaudio so miniaudio turns on its Vorbis
+   decoder, and its body goes after, as miniaudio's docs describe */
+#define STB_VORBIS_HEADER_ONLY
+#include "stb_vorbis.c"
+
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
 #include "miniaudio.h"
 #include "nhminiaudio.h"
+
+#undef STB_VORBIS_HEADER_ONLY
+#include "stb_vorbis.c"
 
 #include <stdio.h>
 #ifndef _WIN32
